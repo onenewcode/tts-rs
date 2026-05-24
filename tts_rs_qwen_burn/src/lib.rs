@@ -1,0 +1,22 @@
+mod error;
+mod manifest;
+mod paths;
+pub mod speech_tokenizer;
+pub mod talker;
+
+pub use error::{Qwen3TtsLoadError, Qwen3TtsVerifyError};
+pub use manifest::{
+    LoadReport, VerificationArtifacts, WeightComparisonReport, WeightManifest, WeightManifestEntry,
+    WeightMismatch, WeightVerificationReport,
+};
+pub use paths::{default_workspace_root, find_local_qwen_tts_model_dir};
+
+pub use speech_tokenizer::{
+    LoadedQwen3TtsSpeechTokenizer, Qwen3TtsSpeechTokenizerCheckpoint,
+    Qwen3TtsSpeechTokenizerConfig, load_qwen3_tts_speech_tokenizer,
+    verify_qwen3_tts_speech_tokenizer_weights,
+};
+pub use talker::{
+    LoadedQwen3TtsTalker, Qwen3TtsCheckpoint, Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig,
+    Qwen3TtsTalkerConfig, load_qwen3_tts_talker, verify_qwen3_tts_talker_weights,
+};
