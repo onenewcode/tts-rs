@@ -1,0 +1,12 @@
+[workspace]
+members = [
+
+]
+
+resolver = "2"
+
+[workspace.dependencies]
+burn = "0.21.0"
+burn-store = "0.21.0"
+thiserror = "2.0.18"
+
