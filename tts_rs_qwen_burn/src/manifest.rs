@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::Qwen3TtsVerifyError;
 use crate::paths::ensure_parent_dir;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LoadReport {
     pub applied: usize,
     pub skipped: usize,

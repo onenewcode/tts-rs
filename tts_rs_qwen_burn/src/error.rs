@@ -56,3 +56,13 @@ pub enum Qwen3TtsVerifyError {
         source: serde_json::Error,
     },
 }
+
+#[derive(Debug, Error)]
+pub enum Qwen3TtsInferenceError {
+    #[error("invalid inference input: {message}")]
+    InvalidInput { message: String },
+    #[error("unsupported activation function: {name}")]
+    UnsupportedActivation { name: String },
+    #[error("unsupported rope configuration: {message}")]
+    UnsupportedRope { message: String },
+}

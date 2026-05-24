@@ -1,11 +1,13 @@
-use burn::nn::{EmbeddingConfig, LinearConfig, RmsNormConfig};
+use burn::nn::{EmbeddingConfig, LinearConfig, RmsNormConfig, RotaryEncodingConfig};
 use burn::tensor::backend::Backend;
 
 use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::model::{
-    Qwen3TtsAttention, Qwen3TtsCheckpoint, Qwen3TtsDecoderLayer,
-    Qwen3TtsTalkerCodePredictorForConditionalGeneration, Qwen3TtsTalkerCodePredictorModel,
-    Qwen3TtsTalkerForConditionalGeneration, Qwen3TtsTalkerModel, Qwen3TtsTalkerResizeMlp,
+    Qwen3TtsCheckpoint, Qwen3TtsTalker, Qwen3TtsTalkerCodePredictor,
+    Qwen3TtsTalkerCodePredictorModel, Qwen3TtsTalkerModel,
+};
+use super::nn::{
+    Qwen3RotaryEncoding, Qwen3TtsAttention, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp,
     Qwen3TtsTextMlp,
 };
 
@@ -18,17 +20,20 @@ impl Qwen3TtsConfig {
 }
 
 impl Qwen3TtsTalkerConfig {
-    pub fn init<B: Backend>(
-        &self,
-        device: &B::Device,
-    ) -> Qwen3TtsTalkerForConditionalGeneration<B> {
-        Qwen3TtsTalkerForConditionalGeneration {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> Qwen3TtsTalker<B> {
+        Qwen3TtsTalker {
             model: self.init_model(device),
             text_projection: self.init_text_projection(device),
             codec_head: LinearConfig::new(self.hidden_size, self.vocab_size)
                 .with_bias(false)
                 .init(device),
             code_predictor: self.init_code_predictor(device),
+            mrope: Qwen3RotaryEncoding::new(
+                self.head_dim,
+                self.rope_theta,
+                self.rope_scaling.mrope_section.clone(),
+                device,
+            ),
         }
     }
 
@@ -113,7 +118,7 @@ impl Qwen3TtsTalkerConfig {
     fn init_code_predictor<B: Backend>(
         &self,
         device: &B::Device,
-    ) -> Qwen3TtsTalkerCodePredictorForConditionalGeneration<B> {
+    ) -> Qwen3TtsTalkerCodePredictor<B> {
         let code_predictor = &self.code_predictor_config;
         let num_heads = self.num_code_groups.saturating_sub(1);
         let projection = if code_predictor.hidden_size == self.hidden_size {
@@ -126,7 +131,7 @@ impl Qwen3TtsTalkerConfig {
             )
         };
 
-        Qwen3TtsTalkerCodePredictorForConditionalGeneration {
+        Qwen3TtsTalkerCodePredictor {
             model: code_predictor.init_model(self.hidden_size, device),
             lm_head: (0..num_heads)
                 .map(|_| {
@@ -136,6 +141,9 @@ impl Qwen3TtsTalkerConfig {
                 })
                 .collect(),
             small_to_mtp_projection: projection,
+            rope: RotaryEncodingConfig::new(code_predictor.max_position_embeddings, code_predictor.head_dim)
+                .with_theta(code_predictor.rope_theta as f32)
+                .init(device),
         }
     }
 }

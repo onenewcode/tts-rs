@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use burn::tensor::backend::Backend;
-use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
+use burn_store::{
+    ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore,
+};
 
 use crate::Qwen3TtsLoadError;
 use crate::manifest::LoadReport;
@@ -23,13 +25,28 @@ pub fn load_qwen3_tts_talker<B: Backend>(
     model_dir: impl AsRef<Path>,
     device: &B::Device,
 ) -> Result<LoadedQwen3TtsTalker<B>, Qwen3TtsLoadError> {
+    load_qwen3_tts_talker_with_adapter(model_dir, device, PyTorchToBurnAdapter)
+}
+
+pub fn load_qwen3_tts_talker_for_inference<B: Backend>(
+    model_dir: impl AsRef<Path>,
+    device: &B::Device,
+) -> Result<LoadedQwen3TtsTalker<B>, Qwen3TtsLoadError> {
+    load_qwen3_tts_talker_with_adapter(model_dir, device, PyTorchToBurnAdapter)
+}
+
+fn load_qwen3_tts_talker_with_adapter<B: Backend, A: ModuleAdapter + 'static>(
+    model_dir: impl AsRef<Path>,
+    device: &B::Device,
+    adapter: A,
+) -> Result<LoadedQwen3TtsTalker<B>, Qwen3TtsLoadError> {
     let model_dir = model_dir.as_ref().to_path_buf();
     let weights_path = model_dir.join("model.safetensors");
     let config = Qwen3TtsConfig::load_from_model_dir(&model_dir)?;
     let mut model = config.init_checkpoint(device);
 
     let mut store = SafetensorsStore::from_file(&weights_path)
-        .with_from_adapter(PyTorchToBurnAdapter)
+        .with_from_adapter(adapter)
         .remap(talker_load_key_remapper())
         .skip_enum_variants(true);
 

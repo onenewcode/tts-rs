@@ -68,3 +68,36 @@ Each directory contains:
 - If the test cannot find a model directory, set `QWEN_TTS_MODEL_DIR` explicitly.
 - If roundtrip verification fails, inspect `comparison_report.json` first. That will tell you whether the regression is in key sets, shapes, dtypes, or tensor bytes.
 - The talker slow test is expected to take much longer than the default unit suite.
+
+## Python Baseline Comparison
+
+The talker inference path now has a separate Python-vs-Rust baseline flow.
+
+Export deterministic Python baseline cases:
+
+```bash
+python py/export_talker_baseline.py --case all
+```
+
+This writes:
+
+- `artifacts/qwen3_tts/talker/baseline/prefill_small_seq/`
+- `artifacts/qwen3_tts/talker/baseline/subtalker_teacher_forced/`
+
+Run Rust comparison against those cases:
+
+```bash
+cargo run -p tts_rs_qwen_burn --bin compare_qwen3_tts_talker_baseline -- --case-dir artifacts/qwen3_tts/talker/baseline/prefill_small_seq
+cargo run -p tts_rs_qwen_burn --bin compare_qwen3_tts_talker_baseline -- --case-dir artifacts/qwen3_tts/talker/baseline/subtalker_teacher_forced
+```
+
+Comparison reports are written to:
+
+- `artifacts/qwen3_tts/talker/rust_vs_python/prefill_small_seq/comparison_report.json`
+- `artifacts/qwen3_tts/talker/rust_vs_python/subtalker_teacher_forced/comparison_report.json`
+
+Notes:
+
+- The compare binary uses the inference-specific talker loader, which casts half-precision checkpoint weights to `float32` for Flex execution.
+- The Python exporter only needs the local model directory. It may print a SoX warning during import; that does not block baseline export.
+- Current baseline tolerance is `atol=1e-3`, `rtol=1e-3`, stored in each case's `case.json`.
