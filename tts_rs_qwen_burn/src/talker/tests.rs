@@ -1,13 +1,13 @@
 use burn::backend::Flex;
 use burn::tensor::Tensor;
 
+use super::cache::KeyValueCache;
 use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::inference::{
-    CodePredictorTeacherForcedInput, TalkerForwardInput,
-    forward_code_predictor_teacher_forced, forward_talker_prefill,
+    CodePredictorTeacherForcedInput, TalkerForwardInput, forward_code_predictor_teacher_forced,
+    forward_talker_prefill,
 };
 use super::remap::{talker_export_key_remapper, talker_load_key_remapper};
-use super::cache::KeyValueCache;
 
 type TestBackend = Flex;
 
@@ -141,18 +141,19 @@ fn forward_talker_prefill_collects_layer_outputs_and_logits() {
     };
 
     let inputs_embeds = Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device);
-    let position_ids = Tensor::from_data(
-        [
-            [[0i32, 1, 2]],
-            [[0i32, 1, 2]],
-            [[0i32, 1, 2]],
-        ],
-        &device,
-    );
+    let position_ids = Tensor::from_data([[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]], &device);
     let attention_mask = Tensor::from_data([[1i32, 1, 1]], &device);
 
     let mut cache = (0..config.talker_config.num_hidden_layers)
-        .map(|_| KeyValueCache::new(1, config.talker_config.num_key_value_heads, 10, config.talker_config.head_dim, &device))
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+                &device,
+            )
+        })
         .collect::<Vec<_>>();
 
     let output = forward_talker_prefill(
@@ -185,16 +186,17 @@ fn forward_talker_prefill_rejects_invalid_position_shape() {
         weights_path: std::path::PathBuf::new(),
     };
 
-    let position_ids = Tensor::from_data(
-        [
-            [[0i32, 1, 2]],
-            [[0i32, 1, 2]],
-            [[0i32, 1, 2]],
-        ],
-        &device,
-    );
+    let position_ids = Tensor::from_data([[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]], &device);
     let mut cache = (0..config.talker_config.num_hidden_layers)
-        .map(|_| KeyValueCache::new(1, config.talker_config.num_key_value_heads, 10, config.talker_config.head_dim, &device))
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+                &device,
+            )
+        })
         .collect::<Vec<_>>();
 
     let _ = forward_talker_prefill(
@@ -225,7 +227,18 @@ fn forward_code_predictor_teacher_forced_collects_expected_outputs() {
     };
 
     let mut cache = (0..config.talker_config.code_predictor_config.num_hidden_layers)
-        .map(|_| KeyValueCache::new(1, config.talker_config.code_predictor_config.num_key_value_heads, 10, config.talker_config.code_predictor_config.head_dim, &device))
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config
+                    .talker_config
+                    .code_predictor_config
+                    .num_key_value_heads,
+                10,
+                config.talker_config.code_predictor_config.head_dim,
+                &device,
+            )
+        })
         .collect::<Vec<_>>();
 
     let output = forward_code_predictor_teacher_forced(

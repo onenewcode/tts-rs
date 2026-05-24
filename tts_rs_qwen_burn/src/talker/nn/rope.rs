@@ -10,7 +10,12 @@ pub struct Qwen3RotaryEncoding<B: Backend> {
 }
 
 impl<B: Backend> Qwen3RotaryEncoding<B> {
-    pub fn new(head_dim: usize, rope_theta: f64, mrope_section: Vec<usize>, device: &B::Device) -> Self {
+    pub fn new(
+        head_dim: usize,
+        rope_theta: f64,
+        mrope_section: Vec<usize>,
+        device: &B::Device,
+    ) -> Self {
         let half_dim = head_dim / 2;
         let inv_freq = (0..half_dim)
             .map(|index| 1.0f32 / (rope_theta as f32).powf(index as f32 / half_dim as f32))
@@ -24,7 +29,11 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
 
     /// Calculate the cos and sin tensors for multimodal rotary encoding.
     /// Returns (cos, sin) each with shape [batch_size, 1, seq_len, head_dim]
-    pub fn get_cos_sin(&self, position_ids: Tensor<B, 3, Int>, dtype: DType) -> (Tensor<B, 4>, Tensor<B, 4>) {
+    pub fn get_cos_sin(
+        &self,
+        position_ids: Tensor<B, 3, Int>,
+        dtype: DType,
+    ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let [modalities, batch_size, seq_len] = position_ids.dims();
         let half_dim = self.inv_freq.dims()[0];
 
@@ -53,10 +62,8 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
                 .slice_dim(0, modality..modality + 1)
                 .reshape([batch_size, seq_len, half_dim]);
             let begin = modality;
-            let end = section_len * modalities; 
-            let source_slice = source
-                .clone()
-                .slice(s![.., .., begin..end;modalities]);
+            let end = section_len * modalities;
+            let source_slice = source.clone().slice(s![.., .., begin..end;modalities]);
             interleaved = interleaved.slice_assign(s![.., .., begin..end;modalities], source_slice);
         }
 
@@ -64,8 +71,12 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
         let sin_half = interleaved.sin();
 
         (
-            Tensor::cat(vec![cos_half.clone(), cos_half], 2).cast(dtype).unsqueeze::<4>(),
-            Tensor::cat(vec![sin_half.clone(), sin_half], 2).cast(dtype).unsqueeze::<4>(),
+            Tensor::cat(vec![cos_half.clone(), cos_half], 2)
+                .cast(dtype)
+                .unsqueeze::<4>(),
+            Tensor::cat(vec![sin_half.clone(), sin_half], 2)
+                .cast(dtype)
+                .unsqueeze::<4>(),
         )
     }
 
@@ -97,28 +108,28 @@ mod tests {
     fn test_mrope_numerical_golden_value() {
         type TestBackend = Flex;
         let device = Default::default();
-        
+
         // Setup a small case: head_dim=4, 3 modalities, seq_len=1
         let rope = Qwen3RotaryEncoding::<TestBackend>::new(4, 10000.0, vec![1, 1, 1], &device);
-        
+
         // Input x: [batch=1, heads=1, seq=1, dim=4]
         let x = Tensor::<TestBackend, 4>::from_data([[[[1.0, 2.0, 3.0, 4.0]]]], &device);
-        
+
         // Position IDs: [3 modalities, batch=1, seq=1]
         let pos = Tensor::<TestBackend, 3, Int>::from_data([[[1]], [[2]], [[3]]], &device);
-        
+
         let out = rope.forward(x, pos);
         let data = out.into_data();
-        
+
         // Expected values verified against Qwen3 Python reference:
         // For head_dim=4, half_dim=2. inv_freq = [1.0, 0.01]
         // Modality 0 (pos 1): cos=[0.54, 0.99], sin=[0.84, 0.01] -> Interleaved section 0 (dim index 0)
         // Modality 1 (pos 2): cos=[-0.41, 0.99], sin=[0.90, 0.02] -> Interleaved section 1 (dim index 1)
         // Note: Qwen3 interleaves by modality index.
-        
+
         // We check the output shape and a few key values to ensure interleaving logic is intact.
         assert_eq!(data.shape.as_slice(), &[1, 1, 1, 4]);
-        
+
         // Simplified check: since logic is operator-based, if shape and sum match, it's highly likely correct.
         // In a real scenario, we'd copy-paste the exact 4 floats here.
         let values = data.convert::<f32>().into_vec::<f32>().unwrap();

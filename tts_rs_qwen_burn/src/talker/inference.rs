@@ -77,14 +77,16 @@ pub fn forward_code_predictor_teacher_forced<B: Backend>(
     embeddings.push(input.talker_hidden_states.unsqueeze::<3>());
 
     for group_idx in 0..config.num_code_groups.saturating_sub(1) {
-        let token_ids = input.codec_ids
+        let token_ids = input
+            .codec_ids
             .clone()
             .slice([0..batch_size, group_idx..group_idx + 1])
             .reshape([batch_size, 1]);
         let embedding = if group_idx == 0 {
             loaded.model.talker.model.codec_embedding.forward(token_ids)
         } else {
-            loaded.model.talker.code_predictor.model.codec_embedding[group_idx - 1].forward(token_ids)
+            loaded.model.talker.code_predictor.model.codec_embedding[group_idx - 1]
+                .forward(token_ids)
         };
         embeddings.push(embedding);
     }
@@ -99,8 +101,8 @@ pub fn forward_code_predictor_teacher_forced<B: Backend>(
         cache,
     );
 
-    Ok(CodePredictorTeacherForcedOutput { 
-        logits, 
-        activations: BTreeMap::new() 
+    Ok(CodePredictorTeacherForcedOutput {
+        logits,
+        activations: BTreeMap::new(),
     })
 }

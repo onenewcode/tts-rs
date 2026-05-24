@@ -1,8 +1,8 @@
 use burn::module::Module;
 use burn::nn::Linear;
+use burn::tensor::Tensor;
 use burn::tensor::activation::silu;
 use burn::tensor::backend::Backend;
-use burn::tensor::Tensor;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsTextMlp<B: Backend> {

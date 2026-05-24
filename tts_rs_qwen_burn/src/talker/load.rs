@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use burn::tensor::backend::Backend;
-use burn_store::{
-    ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore,
-};
+use burn_store::{ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use crate::Qwen3TtsLoadError;
 use crate::manifest::LoadReport;

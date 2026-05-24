@@ -141,9 +141,12 @@ impl Qwen3TtsTalkerConfig {
                 })
                 .collect(),
             small_to_mtp_projection: projection,
-            rope: RotaryEncodingConfig::new(code_predictor.max_position_embeddings, code_predictor.head_dim)
-                .with_theta(code_predictor.rope_theta as f32)
-                .init(device),
+            rope: RotaryEncodingConfig::new(
+                code_predictor.max_position_embeddings,
+                code_predictor.head_dim,
+            )
+            .with_theta(code_predictor.rope_theta as f32)
+            .init(device),
         }
     }
 }

@@ -35,9 +35,17 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let v = self.v_proj.forward(x);
 
         // Apply norm PER HEAD (last dimension after reshape)
-        let q = self.q_norm.forward(q.reshape([batch_size, seq_len, num_heads, head_dim])).swap_dims(1, 2);
-        let k = self.k_norm.forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim])).swap_dims(1, 2);
-        let v = v.reshape([batch_size, seq_len, num_kv_heads, head_dim]).swap_dims(1, 2);
+        let q = self
+            .q_norm
+            .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
+            .swap_dims(1, 2);
+        let k = self
+            .k_norm
+            .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
+            .swap_dims(1, 2);
+        let v = v
+            .reshape([batch_size, seq_len, num_kv_heads, head_dim])
+            .swap_dims(1, 2);
 
         // Apply official RoPE
         let offset = cache.len();
@@ -46,7 +54,17 @@ impl<B: Backend> Qwen3TtsAttention<B> {
 
         let (k, v) = cache.forward(k, v);
 
-        self.execute_attention(batch_size, seq_len, num_heads, num_kv_heads, head_dim, q, k, v, mask)
+        self.execute_attention(
+            batch_size,
+            seq_len,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            q,
+            k,
+            v,
+            mask,
+        )
     }
 
     /// Forward pass for Qwen3TtsAttention with pre-calculated multimodal RoPE tensors (for Talker)
@@ -68,9 +86,17 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let v = self.v_proj.forward(x);
 
         // Apply norm PER HEAD (last dimension after reshape)
-        let q = self.q_norm.forward(q.reshape([batch_size, seq_len, num_heads, head_dim])).swap_dims(1, 2);
-        let k = self.k_norm.forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim])).swap_dims(1, 2);
-        let v = v.reshape([batch_size, seq_len, num_kv_heads, head_dim]).swap_dims(1, 2);
+        let q = self
+            .q_norm
+            .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
+            .swap_dims(1, 2);
+        let k = self
+            .k_norm
+            .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
+            .swap_dims(1, 2);
+        let v = v
+            .reshape([batch_size, seq_len, num_kv_heads, head_dim])
+            .swap_dims(1, 2);
 
         // Apply mRoPE rotation
         let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
@@ -78,7 +104,17 @@ impl<B: Backend> Qwen3TtsAttention<B> {
 
         let (k, v) = cache.forward(k, v);
 
-        self.execute_attention(batch_size, seq_len, num_heads, num_kv_heads, head_dim, q, k, v, mask)
+        self.execute_attention(
+            batch_size,
+            seq_len,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            q,
+            k,
+            v,
+            mask,
+        )
     }
 
     fn execute_attention(
@@ -103,9 +139,10 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let attn_weights = softmax(attn_weights, 3);
         let attn_output = attn_weights.matmul(v);
 
-        let attn_output = attn_output
-            .swap_dims(1, 2)
-            .reshape([batch_size, seq_len, num_heads * head_dim]);
+        let attn_output =
+            attn_output
+                .swap_dims(1, 2)
+                .reshape([batch_size, seq_len, num_heads * head_dim]);
         self.o_proj.forward(attn_output)
     }
 }
@@ -115,15 +152,20 @@ fn repeat_kv<B: Backend>(x: Tensor<B, 4>, n_rep: usize) -> Tensor<B, 4> {
         return x;
     }
     let [batch_size, num_kv_heads, seq_len, head_dim] = x.dims();
-    x.unsqueeze_dim::<5>(2)
-        .repeat_dim(2, n_rep)
-        .reshape([batch_size, num_kv_heads * n_rep, seq_len, head_dim])
+    x.unsqueeze_dim::<5>(2).repeat_dim(2, n_rep).reshape([
+        batch_size,
+        num_kv_heads * n_rep,
+        seq_len,
+        head_dim,
+    ])
 }
 
 fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
     let [batch_size, heads, seq_len, head_dim] = x.dims();
     let half_dim = head_dim / 2;
-    let x1 = x.clone().slice([0..batch_size, 0..heads, 0..seq_len, 0..half_dim]);
+    let x1 = x
+        .clone()
+        .slice([0..batch_size, 0..heads, 0..seq_len, 0..half_dim]);
     let x2 = x.slice([0..batch_size, 0..heads, 0..seq_len, half_dim..head_dim]);
     Tensor::cat(vec![-x2, x1], 3)
 }

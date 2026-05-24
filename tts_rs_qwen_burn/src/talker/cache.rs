@@ -1,4 +1,4 @@
-use burn::tensor::{backend::Backend, Tensor};
+use burn::tensor::{Tensor, backend::Backend};
 
 /// Autoregressive cache for a single tensor (e.g., Key or Value).
 pub struct AutoregressiveCache<B: Backend> {
@@ -43,12 +43,14 @@ impl<B: Backend> AutoregressiveCache<B> {
 
         // Lazy initialization to match input tensor DType
         if self.cache.is_none() {
-             // We use zeros to set the type, then cast if necessary.
-             // On Flex, we must be careful with types.
-             self.cache = Some(tensor.clone()
-                .slice([0..batch_size, 0..num_heads, 0..1, 0..head_dim])
-                .repeat_dim(2, self.max_seq_len)
-                .mul_scalar(0.0) // Zero out but keep type/device
+            // We use zeros to set the type, then cast if necessary.
+            // On Flex, we must be careful with types.
+            self.cache = Some(
+                tensor
+                    .clone()
+                    .slice([0..batch_size, 0..num_heads, 0..1, 0..head_dim])
+                    .repeat_dim(2, self.max_seq_len)
+                    .mul_scalar(0.0), // Zero out but keep type/device
             );
         }
         let cache_tensor = self.cache.as_mut().unwrap();
@@ -63,7 +65,12 @@ impl<B: Backend> AutoregressiveCache<B> {
                 0..head_dim,
             ]);
             *cache_tensor = cache_tensor.clone().slice_assign(
-                [0..batch_size, 0..num_heads, 0..self.cur_seq_len, 0..head_dim],
+                [
+                    0..batch_size,
+                    0..num_heads,
+                    0..self.cur_seq_len,
+                    0..head_dim,
+                ],
                 prev_slice,
             );
             new_seq_len = self.max_seq_len;
@@ -81,9 +88,12 @@ impl<B: Backend> AutoregressiveCache<B> {
 
         self.cur_seq_len = new_seq_len;
 
-        cache_tensor
-            .clone()
-            .slice([0..batch_size, 0..num_heads, 0..self.cur_seq_len, 0..head_dim])
+        cache_tensor.clone().slice([
+            0..batch_size,
+            0..num_heads,
+            0..self.cur_seq_len,
+            0..head_dim,
+        ])
     }
 
     /// Returns the cached sequence length.
@@ -116,7 +126,11 @@ impl<B: Backend> KeyValueCache<B> {
         self.value.reset();
     }
 
-    pub fn forward(&mut self, key: Tensor<B, 4>, value: Tensor<B, 4>) -> (Tensor<B, 4>, Tensor<B, 4>) {
+    pub fn forward(
+        &mut self,
+        key: Tensor<B, 4>,
+        value: Tensor<B, 4>,
+    ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         (self.key.forward(key), self.value.forward(value))
     }
 

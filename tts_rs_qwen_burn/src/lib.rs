@@ -6,8 +6,8 @@ pub mod talker;
 
 pub use error::{Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsVerifyError};
 pub use manifest::{
-    LoadReport, VerificationArtifacts, WeightComparisonReport, WeightManifest,
-    WeightManifestEntry, WeightMismatch, WeightVerificationReport,
+    LoadReport, VerificationArtifacts, WeightComparisonReport, WeightManifest, WeightManifestEntry,
+    WeightMismatch, WeightVerificationReport,
 };
 pub use paths::{default_workspace_root, find_local_qwen_tts_model_dir};
 pub use speech_tokenizer::{

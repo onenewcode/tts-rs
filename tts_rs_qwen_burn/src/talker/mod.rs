@@ -1,7 +1,7 @@
-mod config;
 mod cache;
-mod init;
+mod config;
 mod inference;
+mod init;
 mod load;
 mod model;
 pub mod nn;
