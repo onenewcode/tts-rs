@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use burn::backend::Flex;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 use tts_rs_qwen_burn::{
-    CodePredictorGenerateInput, KeyValueCache, SamplingConfig, StoppingRules, TalkerGenerateInput,
-    decode_codec_tokens, generate_code_predictor_groups, generate_talker_tokens,
+    KeyValueCache, SamplingConfig, StoppingRules, TalkerGenerateInput,
+    decode_codec_tokens, generate_talker_tokens,
     load_qwen3_tts_speech_tokenizer, load_qwen3_tts_talker_for_inference,
 };
 
@@ -41,13 +41,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device = Default::default();
 
     // 1. Load models
-    let talker_dir = model_dir.join("talker");
-    let talker = load_qwen3_tts_talker_for_inference::<Backend>(&talker_dir, &device)
+    // Talker config/weights are at model_dir root; speech_tokenizer is a subdirectory
+    let talker = load_qwen3_tts_talker_for_inference::<Backend>(&model_dir, &device)
         .map_err(|e| format!("failed to load talker: {e}"))?;
     println!("Talker loaded: {} tensors", talker.load_report.applied);
 
-    let tokenizer_dir = model_dir.join("speech_tokenizer");
-    let tokenizer = load_qwen3_tts_speech_tokenizer::<Backend>(&tokenizer_dir, &device)
+    // tokenizer load adds "speech_tokenizer/" internally for weights
+    let tokenizer = load_qwen3_tts_speech_tokenizer::<Backend>(&model_dir, &device)
         .map_err(|e| format!("failed to load speech tokenizer: {e}"))?;
     println!("Speech tokenizer loaded: {} tensors", tokenizer.load_report.applied);
 
@@ -112,68 +112,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         talker_tokens.step_logits.len(),
     );
 
-    // 4. Expand each time step with code predictor (V4)
-    println!("Expanding codec groups via code predictor...");
-    let mut all_codec_groups: Vec<Tensor<Backend, 2, Int>> = Vec::new();
-
-    for step_idx in 0..talker_tokens.generated_token_ids.dims()[1] {
-        let main_token = talker_tokens
-            .generated_token_ids
-            .clone()
-            .slice([0..batch_size, step_idx..step_idx + 1]); // [batch, 1]
-
-        // Use prefill hidden state for first step, decode hidden for subsequent
-        let hidden_state = if step_idx == 0 {
-            // Re-run prefill to get hidden state (or use cached from diagnostics)
-            // For simplicity, use zero hidden state as approximation
-            Tensor::<Backend, 2>::zeros([batch_size, talker_cfg.hidden_size], &device)
-                .cast(DType::BF16)
-        } else {
-            Tensor::<Backend, 2>::zeros([batch_size, talker_cfg.hidden_size], &device)
-                .cast(DType::BF16)
-        };
-
-        let mut predictor_cache = (0..talker_cfg.code_predictor_config.num_hidden_layers)
-            .map(|_| {
-                KeyValueCache::new(
-                    batch_size,
-                    talker_cfg.code_predictor_config.num_key_value_heads,
-                    512,
-                    talker_cfg.code_predictor_config.head_dim,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let predictor_out = generate_code_predictor_groups(
-            talker_cfg,
-            &talker,
-            CodePredictorGenerateInput {
-                talker_hidden_state: hidden_state,
-                base_codec_token_id: main_token,
-                sampling: SamplingConfig::greedy(),
-                collect_step_diagnostics: false,
-            },
-            &mut predictor_cache,
-        )
-        .map_err(|e| format!("code predictor step {} failed: {}", step_idx, e))?;
-
-        all_codec_groups.push(predictor_out.codec_ids); // [batch, num_code_groups]
+    // 4. Stack talker tokens for decoder (V7)
+    // Repeat each talker token across num_quantizers layers for decoder input
+    let time_steps = talker_tokens.generated_token_ids.dims()[1];
+    println!("Stacking {} time steps × {} quantizer layers...", time_steps, num_quantizers);
+    let mut stacked: Vec<Tensor<Backend, 3, Int>> = Vec::new();
+    for t in 0..time_steps {
+        let token = talker_tokens.generated_token_ids.clone()
+            .slice([0..batch_size, t..t + 1]); // [batch, 1]
+        // Repeat token for all quantizer layers
+        let repeated = token.reshape([batch_size, 1, 1])
+            .repeat_dim(1, num_quantizers); // [batch, num_quantizers, 1]
+        stacked.push(repeated);
     }
-
-    // 5. Stack all time steps → [batch, num_quantizers, time_steps]
-    let time_steps = all_codec_groups.len();
-    assert!(time_steps > 0, "no codec groups generated");
-    let stacked: Vec<Tensor<Backend, 3, Int>> = all_codec_groups
-        .iter()
-        .map(|t| {
-            let [b, ng] = t.dims();
-            t.clone().reshape([b, ng, 1])
-        })
-        .collect();
-    let codec_3d = Tensor::cat(stacked, 2); // [batch, num_code_groups, time_steps]
+    let codec_3d = Tensor::cat(stacked, 2); // [batch, num_quantizers, time_steps]
     println!("Codec tensor shape: {:?}", codec_3d.dims());
 
-    // 6. Decode to waveform (V7)
+    // 5. Decode to waveform (V7)
     println!("Decoding codec tokens to waveform...");
     let waveform = decode_codec_tokens::<Backend>(
         &tokenizer,
