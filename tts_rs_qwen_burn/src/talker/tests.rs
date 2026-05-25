@@ -1,8 +1,8 @@
 use burn::backend::Flex;
 use burn::tensor::Tensor;
 
-use super::cache::KeyValueCache;
-use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
+use crate::shared::runtime::cache::KeyValueCache;
+use crate::shared::config::talker::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::inference::{
     CodePredictorGenerateInput, CodePredictorTeacherForcedInput, SamplingConfig, StoppingRules,
     TalkerDecodeInput, TalkerForwardInput, TalkerGenerateInput,

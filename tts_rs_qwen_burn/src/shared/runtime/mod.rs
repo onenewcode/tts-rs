@@ -1,2 +1,2 @@
-pub use crate::talker::KeyValueCache;
+pub mod cache;
 pub use crate::talker::{sample_token, SamplingConfig, StoppingRules};

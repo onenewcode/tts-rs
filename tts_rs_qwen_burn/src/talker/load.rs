@@ -6,7 +6,7 @@ use burn_store::{ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, Safetensor
 use crate::Qwen3TtsLoadError;
 use crate::manifest::LoadReport;
 
-use super::config::Qwen3TtsConfig;
+use crate::shared::config::talker::Qwen3TtsConfig;
 use super::model::Qwen3TtsCheckpoint;
 use super::remap::talker_load_key_remapper;
 

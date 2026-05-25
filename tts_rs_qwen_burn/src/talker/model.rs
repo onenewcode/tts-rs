@@ -22,7 +22,7 @@ use burn::nn::{Embedding, Linear, RmsNorm, RotaryEncoding};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
-use super::cache::KeyValueCache;
+use crate::shared::runtime::cache::KeyValueCache;
 use super::nn::attention::AttentionPosition;
 use super::nn::mlp::native_linear_3d;
 use super::nn::rms_norm::qwen_rms_norm;

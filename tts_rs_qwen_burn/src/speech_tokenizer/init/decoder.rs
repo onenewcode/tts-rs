@@ -3,7 +3,7 @@ use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig, RmsNormConfig};
 use burn::tensor::backend::Backend;
 
-use crate::speech_tokenizer::config::Qwen3TtsSpeechTokenizerDecoderConfig;
+use crate::shared::config::tokenizer::Qwen3TtsSpeechTokenizerDecoderConfig;
 use crate::speech_tokenizer::model::common::{
     TokenizerCausalConv1d, TokenizerCausalTransConv1d, TokenizerSnakeBeta,
 };

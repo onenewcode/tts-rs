@@ -33,8 +33,8 @@ use super::nn::mlp::native_linear_3d;
 
 use crate::Qwen3TtsInferenceError;
 
-use super::cache::KeyValueCache;
-use super::config::Qwen3TtsTalkerConfig;
+use crate::shared::runtime::cache::KeyValueCache;
+use crate::shared::config::talker::Qwen3TtsTalkerConfig;
 use super::load::LoadedQwen3TtsTalker;
 
 pub type TalkerActivations<B> = BTreeMap<String, Tensor<B, 3>>;

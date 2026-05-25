@@ -2,7 +2,7 @@ use burn::backend::Flex;
 use burn::nn::RotaryEncodingConfig;
 use burn::tensor::{Int, Tensor};
 
-use super::config::{
+use crate::shared::config::tokenizer::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
     Qwen3TtsSpeechTokenizerEncoderConfig,
 };

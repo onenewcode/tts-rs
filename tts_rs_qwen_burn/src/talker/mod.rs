@@ -20,8 +20,6 @@
 //! | `forward_talker_decode_step` | Single-step decode (incremental) |
 //! | `sample_token` | Token selection from logits |
 
-mod cache;
-mod config;
 mod inference;
 mod init;
 mod load;
@@ -33,8 +31,10 @@ mod verify;
 #[cfg(test)]
 mod tests;
 
-pub use cache::KeyValueCache;
-pub use config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
+pub use crate::shared::runtime::cache::KeyValueCache;
+pub use crate::shared::config::talker::{
+    Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
+};
 
 pub use inference::{
     CodePredictorGenerateInput, CodePredictorGenerateOutput,

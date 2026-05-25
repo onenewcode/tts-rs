@@ -6,7 +6,7 @@ use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 use crate::Qwen3TtsLoadError;
 use crate::manifest::LoadReport;
 
-use super::config::Qwen3TtsSpeechTokenizerConfig;
+use crate::shared::config::tokenizer::Qwen3TtsSpeechTokenizerConfig;
 use super::model::decoder::Qwen3TtsSpeechTokenizerCheckpoint;
 use super::remap::speech_tokenizer_load_key_remapper;
 

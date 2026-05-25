@@ -1,7 +1,7 @@
 use burn::nn::{EmbeddingConfig, LinearConfig, RmsNormConfig, RotaryEncodingConfig};
 use burn::tensor::backend::Backend;
 
-use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
+use crate::shared::config::talker::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::model::{
     Qwen3TtsCheckpoint, Qwen3TtsTalker, Qwen3TtsTalkerCodePredictor,
     Qwen3TtsTalkerCodePredictorModel, Qwen3TtsTalkerModel,

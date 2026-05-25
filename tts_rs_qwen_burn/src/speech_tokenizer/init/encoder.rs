@@ -2,7 +2,7 @@ use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig};
 use burn::tensor::backend::Backend;
 
-use crate::speech_tokenizer::config::{
+use crate::shared::config::tokenizer::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerEncoderConfig,
 };
 use crate::speech_tokenizer::model::common::{

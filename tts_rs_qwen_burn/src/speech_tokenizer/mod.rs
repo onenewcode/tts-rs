@@ -15,7 +15,6 @@
 //! | `decode_codec_tokens` | Full decoder pipeline: tokens → waveform |
 //! | `decode_codec_tokens_single_step` | Convenience for `[batch, num_quantizers]` input |
 
-mod config;
 mod inference;
 mod init {
     pub mod common;
@@ -36,7 +35,7 @@ mod tests;
 
 mod verify;
 
-pub use config::{
+pub use crate::shared::config::tokenizer::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
     Qwen3TtsSpeechTokenizerEncoderConfig,
 };
