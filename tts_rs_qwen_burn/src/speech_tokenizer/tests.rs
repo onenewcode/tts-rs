@@ -1,4 +1,4 @@
-use burn::backend::NdArray;
+use burn_wgpu::Wgpu;
 
 use super::config::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
@@ -10,7 +10,7 @@ use super::model::encoder::Qwen3TtsSpeechTokenizerEncoderBackboneLayer;
 use super::model::wave_decoder::Qwen3TtsSpeechTokenizerWaveDecoderEntry;
 use super::remap::{speech_tokenizer_export_key_remapper, speech_tokenizer_load_key_remapper};
 
-type TestBackend = NdArray;
+type TestBackend = Wgpu;
 
 fn sample_config() -> Qwen3TtsSpeechTokenizerConfig {
     Qwen3TtsSpeechTokenizerConfig {

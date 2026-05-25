@@ -1,5 +1,6 @@
 use burn::module::Module;
 use burn::nn::RmsNorm;
+use burn::tensor::DType;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
@@ -19,6 +20,9 @@ pub struct DecoderLayerOutput<B: Backend> {
     pub mlp_product: Option<Tensor<B, 3>>,
     pub attn_output: Option<Tensor<B, 3>>,
     pub mlp_output: Option<Tensor<B, 3>>,
+    pub q_proj: Option<Tensor<B, 3>>,
+    pub k_proj: Option<Tensor<B, 3>>,
+    pub v_proj: Option<Tensor<B, 3>>,
 }
 
 #[derive(Module, Debug)]
@@ -47,17 +51,19 @@ where
         let residual = x.clone();
         let x = qwen_rms_norm(&self.input_layernorm, x);
         let input_norm = x.clone();
-        let attn_output =
+        let attn_debug =
             self.self_attn
-                .forward(x, num_heads, num_kv_heads, head_dim, position, mask, cache);
-        let x = residual + attn_output.clone();
+                .forward_debug(x, num_heads, num_kv_heads, head_dim, position, mask, cache);
+        let attn_out = attn_debug.output;
+        let dtype = attn_out.dtype();
+        let x = (residual.cast(DType::F32) + attn_out.clone().cast(DType::F32)).cast(dtype);
         let attn_residual = x.clone();
 
         let residual = x.clone();
         let x = qwen_rms_norm(&self.post_attention_layernorm, x);
         let post_attention_norm = x.clone();
         let mlp_output = self.mlp.forward_with_activations(x);
-        let hidden = residual + mlp_output.output.clone();
+        let hidden = (residual.cast(DType::F32) + mlp_output.output.clone().cast(DType::F32)).cast(dtype);
 
         DecoderLayerOutput {
             hidden,
@@ -68,8 +74,11 @@ where
             mlp_up: collect_activations.then_some(mlp_output.up),
             mlp_activated_gate: collect_activations.then_some(mlp_output.activated_gate),
             mlp_product: collect_activations.then_some(mlp_output.product),
-            attn_output: collect_activations.then_some(attn_output),
+            attn_output: collect_activations.then_some(attn_out),
             mlp_output: collect_activations.then_some(mlp_output.output),
+            q_proj: collect_activations.then_some(attn_debug.q_proj),
+            k_proj: collect_activations.then_some(attn_debug.k_proj),
+            v_proj: collect_activations.then_some(attn_debug.v_proj),
         }
     }
 }

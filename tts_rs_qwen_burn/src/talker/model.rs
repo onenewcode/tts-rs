@@ -8,6 +8,7 @@ use burn::tensor::{Bool, Int, Tensor};
 
 use super::cache::KeyValueCache;
 use super::nn::attention::AttentionPosition;
+use super::nn::mlp::native_linear_3d;
 use super::nn::rms_norm::qwen_rms_norm;
 use super::nn::{Qwen3RotaryEncoding, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp};
 
@@ -56,7 +57,7 @@ where
             cache,
             collect_activations,
         );
-        let logits = self.codec_head.forward(hidden_states.clone());
+        let logits = native_linear_3d(&self.codec_head, hidden_states.clone());
         if collect_activations {
             activations.insert("codec_head.logits".to_string(), logits.clone());
         }
@@ -162,6 +163,18 @@ where
                         .expect("mlp output collected when requested"),
                 );
                 activations.insert(format!("layers.{idx}.hidden.output"), output.hidden.clone());
+                activations.insert(
+                    format!("layers.{idx}.q_proj.output"),
+                    output.q_proj.expect("q_proj collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.k_proj.output"),
+                    output.k_proj.expect("k_proj collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.v_proj.output"),
+                    output.v_proj.expect("v_proj collected when requested"),
+                );
             }
             x = output.hidden;
         }
@@ -201,7 +214,7 @@ where
         let final_mask = build_attention_mask(batch_size, seq_len, key_len, mask, &device);
 
         let x = if let Some(projection) = &self.small_to_mtp_projection {
-            projection.forward(inputs_embeds)
+            native_linear_3d(projection, inputs_embeds)
         } else {
             inputs_embeds
         };

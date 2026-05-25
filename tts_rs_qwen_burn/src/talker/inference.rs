@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
+use super::nn::mlp::native_linear_3d;
+
 use crate::Qwen3TtsInferenceError;
 
 use super::cache::KeyValueCache;
@@ -374,7 +376,7 @@ where
         None,
         cache,
     );
-    let prefill_logits = loaded.model.talker.code_predictor.lm_head[0].forward(prefill_hidden);
+    let prefill_logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[0], prefill_hidden);
     let mut selected_token = select_last_position_token(prefill_logits.clone());
     let mut predictor_tokens = vec![selected_token.clone()];
     let mut step_logits = Vec::new();
@@ -394,7 +396,7 @@ where
             .forward(selected_token);
         let step_hidden =
             forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
-        let logits = loaded.model.talker.code_predictor.lm_head[head_idx].forward(step_hidden);
+        let logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[head_idx], step_hidden);
         let cache_len_after = validate_cache_lengths(cache)?;
         selected_token = select_last_position_token(logits.clone());
         predictor_tokens.push(selected_token.clone());

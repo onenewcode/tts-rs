@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use burn::backend::NdArray;
+use burn_wgpu::Wgpu;
 use tts_rs_qwen_burn::{
     VerificationArtifacts, default_workspace_root, find_local_qwen_tts_model_dir,
     load_qwen3_tts_speech_tokenizer, verify_qwen3_tts_speech_tokenizer_weights,
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| default_workspace_root().join("artifacts/qwen3_tts/speech_tokenizer"));
 
     let device = Default::default();
-    let loaded = load_qwen3_tts_speech_tokenizer::<NdArray>(&model_dir, &device)?;
+    let loaded = load_qwen3_tts_speech_tokenizer::<Wgpu>(&model_dir, &device)?;
     let artifacts = VerificationArtifacts::new(output_dir);
     let verification = verify_qwen3_tts_speech_tokenizer_weights(
         &loaded.model,

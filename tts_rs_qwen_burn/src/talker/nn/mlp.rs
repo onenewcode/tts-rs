@@ -25,16 +25,19 @@ where
     B: Backend,
 {
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
-        self.forward_with_activations(x).output
+        let dtype = x.dtype();
+        let gate = self.gate_proj.forward(x.clone());
+        let up = self.up_proj.forward(x);
+        self.down_proj.forward(silu(gate.cast(DType::F32)).cast(dtype) * up)
     }
 
     pub fn forward_with_activations(&self, x: Tensor<B, 3>) -> Qwen3TtsTextMlpOutput<B> {
         let dtype = x.dtype();
-        let gate = native_linear_3d(&self.gate_proj, x.clone());
-        let up = native_linear_3d(&self.up_proj, x);
+        let gate = self.gate_proj.forward(x.clone());
+        let up = self.up_proj.forward(x.clone());
         let activated_gate = silu(gate.clone().cast(DType::F32)).cast(dtype);
         let product = activated_gate.clone() * up.clone();
-        let output = native_linear_3d(&self.down_proj, product.clone());
+        let output = self.down_proj.forward(product.clone());
         Qwen3TtsTextMlpOutput {
             output,
             gate,
@@ -63,10 +66,26 @@ where
     }
 }
 
-fn native_linear_3d<B: Backend>(linear: &Linear<B>, x: Tensor<B, 3>) -> Tensor<B, 3> {
-    let [batch_size, seq_len, _input_size] = x.dims();
-    let output_size = linear.weight.dims()[1];
-    let x_2d = x.reshape([batch_size * seq_len, _input_size]);
-    let output_2d = linear.forward(x_2d);
-    output_2d.reshape([batch_size, seq_len, output_size])
+pub(crate) fn native_linear_3d<B: Backend>(linear: &Linear<B>, x: Tensor<B, 3>) -> Tensor<B, 3> {
+    let [batch_size, seq_len, in_features] = x.dims();
+    let out_features = linear.weight.dims()[1];
+    let x_2d = x.reshape([batch_size * seq_len, in_features]);
+
+    match &linear.bias {
+        Some(bias) => {
+            // Fuse matmul + bias: [x, 1] @ [W; b] = x@W + b
+            // Avoids intermediate BF16 rounding from split matmul/add.
+            let dtype = x_2d.dtype();
+            let ones = Tensor::<B, 2>::ones([batch_size * seq_len, 1], &x_2d.device()).cast(dtype);
+            let x_aug = Tensor::cat(vec![x_2d, ones], 1);
+            let w_aug = Tensor::cat(
+                vec![linear.weight.val(), bias.val().unsqueeze::<2>()],
+                0,
+            );
+            x_aug.matmul(w_aug).reshape([batch_size, seq_len, out_features])
+        }
+        None => {
+            linear.forward(x_2d).reshape([batch_size, seq_len, out_features])
+        }
+    }
 }

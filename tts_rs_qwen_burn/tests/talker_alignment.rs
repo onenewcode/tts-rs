@@ -1,4 +1,4 @@
-use burn::backend::NdArray;
+use burn_wgpu::Wgpu;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -12,8 +12,8 @@ use tts_rs_qwen_burn::{
 
 mod common;
 
-type Backend = NdArray;
-const ABS_TOLERANCE: f32 = 0.02;
+type Backend = Wgpu;
+const ABS_TOLERANCE: f32 = 0.005;
 
 #[derive(Deserialize)]
 struct ReferenceData {

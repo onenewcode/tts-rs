@@ -6,7 +6,15 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
 use super::super::cache::KeyValueCache;
+use super::mlp::native_linear_3d;
 use super::rms_norm::qwen_rms_norm;
+
+pub struct AttentionOutput<B: Backend> {
+    pub output: Tensor<B, 3>,
+    pub q_proj: Tensor<B, 3>,
+    pub k_proj: Tensor<B, 3>,
+    pub v_proj: Tensor<B, 3>,
+}
 
 pub enum AttentionPosition<'a, B: Backend> {
     Standard {
@@ -39,26 +47,45 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
+        self.forward_debug(x, num_heads, num_kv_heads, head_dim, position, mask, cache).output
+    }
+
+    pub fn forward_debug(
+        &self,
+        x: Tensor<B, 3>,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        position: AttentionPosition<'_, B>,
+        mask: Option<Tensor<B, 4, Bool>>,
+        cache: &mut KeyValueCache<B>,
+    ) -> AttentionOutput<B> {
         let [batch_size, seq_len, _] = x.dims();
 
-        let q = self.q_proj.forward(x.clone());
-        let k = self.k_proj.forward(x.clone());
-        let v = self.v_proj.forward(x);
+        let q = native_linear_3d(&self.q_proj, x.clone());
+        let k = native_linear_3d(&self.k_proj, x.clone());
+        let v = native_linear_3d(&self.v_proj, x);
+        let q_proj_out = q.clone();
+        let k_proj_out = k.clone();
+        let v_proj_out = v.clone();
 
         // Apply norm PER HEAD (last dimension after reshape)
         let q = qwen_rms_norm(
             &self.q_norm,
             q.reshape([batch_size, seq_len, num_heads, head_dim]),
         )
-        .swap_dims(1, 2);
+        .swap_dims(1, 2)
+        .clone();
         let k = qwen_rms_norm(
             &self.k_norm,
             k.reshape([batch_size, seq_len, num_kv_heads, head_dim]),
         )
-        .swap_dims(1, 2);
+        .swap_dims(1, 2)
+        .clone();
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
-            .swap_dims(1, 2);
+            .swap_dims(1, 2)
+            .clone();
 
         let (q, k) = match position {
             AttentionPosition::Standard { rope } => {
@@ -74,7 +101,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
 
         let (k, v) = cache.forward(k, v);
 
-        self.execute_attention(
+        let output = self.execute_attention(
             batch_size,
             seq_len,
             num_heads,
@@ -84,7 +111,14 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             k,
             v,
             mask,
-        )
+        );
+
+        AttentionOutput {
+            output,
+            q_proj: q_proj_out,
+            k_proj: k_proj_out,
+            v_proj: v_proj_out,
+        }
     }
 
     fn execute_attention(
@@ -106,7 +140,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let dtype = q.dtype();
         // Match Burn MHA attn_scores: Q @ K^T / sqrt(d_k), then FP32 softmax matching PyTorch.
         let attn_scores = q
-            .matmul(k.swap_dims(2, 3))
+            .matmul(k.swap_dims(2, 3).clone())
             .div_scalar((head_dim as f32).sqrt());
         let attn_scores = if let Some(mask) = mask {
             attn_scores.mask_fill(mask, f32::NEG_INFINITY)
@@ -118,10 +152,11 @@ impl<B: Backend> Qwen3TtsAttention<B> {
 
         // clone after swap_dims to ensure contiguous layout (matching PyTorch's .contiguous())
         let attn_output = attn_output
-            .swap_dims(1, 2);
+            .swap_dims(1, 2)
+            .clone();
         let attn_output = attn_output
             .reshape([batch_size, seq_len, num_heads * head_dim]);
-        self.o_proj.forward(attn_output)
+        native_linear_3d(&self.o_proj, attn_output)
     }
 }
 
