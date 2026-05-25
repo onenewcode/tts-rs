@@ -1,3 +1,20 @@
+//! # Speech Tokenizer Decoder
+//!
+//! Converts quantized codec token IDs to audio waveform through:
+//!
+//! ```text
+//! codec_ids [B, num_quantizers, T]
+//!   → Quantizer (RVQ codebook lookup, 16 layers)
+//!   → pre_conv (CausalConv1d)
+//!   → Upsample stages (CausalTransConv + ConvNeXt, ×4 time)
+//!   → Decoder Transformer (8-layer, RoPE, SwiGLU)
+//!   → Wave Decoder (4× UpsampleStage + SnakeBeta + output conv)
+//!   → waveform [B, 1, total_samples]
+//! ```
+//!
+//! Total time expansion: upsampling_ratios × upsample_rates = 2×2 × 8×5×4×3 = 1920×.
+//! For 12.5 Hz codec input this produces 24 kHz audio.
+
 use burn::module::{Module, Param};
 use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear, RmsNorm, RotaryEncoding};

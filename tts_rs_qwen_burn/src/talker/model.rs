@@ -1,3 +1,19 @@
+//! # Talker Model Architecture
+//!
+//! ```text
+//! Qwen3TtsCheckpoint
+//!   └── Qwen3TtsTalker
+//!         ├── Qwen3TtsTalkerModel (28+ decoder layers)
+//!         │     ├── text_embedding
+//!         │     ├── codec_embedding
+//!         │     ├── layers: Vec<Qwen3TtsDecoderLayer>
+//!         │     └── norm: RmsNorm
+//!         ├── text_projection: ResizeMlp
+//!         ├── codec_head: Linear → logits
+//!         ├── code_predictor: separate decoder for codec groups
+//!         └── mrope: Qwen3RotaryEncoding (multimodal RoPE)
+//! ```
+
 use std::collections::BTreeMap;
 
 use burn::module::Module;

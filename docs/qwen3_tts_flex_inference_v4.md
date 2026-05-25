@@ -126,6 +126,19 @@ Current validation note:
 - Python reference generation is forced to eager attention so Rust and Python compare the same attention operator.
 - Full alignment currently fails before V4 code predictor validation at `layers.1.attn_residual.output[4365]` with `diff=0.0078125` and fixed tolerance `0.005`. The first remaining source is a `0.00024414063` layer-0 MLP output drift that later crosses a bf16 residual rounding boundary.
 
+## Stage Summary (V1-V4)
+
+| Stage | Description | Rust Test | Python Reference |
+|---|---|---|---|
+| V1 | Prefill alignment | `tests/talker_alignment.rs` | `py/generate_reference.py` |
+| V2 | Single-step decode alignment | `tests/talker_alignment.rs` | `py/generate_reference.py` |
+| V3 | Talker autoregressive generation | `tests/talker_alignment.rs` | `py/generate_reference.py` |
+| V4 | Code predictor generation | `tests/talker_alignment.rs` | `py/generate_reference.py` |
+
+All four stages share the same Rust alignment test and Python reference generator.
+The reference JSON (`reference.json`) contains prefill activations, decode step outputs,
+generated token IDs, and code predictor outputs in a single file.
+
 ## Next Stage
 
 After V4 is stable, continue in this order:

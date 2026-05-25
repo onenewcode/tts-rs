@@ -1,3 +1,43 @@
+//! # TTS Inference Engine for Qwen3-TTS
+//!
+//! A Rust inference pipeline for Qwen3-TTS models built on the [Burn](https://burn.dev)
+//! deep learning framework.
+//!
+//! ## Pipeline
+//!
+//! ```text
+//! config.json → load weights → generate codec tokens → decode waveform → save WAV
+//! ```
+//!
+//! ## Quick Start
+//!
+//! ```no_run
+//! use tts_rs_qwen_burn::*;
+//! use burn::backend::Flex;
+//!
+//! type Backend = Flex;
+//! let device = Default::default();
+//!
+//! // Load models (auto-detects variant from config.json)
+//! let talker = load_qwen3_tts_talker_for_inference::<Backend>(
+//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/talker", &device)?;
+//! let tokenizer = load_qwen3_tts_speech_tokenizer::<Backend>(
+//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/speech_tokenizer", &device)?;
+//!
+//! // Run the pipeline...
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Module Map
+//!
+//! | Module | Domain | Purpose |
+//! |---|---|---|
+//! | `talker` | Codec generation | TalkerModel + autoregressive loop + code predictor |
+//! | `speech_tokenizer` | Waveform decoding | Decoder + quantizer + upsampling pipeline |
+//! | `error` | Shared | Error types |
+//! | `manifest` | Shared | Weight manifest and verification |
+//! | `paths` | Shared | Model directory discovery |
+
 pub mod error;
 pub mod manifest;
 pub mod paths;

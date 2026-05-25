@@ -1,3 +1,28 @@
+//! # Talker Inference Pipeline
+//!
+//! This module orchestrates the talker's autoregressive generation loop:
+//!
+//! ```text
+//! Prefill (full sequence) → select first token → decode loop (one token at a time)
+//!                                                      │
+//!                          ┌───────────────────────────┘
+//!                          │ 1. Embed selected token
+//!                          │ 2. Run decode step (attention + KV cache)
+//!                          │ 3. Apply sampling controls (V5)
+//!                          │ 4. Apply repetition penalty (V6)
+//!                          │ 5. Check EOS / max tokens
+//!                          └→ next token or stop
+//! ```
+//!
+//! ## Sampling Pipeline (sample_token)
+//!
+//! ```text
+//! logits → suppress tokens → temperature → top-k → top-p → softmax → categorical
+//! ```
+//!
+//! All sampling math uses Burn tensor operations (`gather`, `scatter`, `sort`,
+//! `categorical`) and stays on-device.
+
 use std::collections::BTreeMap;
 
 use burn::tensor::activation::softmax;

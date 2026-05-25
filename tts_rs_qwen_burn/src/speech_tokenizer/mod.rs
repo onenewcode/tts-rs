@@ -1,3 +1,20 @@
+//! # Speech Tokenizer — Waveform Decoding
+//!
+//! This domain converts quantized codec token IDs to raw audio waveform through
+//! a multi-stage upsampling pipeline:
+//!
+//! - **Quantizer**: Residual Vector Quantization (RVQ) codebook lookup (16 layers)
+//! - **Pre-conv + Upsample**: Causal transposed convolutions for time expansion
+//! - **Decoder Transformer**: 8-layer bidirectional self-attention with RoPE
+//! - **Wave Decoder**: SnakeBeta activations + dilated residual units + output conv
+//!
+//! ## Key Functions
+//!
+//! | Function | Purpose |
+//! |---|---|
+//! | `decode_codec_tokens` | Full decoder pipeline: tokens → waveform |
+//! | `decode_codec_tokens_single_step` | Convenience for `[batch, num_quantizers]` input |
+
 mod config;
 mod inference;
 mod init {
