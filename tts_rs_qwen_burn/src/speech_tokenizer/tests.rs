@@ -24,7 +24,7 @@ use super::model::wave_decoder::{
     Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit,
     Qwen3TtsSpeechTokenizerWaveDecoderUpsampleStage,
 };
-use super::remap::{speech_tokenizer_export_key_remapper, speech_tokenizer_load_key_remapper};
+use crate::shared::io::tokenizer_remap::{speech_tokenizer_export_key_remapper, speech_tokenizer_load_key_remapper};
 
 type TestBackend = Flex;
 

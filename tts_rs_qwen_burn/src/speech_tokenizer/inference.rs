@@ -5,7 +5,7 @@ use burn::tensor::{Int, Tensor};
 use crate::Qwen3TtsInferenceError;
 
 use crate::shared::config::tokenizer::Qwen3TtsSpeechTokenizerDecoderConfig;
-use super::load::LoadedQwen3TtsSpeechTokenizer;
+use crate::shared::io::tokenizer_load::LoadedQwen3TtsSpeechTokenizer;
 
 /// Decode codec token IDs to audio waveform.
 ///

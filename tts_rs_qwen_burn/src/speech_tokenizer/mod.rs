@@ -21,26 +21,23 @@ mod factory {
     pub mod decoder;
     pub mod encoder;
 }
-mod load;
 mod model {
     pub mod common;
     pub mod decoder;
     pub mod encoder;
     pub mod wave_decoder;
 }
-mod remap;
-
 #[cfg(test)]
 mod tests;
-
-mod verify;
 
 pub use crate::shared::config::tokenizer::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
     Qwen3TtsSpeechTokenizerEncoderConfig,
 };
 pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
-pub use load::{LoadedQwen3TtsSpeechTokenizer, load_qwen3_tts_speech_tokenizer};
+pub use crate::shared::io::tokenizer_load::{
+    LoadedQwen3TtsSpeechTokenizer, load_qwen3_tts_speech_tokenizer,
+};
 pub use model::common::{
     Qwen3TtsSpeechTokenizerEmptyModule, TokenizerCausalConv1d, TokenizerCausalTransConv1d,
     TokenizerLayerScale, TokenizerSnakeBeta,
@@ -70,4 +67,4 @@ pub use model::wave_decoder::{
     Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit,
     Qwen3TtsSpeechTokenizerWaveDecoderUpsampleStage,
 };
-pub use verify::verify_qwen3_tts_speech_tokenizer_weights;
+pub use crate::shared::verify::tokenizer::verify_qwen3_tts_speech_tokenizer_weights;

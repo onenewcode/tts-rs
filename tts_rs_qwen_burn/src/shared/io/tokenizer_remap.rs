@@ -9,12 +9,12 @@ const SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS: [(&str, &str); 1] = [(
     "${1}.weight",
 )];
 
-pub(crate) fn speech_tokenizer_load_key_remapper() -> KeyRemapper {
+pub fn speech_tokenizer_load_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
         .expect("static regex remapping must compile")
 }
 
-pub(crate) fn speech_tokenizer_export_key_remapper() -> KeyRemapper {
+pub fn speech_tokenizer_export_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS.to_vec())
         .expect("static regex remapping must compile")
 }

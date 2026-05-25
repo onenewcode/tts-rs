@@ -9,7 +9,7 @@ use super::inference::{
     forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
     generate_code_predictor_groups, generate_talker_tokens, sample_token,
 };
-use super::remap::{talker_export_key_remapper, talker_load_key_remapper};
+use crate::shared::io::talker_remap::{talker_export_key_remapper, talker_load_key_remapper};
 
 type TestBackend = Flex;
 

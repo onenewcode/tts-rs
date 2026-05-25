@@ -35,7 +35,7 @@ use crate::Qwen3TtsInferenceError;
 
 use crate::shared::runtime::cache::KeyValueCache;
 use crate::shared::config::talker::Qwen3TtsTalkerConfig;
-use super::load::LoadedQwen3TtsTalker;
+use crate::shared::io::talker_load::LoadedQwen3TtsTalker;
 
 // Re-exported from types.rs + shared/runtime/sampling.rs
 pub use super::types::*;
