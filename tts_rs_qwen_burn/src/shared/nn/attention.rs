@@ -5,7 +5,7 @@ use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
-use super::super::cache::KeyValueCache;
+use crate::talker::KeyValueCache;
 use super::mlp::native_linear_3d;
 use super::rms_norm::qwen_rms_norm;
 

@@ -4,7 +4,7 @@ use burn::tensor::DType;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
-use super::super::cache::KeyValueCache;
+use crate::talker::KeyValueCache;
 use super::attention::{AttentionPosition, Qwen3TtsAttention};
 use super::mlp::Qwen3TtsTextMlp;
 use super::rms_norm::qwen_rms_norm;
