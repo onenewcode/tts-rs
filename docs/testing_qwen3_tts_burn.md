@@ -69,35 +69,27 @@ Each directory contains:
 - If roundtrip verification fails, inspect `comparison_report.json` first. That will tell you whether the regression is in key sets, shapes, dtypes, or tensor bytes.
 - The talker slow test is expected to take much longer than the default unit suite.
 
-## Python Baseline Comparison
+## Talker Python Alignment
 
-The talker inference path now has a separate Python-vs-Rust baseline flow.
+The talker inference path is aligned against a deterministic Python reference consumed by `tts_rs_qwen_burn/tests/talker_alignment.rs`. This is the current required Python-vs-Rust validation path; no separate baseline comparison binary is required.
 
-Export deterministic Python baseline cases:
-
-```bash
-python py/export_talker_baseline.py --case all
-```
-
-This writes:
-
-- `artifacts/qwen3_tts/talker/baseline/prefill_small_seq/`
-- `artifacts/qwen3_tts/talker/baseline/subtalker_teacher_forced/`
-
-Run Rust comparison against those cases:
+Generate or refresh the reference file:
 
 ```bash
-cargo run -p tts_rs_qwen_burn --bin compare_qwen3_tts_talker_baseline -- --case-dir artifacts/qwen3_tts/talker/baseline/prefill_small_seq
-cargo run -p tts_rs_qwen_burn --bin compare_qwen3_tts_talker_baseline -- --case-dir artifacts/qwen3_tts/talker/baseline/subtalker_teacher_forced
+uv run python py/generate_reference.py --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --output reference.json
 ```
 
-Comparison reports are written to:
+This writes `reference.json` at the workspace root. The file contains checkpoint-dtype inputs, per-layer hidden activation stats, final norm stats, and logits stats/values. The Python model is loaded with `dtype="auto"`, so it follows the checkpoint tensor dtype.
 
-- `artifacts/qwen3_tts/talker/rust_vs_python/prefill_small_seq/comparison_report.json`
-- `artifacts/qwen3_tts/talker/rust_vs_python/subtalker_teacher_forced/comparison_report.json`
+Run the Rust alignment test:
+
+```bash
+cargo test -p tts_rs_qwen_burn --test talker_alignment -- --ignored --nocapture
+```
 
 Notes:
 
-- The compare binary uses the inference-specific talker loader, which casts half-precision checkpoint weights to `float32` for Flex execution.
-- The Python exporter only needs the local model directory. It may print a SoX warning during import; that does not block baseline export.
-- Current baseline tolerance is `atol=1e-3`, `rtol=1e-3`, stored in each case's `case.json`.
+- The Rust path keeps checkpoint tensor dtypes for Flex execution; tests may cast outputs to `float32` only when computing comparison statistics.
+- Model code should use Burn modules and tensor APIs directly. Do not introduce backend- or dtype-specific math helpers to force Python-like accumulation.
+- The Python exporter may print a SoX warning during import; that does not block reference generation.
+- Alignment compares shape, sums, first values, and full-logits max/mean absolute differences.

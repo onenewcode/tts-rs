@@ -1,8 +1,9 @@
 use burn::module::Module;
 use burn::nn::{Linear, RmsNorm, RotaryEncoding};
-use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, Tensor, s};
+use burn::tensor::module::attention;
+use burn::tensor::ops::AttentionModuleOptions;
+use burn::tensor::{Bool, Tensor};
 
 use super::super::cache::KeyValueCache;
 
@@ -25,7 +26,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
@@ -76,7 +77,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         head_dim: usize,
         cos: Tensor<B, 4>,
         sin: Tensor<B, 4>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
@@ -127,17 +128,25 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         q: Tensor<B, 4>,
         k: Tensor<B, 4>,
         v: Tensor<B, 4>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
     ) -> Tensor<B, 3> {
         let n_rep = num_heads / num_kv_heads;
         let k = repeat_kv(k, n_rep);
         let v = repeat_kv(v, n_rep);
 
         let scale = (head_dim as f64).powf(-0.5);
-        let attn_weights = q.matmul(k.swap_dims(2, 3)).mul_scalar(scale);
-        let attn_weights = attn_weights.mask_fill(mask, f32::NEG_INFINITY);
-        let attn_weights = softmax(attn_weights, 3);
-        let attn_output = attn_weights.matmul(v);
+        let attn_output = attention(
+            q,
+            k,
+            v,
+            mask,
+            None,
+            AttentionModuleOptions {
+                scale: Some(scale),
+                softcap: None,
+                is_causal: true,
+            },
+        );
 
         let attn_output =
             attn_output

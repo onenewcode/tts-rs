@@ -8,31 +8,34 @@ from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSTalkerConfig
 def generate_reference(model_dir, output_json, input_text="Hello"):
     # 1. Load Model
     config = Qwen3TTSTalkerConfig.from_pretrained(model_dir)
-    model = Qwen3TTSTalkerForConditionalGeneration.from_pretrained(model_dir).eval()
+    model = Qwen3TTSTalkerForConditionalGeneration.from_pretrained(model_dir, dtype="auto").eval()
+    model_dtype = next(model.parameters()).dtype
     
     # 2. Prepare dummy but deterministic input
     torch.manual_seed(42)
     batch_size = 1
     seq_len = 5
-    inputs_embeds = torch.randn(batch_size, seq_len, config.hidden_size)
+    inputs_embeds = torch.randn(batch_size, seq_len, config.hidden_size).to(model_dtype)
     position_ids = torch.arange(seq_len).unsqueeze(0).unsqueeze(0).repeat(3, batch_size, 1)
     
     # 3. Inference with hooks to catch layer outputs
     results = {}
+
     def hook_fn(name):
         def fn(module, input, output):
             if isinstance(output, tuple):
                 output = output[0]
             results[name] = {
                 "shape": list(output.shape),
-                "sum": output.sum().item(),
+                "sum": output.float().sum().item(),
                 "mean": output.mean().item(),
-                "first_5": output.flatten()[:5].tolist()
+                "first_5": output.flatten()[:5].tolist(),
             }
         return fn
 
-    # Register hooks for key layers
-    model.model.layers[0].register_forward_hook(hook_fn("layer_0_output"))
+    # Register hooks for decoder layer outputs so Rust can locate the first drift.
+    for layer_idx, layer in enumerate(model.model.layers):
+        layer.register_forward_hook(hook_fn(f"layers.{layer_idx}.hidden.output"))
     model.model.norm.register_forward_hook(hook_fn("final_norm"))
 
     with torch.no_grad():
@@ -48,9 +51,11 @@ def generate_reference(model_dir, output_json, input_text="Hello"):
         "expected": {
             "logits": {
                 "shape": list(logits.shape),
-                "sum": logits.sum().item(),
-                "first_5": logits.flatten()[:5].tolist()
+                "sum": logits.float().sum().item(),
+                "first_5": logits.flatten()[:5].tolist(),
+                "values": logits.flatten().tolist(),
             },
+            "layer_0_output": results["layers.0.hidden.output"],
             **results
         }
     }

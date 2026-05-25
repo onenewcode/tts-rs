@@ -12,7 +12,7 @@ V1 goals:
 - leverage `burn::nn::transformer` utilities to reduce boilerplate
 - implement modular `KV cache` support in the forward pass
 - keep weights loaded from the existing `tts_rs_qwen_burn` structures
-- build a Python baseline export path
+- build a Python reference export path for deterministic alignment
 - compare key intermediate activations and final logits against Python
 
 V1 non-goals:
@@ -41,7 +41,7 @@ V1 only covers the `talker` stack:
 - `Qwen3TtsTalkerCodePredictorForConditionalGeneration` in teacher-forced mode
 
 V1 will not attempt to reconstruct the full Python text-side prompt assembly logic.
-Instead, Rust forward entrypoints will receive already prepared tensors from the baseline case.
+Instead, Rust forward entrypoints receive already prepared tensors from the Python reference case.
 
 ## Rust Interfaces
 
@@ -50,6 +50,7 @@ The public Rust inference surface is kept small and deterministic, following the
 Key Architectural Patterns:
 
 - **Module-centric Forward**: Every component (e.g., `Qwen3TtsAttention`, `Qwen3TtsDecoderLayer`) implements a standard `forward` method. Higher-level modules orchestrate the flow by passing data and state (like cache and RoPE) downward.
+- **Burn backend abstraction**: Linear layers, MLPs, heads, attention, and tensor math must use Burn modules/tensors so the model remains portable across backends. Do not add dtype-specific helper paths such as custom BF16/F32 linear accumulation.
 - **Autoregressive Cache**: We use an `AutoregressiveCache` (ref. `llama-burn/src/cache.rs`) that manages pre-allocated tensor slices and sliding window logic. `KeyValueCache` is a standard container for these caches per layer.
 - **Official RoPE Integration**: We use `burn::nn::RotaryEncoding` for standard RoPE (e.g., in the CodePredictor). For the multimodal `mRoPE` in the main Talker, we follow the same `apply(x, offset)` interface but use interleaved modality frequencies as required by Qwen3.
 
@@ -74,67 +75,55 @@ V1 execution rules:
 
 - batch-first tensors
 - validation path only requires `batch=1`
-- compute in `float32` on Flex
+- compute on Flex using the checkpoint tensor dtype; comparisons may cast outputs to `float32` only for statistics
 - KV cache support enabled for future-proofing architecture
 
-## Python Baseline
+## Python Reference Alignment
 
-Baseline exporter:
+Reference exporter:
 
-- `py/export_talker_baseline.py`
+- `py/generate_reference.py`
 
 Exporter behavior:
-- load the local Qwen3-TTS checkpoint on CPU
+
+- load the local Qwen3-TTS talker checkpoint on CPU
+- use `dtype="auto"` so Python follows the checkpoint tensor dtype
 - force `eval()`
-- run small deterministic cases
-- export inputs, key activations, and outputs
+- run a deterministic small prefill case
+- export prepared inputs, selected layer activations, final norm, and logits to `reference.json`
 
-Baseline artifact layout:
+Reference artifact:
 
-- `artifacts/qwen3_tts/talker/baseline/<case>/case.json`
-- `artifacts/qwen3_tts/talker/baseline/<case>/inputs.safetensors`
-- `artifacts/qwen3_tts/talker/baseline/<case>/activations.safetensors`
-- `artifacts/qwen3_tts/talker/baseline/<case>/outputs.safetensors`
+- `reference.json`
 
-Key activation list:
+Reference contents:
 
-- `text_projection.output`
-- `codec_embedding.output`
-- `layers.{i}.attn.output`
-- `layers.{i}.mlp.output`
-- `layers.{i}.hidden.output`
-- `model.norm.output`
-- `codec_head.logits`
-- `code_predictor.input_embeds`
-- `code_predictor.layers.{i}.hidden.output`
-- `code_predictor.logits`
+- `input.inputs_embeds`
+- `input.position_ids`
+- `expected.layers.{i}.hidden.output`
+- `expected.layer_0_output` compatibility alias
+- `expected.final_norm`
+- `expected.logits` with shape, sum, first values, and flattened values
 
-V1 intentionally does not export:
-
-- q/k/v split tensors
-- rotary-pre / rotary-post tensors
-- attention probability tensors
+V1 intentionally does not require a separate baseline comparison binary. The current validation path is the ignored Rust integration test `tts_rs_qwen_burn/tests/talker_alignment.rs`, which consumes `reference.json` directly.
 
 ## Comparison Rules
 
-Rust baseline runner should:
+Rust alignment should:
 
-- load the exported case metadata
-- load tensor payloads
-- run Rust Flex forward
+- load `reference.json`
+- load the local checkpoint through the inference loader
+- run Rust Flex talker prefill with `collect_activations=true`
 - compare expected tensors by name
-- emit a JSON report
-
-Report path:
-
-- `artifacts/qwen3_tts/talker/rust_vs_python/<case>/comparison_report.json`
+- print the first layer or output where drift becomes visible
 
 Comparison defaults:
 
-- dtype normalized to `float32`
-- `atol = 1e-3`
-- `rtol = 1e-3`
-- report shape match, max abs diff, mean abs diff, pass/fail
+- inference dtype follows checkpoint tensors
+- model math stays inside Burn tensor/module/backend APIs
+- tests may cast outputs to `float32` only for statistics
+- compare shape, sum, first values, logits max abs diff, and logits mean abs diff
+- logits full-tensor max/mean diff is more meaningful than sum alone for BF16 reductions
 
 ## Test Plan
 
@@ -148,16 +137,15 @@ Required fast tests:
 - decoder layer residual behavior
 - code predictor teacher-forced input assembly
 
-Required baseline cases:
+Required alignment case:
 
-1. `prefill_small_seq`
-2. `subtalker_teacher_forced`
+1. deterministic talker prefill from `reference.json`
 
 Required validation commands:
 
 1. `cargo test -p tts_rs_qwen_burn`
-2. exporter command for Python baseline generation
-3. Rust baseline comparison command
+2. `uv run python py/generate_reference.py --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --output reference.json`
+3. `cargo test -p tts_rs_qwen_burn --test talker_alignment -- --ignored --nocapture`
 4. existing ignored roundtrip tests still pass
 
 ## Next Stage
@@ -171,5 +159,4 @@ After V1 is numerically stable, continue in this order:
 5. connect `talker` output codes to waveform decoding
 6. decide whether to pull text-side preprocessing into Rust
 
-The V1 artifact format and comparison report should remain reusable in later stages.
-able in later stages.
+The V1 reference format should remain reusable in later stages.

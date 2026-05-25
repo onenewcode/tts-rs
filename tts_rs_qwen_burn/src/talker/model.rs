@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use burn::module::Module;
 use burn::nn::{Embedding, Linear, RmsNorm, RotaryEncoding};
 use burn::tensor::backend::Backend;
@@ -31,22 +33,14 @@ impl<B: Backend> Qwen3TtsTalker<B> {
         head_dim: usize,
         cache: &mut [KeyValueCache<B>],
     ) -> (Tensor<B, 3>, Tensor<B, 3>) {
-        let [batch_size, seq_len, _] = inputs_embeds.dims();
-        let device = inputs_embeds.device();
+        let [_, seq_len, _] = inputs_embeds.dims();
 
-        let causal_mask = Tensor::<B, 2, Bool>::tril_mask([seq_len, seq_len], 0, &device)
-            .unsqueeze::<4>()
-            .repeat_dim(0, batch_size);
-
-        let final_mask = if let Some(padding_mask) = mask {
-            let padding_mask = padding_mask
+        let final_mask = mask.map(|padding_mask| {
+            padding_mask
                 .equal_elem(0)
                 .unsqueeze::<4>()
-                .repeat_dim(2, seq_len);
-            causal_mask.bool_or(padding_mask)
-        } else {
-            causal_mask
-        };
+                .repeat_dim(2, seq_len)
+        });
 
         let hidden_states = self.model.forward(
             inputs_embeds,
@@ -60,6 +54,40 @@ impl<B: Backend> Qwen3TtsTalker<B> {
         );
         let logits = self.codec_head.forward(hidden_states.clone());
         (hidden_states, logits)
+    }
+
+    pub fn forward_with_activations(
+        &self,
+        inputs_embeds: Tensor<B, 3>,
+        position_ids: Tensor<B, 3, Int>,
+        mask: Option<Tensor<B, 2, Int>>,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        cache: &mut [KeyValueCache<B>],
+    ) -> (Tensor<B, 3>, Tensor<B, 3>, BTreeMap<String, Tensor<B, 3>>) {
+        let [_batch_size, seq_len, _] = inputs_embeds.dims();
+
+        let final_mask = mask.map(|padding_mask| {
+            padding_mask
+                .equal_elem(0)
+                .unsqueeze::<4>()
+                .repeat_dim(2, seq_len)
+        });
+
+        let (hidden_states, mut activations) = self.model.forward_with_activations(
+            inputs_embeds,
+            position_ids,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            &self.mrope,
+            final_mask,
+            cache,
+        );
+        let logits = self.codec_head.forward(hidden_states.clone());
+        activations.insert("codec_head.logits".to_string(), logits.clone());
+        (hidden_states, logits, activations)
     }
 }
 
@@ -80,7 +108,7 @@ impl<B: Backend> Qwen3TtsTalkerModel<B> {
         num_kv_heads: usize,
         head_dim: usize,
         mrope: &Qwen3RotaryEncoding<B>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
         let (cos, sin) = mrope.get_cos_sin(position_ids, inputs_embeds.dtype());
@@ -99,6 +127,43 @@ impl<B: Backend> Qwen3TtsTalkerModel<B> {
             );
         }
         self.norm.forward(x)
+    }
+
+    pub fn forward_with_activations(
+        &self,
+        inputs_embeds: Tensor<B, 3>,
+        position_ids: Tensor<B, 3, Int>,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        mrope: &Qwen3RotaryEncoding<B>,
+        mask: Option<Tensor<B, 4, Bool>>,
+        cache: &mut [KeyValueCache<B>],
+    ) -> (Tensor<B, 3>, BTreeMap<String, Tensor<B, 3>>) {
+        let (cos, sin) = mrope.get_cos_sin(position_ids, inputs_embeds.dtype());
+
+        let mut activations = BTreeMap::new();
+        let mut x = inputs_embeds;
+        for (idx, (layer, c)) in self.layers.iter().zip(cache.iter_mut()).enumerate() {
+            let (hidden, attn_output, mlp_output) = layer.forward_with_activations(
+                x,
+                num_heads,
+                num_kv_heads,
+                head_dim,
+                cos.clone(),
+                sin.clone(),
+                mask.clone(),
+                c,
+            );
+            activations.insert(format!("layers.{idx}.attn.output"), attn_output);
+            activations.insert(format!("layers.{idx}.mlp.output"), mlp_output);
+            activations.insert(format!("layers.{idx}.hidden.output"), hidden.clone());
+            x = hidden;
+        }
+
+        let x = self.norm.forward(x);
+        activations.insert("model.norm.output".to_string(), x.clone());
+        (x, activations)
     }
 }
 
@@ -120,22 +185,14 @@ impl<B: Backend> Qwen3TtsTalkerCodePredictor<B> {
         mask: Option<Tensor<B, 2, Int>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, _] = inputs_embeds.dims();
-        let device = inputs_embeds.device();
+        let [_, seq_len, _] = inputs_embeds.dims();
 
-        let causal_mask = Tensor::<B, 2, Bool>::tril_mask([seq_len, seq_len], 0, &device)
-            .unsqueeze::<4>()
-            .repeat_dim(0, batch_size);
-
-        let final_mask = if let Some(padding_mask) = mask {
-            let padding_mask = padding_mask
+        let final_mask = mask.map(|padding_mask| {
+            padding_mask
                 .equal_elem(0)
                 .unsqueeze::<4>()
-                .repeat_dim(2, seq_len);
-            causal_mask.bool_or(padding_mask)
-        } else {
-            causal_mask
-        };
+                .repeat_dim(2, seq_len)
+        });
 
         let x = if let Some(projection) = &self.small_to_mtp_projection {
             projection.forward(inputs_embeds)
@@ -182,7 +239,7 @@ impl<B: Backend> Qwen3TtsTalkerCodePredictorModel<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
         let mut x = inputs_embeds;

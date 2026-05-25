@@ -25,7 +25,7 @@ impl<B: Backend> Qwen3TtsDecoderLayer<B> {
         head_dim: usize,
         cos: Tensor<B, 4>,
         sin: Tensor<B, 4>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let residual = x.clone();
@@ -48,6 +48,39 @@ impl<B: Backend> Qwen3TtsDecoderLayer<B> {
         residual + x
     }
 
+    /// Forward pass with multimodal RoPE, returning attention and MLP branch outputs.
+    pub fn forward_with_activations(
+        &self,
+        x: Tensor<B, 3>,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        cos: Tensor<B, 4>,
+        sin: Tensor<B, 4>,
+        mask: Option<Tensor<B, 4, Bool>>,
+        cache: &mut KeyValueCache<B>,
+    ) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
+        let residual = x.clone();
+        let x = self.input_layernorm.forward(x);
+        let attn_output = self.self_attn.forward_mrope(
+            x,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            cos,
+            sin,
+            mask,
+            cache,
+        );
+        let x = residual + attn_output.clone();
+
+        let residual = x.clone();
+        let x = self.post_attention_layernorm.forward(x);
+        let mlp_output = self.mlp.forward(x);
+        let hidden = residual + mlp_output.clone();
+        (hidden, attn_output, mlp_output)
+    }
+
     /// Forward pass with standard RoPE (official Module)
     pub fn forward_with_rope(
         &self,
@@ -56,7 +89,7 @@ impl<B: Backend> Qwen3TtsDecoderLayer<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        mask: Tensor<B, 4, Bool>,
+        mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let residual = x.clone();

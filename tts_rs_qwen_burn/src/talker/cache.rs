@@ -39,6 +39,12 @@ impl<B: Backend> AutoregressiveCache<B> {
     /// Update the cache and return the current valid slice.
     pub fn forward(&mut self, tensor: Tensor<B, 4>) -> Tensor<B, 4> {
         let [batch_size, num_heads, seq_len, head_dim] = tensor.dims();
+        assert!(
+            batch_size <= self.max_batch_size,
+            "cache batch size exceeded"
+        );
+        assert_eq!(num_heads, self.num_heads, "cache head count mismatch");
+        assert_eq!(head_dim, self.head_dim, "cache head dim mismatch");
         let mut new_seq_len = self.cur_seq_len + seq_len;
 
         // Lazy initialization to match input tensor DType

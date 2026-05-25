@@ -46,20 +46,33 @@ pub fn forward_talker_prefill<B: Backend>(
     input: TalkerForwardInput<B>,
     cache: &mut [KeyValueCache<B>],
 ) -> Result<TalkerForwardOutput<B>, Qwen3TtsInferenceError> {
-    let (last_hidden_state, logits) = loaded.model.talker.forward(
-        input.inputs_embeds,
-        input.position_ids,
-        input.attention_mask,
-        config.num_attention_heads,
-        config.num_key_value_heads,
-        config.head_dim,
-        cache,
-    );
+    let (last_hidden_state, logits, activations) = if input.collect_activations {
+        loaded.model.talker.forward_with_activations(
+            input.inputs_embeds,
+            input.position_ids,
+            input.attention_mask,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
+            cache,
+        )
+    } else {
+        let (last_hidden_state, logits) = loaded.model.talker.forward(
+            input.inputs_embeds,
+            input.position_ids,
+            input.attention_mask,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
+            cache,
+        );
+        (last_hidden_state, logits, BTreeMap::new())
+    };
 
     Ok(TalkerForwardOutput {
         last_hidden_state,
         logits,
-        activations: BTreeMap::new(),
+        activations,
     })
 }
 

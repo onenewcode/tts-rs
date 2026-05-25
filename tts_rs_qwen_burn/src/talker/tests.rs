@@ -151,7 +151,6 @@ fn forward_talker_prefill_collects_layer_outputs_and_logits() {
                 config.talker_config.num_key_value_heads,
                 10,
                 config.talker_config.head_dim,
-                &device,
             )
         })
         .collect::<Vec<_>>();
@@ -194,7 +193,6 @@ fn forward_talker_prefill_rejects_invalid_position_shape() {
                 config.talker_config.num_key_value_heads,
                 10,
                 config.talker_config.head_dim,
-                &device,
             )
         })
         .collect::<Vec<_>>();
@@ -236,7 +234,6 @@ fn forward_code_predictor_teacher_forced_collects_expected_outputs() {
                     .num_key_value_heads,
                 10,
                 config.talker_config.code_predictor_config.head_dim,
-                &device,
             )
         })
         .collect::<Vec<_>>();
