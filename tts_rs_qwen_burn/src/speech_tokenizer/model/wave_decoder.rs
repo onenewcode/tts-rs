@@ -3,7 +3,8 @@ use burn::nn::conv::Conv1d;
 use burn::tensor::Tensor;
 use burn::tensor::backend::Backend;
 
-use super::common::{TokenizerCausalConv1d, TokenizerCausalTransConv1d, TokenizerSnakeBeta};
+use crate::shared::nn::conv::{TokenizerCausalConv1d, TokenizerCausalTransConv1d};
+use crate::shared::nn::activation::TokenizerSnakeBeta;
 
 #[derive(Module, Debug)]
 pub enum Qwen3TtsSpeechTokenizerWaveDecoderEntry<B: Backend> {

@@ -5,9 +5,8 @@ use burn::tensor::backend::Backend;
 use crate::shared::config::tokenizer::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerEncoderConfig,
 };
-use crate::speech_tokenizer::model::common::{
-    Qwen3TtsSpeechTokenizerEmptyModule, TokenizerCausalConv1d,
-};
+use crate::shared::nn::activation::Qwen3TtsSpeechTokenizerEmptyModule;
+use crate::shared::nn::conv::TokenizerCausalConv1d;
 use crate::speech_tokenizer::model::decoder::Qwen3TtsSpeechTokenizerCheckpoint;
 use crate::speech_tokenizer::model::encoder::{
     Qwen3TtsSpeechTokenizerEncoder, Qwen3TtsSpeechTokenizerEncoderAttention,

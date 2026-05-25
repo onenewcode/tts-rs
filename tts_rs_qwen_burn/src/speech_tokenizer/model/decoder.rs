@@ -22,7 +22,8 @@ use burn::tensor::activation::{silu, softmax};
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor};
 
-use super::common::{TokenizerCausalConv1d, TokenizerLayerScale};
+use crate::shared::nn::conv::TokenizerCausalConv1d;
+use crate::shared::nn::activation::TokenizerLayerScale;
 use super::encoder::Qwen3TtsSpeechTokenizerEncoder;
 use super::wave_decoder::Qwen3TtsSpeechTokenizerWaveDecoderEntry;
 
@@ -38,7 +39,7 @@ pub struct Qwen3TtsSpeechTokenizerDecoder<B: Backend> {
     pub quantizer: Qwen3TtsSpeechTokenizerDecoderQuantizer<B>,
     pub pre_conv: TokenizerCausalConv1d<B>,
     pub upsample: Vec<(
-        super::common::TokenizerCausalTransConv1d<B>,
+        crate::shared::nn::conv::TokenizerCausalTransConv1d<B>,
         Qwen3TtsSpeechTokenizerConvNeXtBlock<B>,
     )>,
     pub decoder: Vec<Qwen3TtsSpeechTokenizerWaveDecoderEntry<B>>,

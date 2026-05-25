@@ -8,7 +8,8 @@ use crate::shared::config::tokenizer::{
 };
 use super::factory::common::tensor_param_dims;
 use super::factory::encoder::{derive_encoder_downsample_factor, derive_encoder_downsample_kernel};
-use super::model::common::{TokenizerCausalConv1d, TokenizerCausalTransConv1d, TokenizerLayerScale, TokenizerSnakeBeta};
+use crate::shared::nn::activation::{TokenizerLayerScale, TokenizerSnakeBeta};
+use crate::shared::nn::conv::{TokenizerCausalConv1d, TokenizerCausalTransConv1d};
 use super::model::decoder::{
     Qwen3TtsSpeechTokenizerConvNeXtBlock, Qwen3TtsSpeechTokenizerDecoder,
     Qwen3TtsSpeechTokenizerDecoderAttention, Qwen3TtsSpeechTokenizerDecoderCodebook,

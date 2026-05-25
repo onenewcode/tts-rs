@@ -3,9 +3,8 @@ use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear};
 use burn::tensor::{Tensor, backend::Backend};
 
-use super::common::{
-    Qwen3TtsSpeechTokenizerEmptyModule, TokenizerCausalConv1d, TokenizerLayerScale,
-};
+use crate::shared::nn::activation::{Qwen3TtsSpeechTokenizerEmptyModule, TokenizerLayerScale};
+use crate::shared::nn::conv::TokenizerCausalConv1d;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsSpeechTokenizerEncoder<B: Backend> {

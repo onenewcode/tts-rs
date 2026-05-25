@@ -22,7 +22,6 @@ mod factory {
     pub mod encoder;
 }
 mod model {
-    pub mod common;
     pub mod decoder;
     pub mod encoder;
     pub mod wave_decoder;
@@ -38,10 +37,10 @@ pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
 pub use crate::shared::io::tokenizer_load::{
     LoadedQwen3TtsSpeechTokenizer, load_qwen3_tts_speech_tokenizer,
 };
-pub use model::common::{
-    Qwen3TtsSpeechTokenizerEmptyModule, TokenizerCausalConv1d, TokenizerCausalTransConv1d,
-    TokenizerLayerScale, TokenizerSnakeBeta,
+pub use crate::shared::nn::activation::{
+    Qwen3TtsSpeechTokenizerEmptyModule, TokenizerLayerScale, TokenizerSnakeBeta,
 };
+pub use crate::shared::nn::conv::{TokenizerCausalConv1d, TokenizerCausalTransConv1d};
 pub use model::decoder::{
     Qwen3TtsSpeechTokenizerCheckpoint, Qwen3TtsSpeechTokenizerConvNeXtBlock,
     Qwen3TtsSpeechTokenizerDecoder, Qwen3TtsSpeechTokenizerDecoderAttention,
