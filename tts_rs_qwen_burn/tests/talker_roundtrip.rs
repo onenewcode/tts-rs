@@ -1,12 +1,12 @@
 mod common;
 
-use burn_wgpu::Wgpu;
+use burn::backend::Flex;
 
 use tts_rs_qwen_burn::{
     VerificationArtifacts, load_qwen3_tts_talker, verify_qwen3_tts_talker_weights,
 };
 
-type TestBackend = Wgpu;
+type TestBackend = Flex;
 
 #[test]
 #[ignore = "requires local Qwen weights and is slow"]

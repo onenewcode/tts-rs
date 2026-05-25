@@ -121,11 +121,11 @@ pub(crate) fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_wgpu::Wgpu;
+    use burn::backend::Flex;
 
     #[test]
     fn test_mrope_numerical_golden_value() {
-        type TestBackend = Wgpu;
+        type TestBackend = Flex;
         let device = Default::default();
 
         // Setup a small case: head_dim=4, 3 modalities, seq_len=1

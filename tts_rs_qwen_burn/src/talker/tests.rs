@@ -1,4 +1,4 @@
-use burn_wgpu::Wgpu;
+use burn::backend::Flex;
 use burn::tensor::Tensor;
 
 use super::cache::KeyValueCache;
@@ -11,7 +11,7 @@ use super::inference::{
 };
 use super::remap::{talker_export_key_remapper, talker_load_key_remapper};
 
-type TestBackend = Wgpu;
+type TestBackend = Flex;
 
 fn sample_talker_config(
     code_predictor_hidden_size: usize,

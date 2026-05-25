@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-burn = { workspace = true, features = ["std"] }
-burn-wgpu = { version = "0.21.0", default-features = false }
+burn = { workspace = true, features = ["std", "flex"] }
 burn-store = { workspace = true, features = ["std", "pytorch", "safetensors"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
