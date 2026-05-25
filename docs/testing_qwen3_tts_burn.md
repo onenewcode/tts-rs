@@ -79,7 +79,7 @@ Generate or refresh the reference file:
 uv run python py/generate_reference.py --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --output reference.json
 ```
 
-This writes `reference.json` at the workspace root. The file contains checkpoint-dtype inputs, per-layer hidden activation stats, final norm stats, and logits stats/values. The Python model is loaded with `dtype="auto"`, so it follows the checkpoint tensor dtype.
+This writes `reference.json` at the workspace root. The file contains checkpoint-dtype prefill inputs, a deterministic one-token decode input, per-layer hidden activation stats, final norm stats, cache lengths, and logits stats/values. The Python model is loaded with `dtype="auto"`, so it follows the checkpoint tensor dtype.
 
 Run the Rust alignment test:
 
@@ -92,4 +92,5 @@ Notes:
 - The Rust path keeps checkpoint tensor dtypes for Flex execution; tests may cast outputs to `float32` only when computing comparison statistics.
 - Model code should use Burn modules and tensor APIs directly. Do not introduce backend- or dtype-specific math helpers to force Python-like accumulation.
 - The Python exporter may print a SoX warning during import; that does not block reference generation.
-- Alignment compares shape, sums, first values, and full-logits max/mean absolute differences.
+- Alignment compares prefill and one-step decode shapes, cache length before/after decode, selected activation stats, and full-logits max/mean absolute differences.
+- Logits sums are printed as diagnostics, but full-logits max/mean absolute diff is the primary numeric signal for checkpoint-dtype Flex runs.

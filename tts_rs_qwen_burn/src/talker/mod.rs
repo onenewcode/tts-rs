@@ -15,8 +15,9 @@ pub use cache::KeyValueCache;
 pub use config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 
 pub use inference::{
-    CodePredictorTeacherForcedInput, CodePredictorTeacherForcedOutput, TalkerForwardInput,
-    TalkerForwardOutput, forward_code_predictor_teacher_forced, forward_talker_prefill,
+    CodePredictorTeacherForcedInput, CodePredictorTeacherForcedOutput, TalkerDecodeInput,
+    TalkerDecodeOutput, TalkerForwardInput, TalkerForwardOutput,
+    forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
 };
 pub use load::{LoadedQwen3TtsTalker, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference};
 pub use model::{

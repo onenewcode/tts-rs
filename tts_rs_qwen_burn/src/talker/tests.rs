@@ -4,8 +4,8 @@ use burn::tensor::Tensor;
 use super::cache::KeyValueCache;
 use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::inference::{
-    CodePredictorTeacherForcedInput, TalkerForwardInput, forward_code_predictor_teacher_forced,
-    forward_talker_prefill,
+    CodePredictorTeacherForcedInput, TalkerDecodeInput, TalkerForwardInput,
+    forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
 };
 use super::remap::{talker_export_key_remapper, talker_load_key_remapper};
 
@@ -209,6 +209,123 @@ fn forward_talker_prefill_rejects_invalid_position_shape() {
         &mut cache,
     )
     .expect("prefill forward should succeed");
+}
+
+#[test]
+fn forward_talker_decode_step_appends_one_token_to_prefill_cache() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let checkpoint = config.init_checkpoint::<TestBackend>(&device);
+    let loaded = crate::talker::LoadedQwen3TtsTalker {
+        config: config.clone(),
+        model: checkpoint,
+        load_report: crate::manifest::LoadReport::default(),
+        model_dir: std::path::PathBuf::new(),
+        weights_path: std::path::PathBuf::new(),
+    };
+
+    let mut cache = (0..config.talker_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    forward_talker_prefill(
+        &config.talker_config,
+        &loaded,
+        TalkerForwardInput {
+            inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device),
+            position_ids: Tensor::from_data(
+                [[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]],
+                &device,
+            ),
+            attention_mask: Some(Tensor::from_data([[1i32, 1, 1]], &device)),
+            collect_activations: false,
+        },
+        &mut cache,
+    )
+    .expect("prefill forward should succeed");
+
+    assert!(cache.iter().all(|layer_cache| layer_cache.len() == 3));
+
+    let output = forward_talker_decode_step(
+        &config.talker_config,
+        &loaded,
+        TalkerDecodeInput {
+            inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 1, 16], &device),
+            position_ids: Tensor::from_data([[[3i32]], [[3i32]], [[3i32]]], &device),
+            attention_mask: Some(Tensor::from_data([[1i32, 1, 1, 1]], &device)),
+            collect_activations: true,
+        },
+        &mut cache,
+    )
+    .expect("decode forward should succeed");
+
+    assert_eq!(output.last_hidden_state.dims(), [1, 1, 16]);
+    assert_eq!(output.logits.dims(), [1, 1, 32]);
+    assert!(output.activations.contains_key("layers.0.hidden.output"));
+    assert!(cache.iter().all(|layer_cache| layer_cache.len() == 4));
+}
+
+#[test]
+fn forward_talker_decode_step_rejects_multi_token_input() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let checkpoint = config.init_checkpoint::<TestBackend>(&device);
+    let loaded = crate::talker::LoadedQwen3TtsTalker {
+        config: config.clone(),
+        model: checkpoint,
+        load_report: crate::manifest::LoadReport::default(),
+        model_dir: std::path::PathBuf::new(),
+        weights_path: std::path::PathBuf::new(),
+    };
+
+    let mut cache = (0..config.talker_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    forward_talker_prefill(
+        &config.talker_config,
+        &loaded,
+        TalkerForwardInput {
+            inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device),
+            position_ids: Tensor::from_data(
+                [[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]],
+                &device,
+            ),
+            attention_mask: None,
+            collect_activations: false,
+        },
+        &mut cache,
+    )
+    .expect("prefill forward should succeed");
+
+    let err = forward_talker_decode_step(
+        &config.talker_config,
+        &loaded,
+        TalkerDecodeInput {
+            inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 2, 16], &device),
+            position_ids: Tensor::from_data([[[3i32, 4]], [[3i32, 4]], [[3i32, 4]]], &device),
+            attention_mask: None,
+            collect_activations: false,
+        },
+        &mut cache,
+    )
+    .expect_err("decode should reject multi-token inputs");
+
+    assert!(err.to_string().contains("exactly one token"));
 }
 
 #[test]

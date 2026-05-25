@@ -17,7 +17,8 @@ pub use speech_tokenizer::{
 pub use talker::{
     CodePredictorTeacherForcedInput, CodePredictorTeacherForcedOutput, KeyValueCache,
     LoadedQwen3TtsTalker, Qwen3TtsCheckpoint, Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig,
-    Qwen3TtsTalkerConfig, TalkerForwardInput, TalkerForwardOutput,
-    forward_code_predictor_teacher_forced, forward_talker_prefill, load_qwen3_tts_talker,
-    load_qwen3_tts_talker_for_inference, verify_qwen3_tts_talker_weights,
+    Qwen3TtsTalkerConfig, TalkerDecodeInput, TalkerDecodeOutput, TalkerForwardInput,
+    TalkerForwardOutput, forward_code_predictor_teacher_forced, forward_talker_decode_step,
+    forward_talker_prefill, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference,
+    verify_qwen3_tts_talker_weights,
 };
