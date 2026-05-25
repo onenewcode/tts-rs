@@ -16,7 +16,7 @@
 //! | `decode_codec_tokens_single_step` | Convenience for `[batch, num_quantizers]` input |
 
 mod inference;
-mod init {
+mod factory {
     pub mod common;
     pub mod decoder;
     pub mod encoder;
