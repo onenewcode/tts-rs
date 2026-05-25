@@ -15,11 +15,13 @@ pub use speech_tokenizer::{
     load_qwen3_tts_speech_tokenizer, verify_qwen3_tts_speech_tokenizer_weights,
 };
 pub use talker::{
-    CodePredictorTeacherForcedInput, CodePredictorTeacherForcedOutput, KeyValueCache,
-    LoadedQwen3TtsTalker, Qwen3TtsCheckpoint, Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig,
-    Qwen3TtsTalkerConfig, TalkerDecodeInput, TalkerDecodeOutput, TalkerForwardInput,
-    TalkerForwardOutput, TalkerGenerateInput, TalkerGenerateOutput, TalkerGenerateStepDiagnostic,
-    forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
+    CodePredictorGenerateInput, CodePredictorGenerateOutput,
+    CodePredictorGenerateStepDiagnostic, CodePredictorTeacherForcedInput,
+    CodePredictorTeacherForcedOutput, KeyValueCache, LoadedQwen3TtsTalker, Qwen3TtsCheckpoint,
+    Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig, TalkerDecodeInput,
+    TalkerDecodeOutput, TalkerForwardInput, TalkerForwardOutput, TalkerGenerateInput,
+    TalkerGenerateOutput, TalkerGenerateStepDiagnostic, forward_code_predictor_teacher_forced,
+    forward_talker_decode_step, forward_talker_prefill, generate_code_predictor_groups,
     generate_talker_tokens, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference,
     verify_qwen3_tts_talker_weights,
 };

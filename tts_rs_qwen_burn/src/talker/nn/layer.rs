@@ -13,6 +13,10 @@ pub struct DecoderLayerOutput<B: Backend> {
     pub input_norm: Option<Tensor<B, 3>>,
     pub attn_residual: Option<Tensor<B, 3>>,
     pub post_attention_norm: Option<Tensor<B, 3>>,
+    pub mlp_gate: Option<Tensor<B, 3>>,
+    pub mlp_up: Option<Tensor<B, 3>>,
+    pub mlp_activated_gate: Option<Tensor<B, 3>>,
+    pub mlp_product: Option<Tensor<B, 3>>,
     pub attn_output: Option<Tensor<B, 3>>,
     pub mlp_output: Option<Tensor<B, 3>>,
 }
@@ -25,7 +29,10 @@ pub struct Qwen3TtsDecoderLayer<B: Backend> {
     pub post_attention_layernorm: RmsNorm<B>,
 }
 
-impl<B: Backend> Qwen3TtsDecoderLayer<B> {
+impl<B> Qwen3TtsDecoderLayer<B>
+where
+    B: Backend,
+{
     pub fn forward(
         &self,
         x: Tensor<B, 3>,
@@ -49,16 +56,20 @@ impl<B: Backend> Qwen3TtsDecoderLayer<B> {
         let residual = x.clone();
         let x = qwen_rms_norm(&self.post_attention_layernorm, x);
         let post_attention_norm = x.clone();
-        let mlp_output = self.mlp.forward(x);
-        let hidden = residual + mlp_output.clone();
+        let mlp_output = self.mlp.forward_with_activations(x);
+        let hidden = residual + mlp_output.output.clone();
 
         DecoderLayerOutput {
             hidden,
             input_norm: collect_activations.then_some(input_norm),
             attn_residual: collect_activations.then_some(attn_residual),
             post_attention_norm: collect_activations.then_some(post_attention_norm),
+            mlp_gate: collect_activations.then_some(mlp_output.gate),
+            mlp_up: collect_activations.then_some(mlp_output.up),
+            mlp_activated_gate: collect_activations.then_some(mlp_output.activated_gate),
+            mlp_product: collect_activations.then_some(mlp_output.product),
             attn_output: collect_activations.then_some(attn_output),
-            mlp_output: collect_activations.then_some(mlp_output),
+            mlp_output: collect_activations.then_some(mlp_output.output),
         }
     }
 }

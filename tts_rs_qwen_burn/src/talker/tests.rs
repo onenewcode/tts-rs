@@ -1,16 +1,17 @@
-use burn::backend::LibTorch;
+use burn::backend::NdArray;
 use burn::tensor::Tensor;
 
 use super::cache::KeyValueCache;
 use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::inference::{
-    CodePredictorTeacherForcedInput, TalkerDecodeInput, TalkerForwardInput, TalkerGenerateInput,
-    forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
+    CodePredictorGenerateInput, CodePredictorTeacherForcedInput, TalkerDecodeInput,
+    TalkerForwardInput, TalkerGenerateInput, forward_code_predictor_teacher_forced,
+    forward_talker_decode_step, forward_talker_prefill, generate_code_predictor_groups,
     generate_talker_tokens,
 };
 use super::remap::{talker_export_key_remapper, talker_load_key_remapper};
 
-type TestBackend = LibTorch;
+type TestBackend = NdArray;
 
 fn sample_talker_config(
     code_predictor_hidden_size: usize,
@@ -516,4 +517,133 @@ fn forward_code_predictor_teacher_forced_collects_expected_outputs() {
     .expect("teacher forced forward should succeed");
 
     assert_eq!(output.logits.dims(), [1, 3, 24]);
+}
+
+#[test]
+fn generate_code_predictor_groups_rejects_wrong_cache_layer_count() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let loaded = sample_loaded_talker(&config);
+    let mut cache = vec![KeyValueCache::new(
+        1,
+        config
+            .talker_config
+            .code_predictor_config
+            .num_key_value_heads,
+        10,
+        config.talker_config.code_predictor_config.head_dim,
+    )];
+
+    let err = generate_code_predictor_groups(
+        &config.talker_config,
+        &loaded,
+        CodePredictorGenerateInput {
+            talker_hidden_state: Tensor::<TestBackend, 2>::zeros([1, 16], &device),
+            base_codec_token_id: Tensor::from_data([[1i32]], &device),
+            collect_step_diagnostics: false,
+        },
+        &mut cache,
+    )
+    .expect_err("generation should reject wrong cache layer count");
+
+    assert!(err.to_string().contains("code predictor cache"));
+}
+
+#[test]
+fn generate_code_predictor_groups_returns_expected_shapes_and_cache_len() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let loaded = sample_loaded_talker(&config);
+    let predictor_config = &config.talker_config.code_predictor_config;
+    let mut cache = (0..predictor_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                predictor_config.num_key_value_heads,
+                10,
+                predictor_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let output = generate_code_predictor_groups(
+        &config.talker_config,
+        &loaded,
+        CodePredictorGenerateInput {
+            talker_hidden_state: Tensor::<TestBackend, 2>::zeros([1, 16], &device),
+            base_codec_token_id: Tensor::from_data([[7i32]], &device),
+            collect_step_diagnostics: true,
+        },
+        &mut cache,
+    )
+    .expect("code predictor generation should succeed");
+
+    assert_eq!(output.codec_ids.dims(), [1, 4]);
+    assert_eq!(output.predictor_token_ids.dims(), [1, 3]);
+    assert_eq!(output.step_logits.len(), 3);
+    assert_eq!(output.step_diagnostics.len(), 3);
+    assert!(cache.iter().all(|layer_cache| layer_cache.len() == 4));
+    assert_eq!(output.step_diagnostics[0].cache_len_before, 0);
+    assert_eq!(output.step_diagnostics[0].cache_len_after, 2);
+    assert_eq!(output.step_diagnostics[1].cache_len_before, 2);
+    assert_eq!(output.step_diagnostics[1].cache_len_after, 3);
+
+    let first_codec_id = output
+        .codec_ids
+        .clone()
+        .slice([0..1, 0..1])
+        .into_data()
+        .convert::<i32>()
+        .into_vec::<i32>()
+        .unwrap();
+    assert_eq!(first_codec_id, vec![7]);
+}
+
+#[test]
+fn generate_code_predictor_groups_selects_first_predictor_token_from_prefill_logits() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let loaded = sample_loaded_talker(&config);
+    let predictor_config = &config.talker_config.code_predictor_config;
+    let mut cache = (0..predictor_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                predictor_config.num_key_value_heads,
+                10,
+                predictor_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let output = generate_code_predictor_groups(
+        &config.talker_config,
+        &loaded,
+        CodePredictorGenerateInput {
+            talker_hidden_state: Tensor::<TestBackend, 2>::zeros([1, 16], &device),
+            base_codec_token_id: Tensor::from_data([[3i32]], &device),
+            collect_step_diagnostics: true,
+        },
+        &mut cache,
+    )
+    .expect("code predictor generation should succeed");
+
+    let expected_first_predictor_token = output.step_logits[0]
+        .clone()
+        .slice([0..1, 1..2, 0..24])
+        .argmax(2)
+        .reshape([1, 1])
+        .into_data()
+        .convert::<i32>()
+        .into_vec::<i32>()
+        .unwrap();
+    let actual_first_predictor_token = output
+        .predictor_token_ids
+        .slice([0..1, 0..1])
+        .into_data()
+        .convert::<i32>()
+        .into_vec::<i32>()
+        .unwrap();
+
+    assert_eq!(actual_first_predictor_token, expected_first_predictor_token);
 }

@@ -1,12 +1,12 @@
 mod common;
 
-use burn::backend::LibTorch;
+use burn::backend::NdArray;
 
 use tts_rs_qwen_burn::{
     VerificationArtifacts, load_qwen3_tts_talker, verify_qwen3_tts_talker_weights,
 };
 
-type TestBackend = LibTorch;
+type TestBackend = NdArray;
 
 #[test]
 #[ignore = "requires local Qwen weights and is slow"]

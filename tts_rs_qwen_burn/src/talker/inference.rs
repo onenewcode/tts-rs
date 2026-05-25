@@ -79,12 +79,36 @@ pub struct CodePredictorTeacherForcedOutput<B: Backend> {
     pub activations: TalkerActivations<B>,
 }
 
-pub fn forward_talker_prefill<B: Backend>(
+#[derive(Debug)]
+pub struct CodePredictorGenerateInput<B: Backend> {
+    pub talker_hidden_state: Tensor<B, 2>,
+    pub base_codec_token_id: Tensor<B, 2, Int>,
+    pub collect_step_diagnostics: bool,
+}
+
+#[derive(Debug)]
+pub struct CodePredictorGenerateStepDiagnostic {
+    pub cache_len_before: usize,
+    pub cache_len_after: usize,
+}
+
+#[derive(Debug)]
+pub struct CodePredictorGenerateOutput<B: Backend> {
+    pub codec_ids: Tensor<B, 2, Int>,
+    pub predictor_token_ids: Tensor<B, 2, Int>,
+    pub step_logits: Vec<Tensor<B, 3>>,
+    pub step_diagnostics: Vec<CodePredictorGenerateStepDiagnostic>,
+}
+
+pub fn forward_talker_prefill<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
     input: TalkerForwardInput<B>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<TalkerForwardOutput<B>, Qwen3TtsInferenceError> {
+) -> Result<TalkerForwardOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
     validate_cache_layer_count(config, cache)?;
     validate_talker_input(
         "talker prefill",
@@ -112,12 +136,15 @@ pub fn forward_talker_prefill<B: Backend>(
     })
 }
 
-pub fn forward_talker_decode_step<B: Backend>(
+pub fn forward_talker_decode_step<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
     input: TalkerDecodeInput<B>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<TalkerDecodeOutput<B>, Qwen3TtsInferenceError> {
+) -> Result<TalkerDecodeOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
     validate_cache_layer_count(config, cache)?;
     let cache_len = validate_cache_lengths(cache)?;
     validate_talker_input(
@@ -146,12 +173,15 @@ pub fn forward_talker_decode_step<B: Backend>(
     })
 }
 
-pub fn generate_talker_tokens<B: Backend>(
+pub fn generate_talker_tokens<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
     input: TalkerGenerateInput<B>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<TalkerGenerateOutput<B>, Qwen3TtsInferenceError> {
+) -> Result<TalkerGenerateOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
     validate_cache_layer_count(config, cache)?;
     if input.max_new_tokens == 0 {
         return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -239,12 +269,15 @@ pub fn generate_talker_tokens<B: Backend>(
     })
 }
 
-pub fn forward_code_predictor_teacher_forced<B: Backend>(
+pub fn forward_code_predictor_teacher_forced<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
     input: CodePredictorTeacherForcedInput<B>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<CodePredictorTeacherForcedOutput<B>, Qwen3TtsInferenceError> {
+) -> Result<CodePredictorTeacherForcedOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
     let predictor_config = &config.code_predictor_config;
 
     // Use pure operator-based logic for input embedding construction
@@ -283,12 +316,186 @@ pub fn forward_code_predictor_teacher_forced<B: Backend>(
     })
 }
 
+pub fn generate_code_predictor_groups<B>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    input: CodePredictorGenerateInput<B>,
+    cache: &mut [KeyValueCache<B>],
+) -> Result<CodePredictorGenerateOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
+    let predictor_config = &config.code_predictor_config;
+    validate_code_predictor_cache_layer_count(config, cache)?;
+    if config.num_code_groups < 2 {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "code predictor generation requires at least two code groups".to_string(),
+        });
+    }
+
+    for layer_cache in cache.iter_mut() {
+        layer_cache.reset();
+    }
+
+    let [batch_size, hidden_size] = input.talker_hidden_state.dims();
+    let base_token_dims = input.base_codec_token_id.dims();
+    if base_token_dims != [batch_size, 1] {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!(
+                "code predictor base token shape mismatch: expected {:?}, got {:?}",
+                [batch_size, 1],
+                base_token_dims
+            ),
+        });
+    }
+    if hidden_size != config.hidden_size {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!(
+                "code predictor hidden size mismatch: expected {}, got {}",
+                config.hidden_size, hidden_size
+            ),
+        });
+    }
+
+    let base_embedding = loaded
+        .model
+        .talker
+        .model
+        .codec_embedding
+        .forward(input.base_codec_token_id.clone());
+    let prefill_inputs = Tensor::cat(
+        vec![input.talker_hidden_state.unsqueeze::<3>(), base_embedding],
+        1,
+    );
+    let prefill_hidden = forward_code_predictor_hidden(
+        config,
+        loaded,
+        prefill_inputs,
+        None,
+        cache,
+    );
+    let prefill_logits = loaded.model.talker.code_predictor.lm_head[0].forward(prefill_hidden);
+    let mut selected_token = select_last_position_token(prefill_logits.clone());
+    let mut predictor_tokens = vec![selected_token.clone()];
+    let mut step_logits = Vec::new();
+    let mut step_diagnostics = Vec::new();
+
+    if input.collect_step_diagnostics {
+        step_logits.push(prefill_logits);
+        step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
+            cache_len_before: 0,
+            cache_len_after: validate_cache_lengths(cache)?,
+        });
+    }
+
+    for head_idx in 1..config.num_code_groups - 1 {
+        let cache_len_before = validate_cache_lengths(cache)?;
+        let step_inputs = loaded.model.talker.code_predictor.model.codec_embedding[head_idx - 1]
+            .forward(selected_token);
+        let step_hidden =
+            forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
+        let logits = loaded.model.talker.code_predictor.lm_head[head_idx].forward(step_hidden);
+        let cache_len_after = validate_cache_lengths(cache)?;
+        selected_token = select_last_position_token(logits.clone());
+        predictor_tokens.push(selected_token.clone());
+
+        if input.collect_step_diagnostics {
+            step_logits.push(logits);
+            step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
+                cache_len_before,
+                cache_len_after,
+            });
+        }
+    }
+
+    let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
+    let codec_ids = Tensor::cat(vec![input.base_codec_token_id, predictor_token_ids.clone()], 1);
+    let final_cache_len = validate_cache_lengths(cache)?;
+    if final_cache_len != config.num_code_groups {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!(
+                "code predictor final cache length mismatch: expected {}, got {}",
+                config.num_code_groups, final_cache_len
+            ),
+        });
+    }
+
+    debug_assert_eq!(
+        predictor_config.num_code_groups,
+        config.num_code_groups,
+        "talker and code predictor code group counts should match"
+    );
+
+    Ok(CodePredictorGenerateOutput {
+        codec_ids,
+        predictor_token_ids,
+        step_logits,
+        step_diagnostics,
+    })
+}
+
+fn forward_code_predictor_hidden<B>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    inputs_embeds: Tensor<B, 3>,
+    attention_mask: Option<Tensor<B, 2, Int>>,
+    cache: &mut [KeyValueCache<B>],
+) -> Tensor<B, 3>
+where
+    B: Backend,
+{
+    let predictor = &loaded.model.talker.code_predictor;
+    let projected_inputs = if let Some(projection) = &predictor.small_to_mtp_projection {
+        projection.forward(inputs_embeds)
+    } else {
+        inputs_embeds
+    };
+
+    let [batch_size, seq_len, _] = projected_inputs.dims();
+    let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
+    let device = projected_inputs.device();
+    let mask = super::model::build_attention_mask(
+        batch_size,
+        seq_len,
+        key_len,
+        attention_mask,
+        &device,
+    );
+
+    predictor.model.forward(
+        projected_inputs,
+        config.code_predictor_config.num_attention_heads,
+        config.code_predictor_config.num_key_value_heads,
+        config.code_predictor_config.head_dim,
+        &predictor.rope,
+        mask,
+        cache,
+    )
+}
+
 fn select_last_position_token<B: Backend>(logits: Tensor<B, 3>) -> Tensor<B, 2, Int> {
     let [batch_size, seq_len, _vocab_size] = logits.dims();
     logits
         .slice([0..batch_size, seq_len - 1..seq_len, 0.._vocab_size])
         .argmax(2)
         .reshape([batch_size, 1])
+}
+
+fn validate_code_predictor_cache_layer_count<B: Backend>(
+    config: &Qwen3TtsTalkerConfig,
+    cache: &[KeyValueCache<B>],
+) -> Result<(), Qwen3TtsInferenceError> {
+    let expected = config.code_predictor_config.num_hidden_layers;
+    if cache.len() != expected {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!(
+                "code predictor cache has {} layers but config expects {}",
+                cache.len(),
+                expected
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn validate_cache_layer_count<B: Backend>(

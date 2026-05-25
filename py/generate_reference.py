@@ -4,6 +4,7 @@ import argparse
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSTalkerForConditionalGeneration
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSTalkerConfig
 
+
 def cache_seq_len(past_key_values):
     if hasattr(past_key_values, "get_seq_length"):
         return int(past_key_values.get_seq_length())
@@ -24,13 +25,94 @@ def make_additive_causal_mask(attention_mask, dtype):
     return mask.masked_fill(padding, float("-inf"))
 
 
+def tensor_stats(output):
+    flattened = output.flatten()
+    return {
+        "shape": list(output.shape),
+        "first_5": flattened[:5].tolist(),
+        "last_5": flattened[-5:].tolist(),
+        "values": flattened.tolist(),
+    }
+
+
+def collect_code_predictor_generation(model, talker_hidden_state, base_codec_token_ids):
+    batch_size = talker_hidden_state.shape[0]
+    predictor_steps = []
+    predictor_token_ids = []
+
+    base_codec_embedding = model.get_input_embeddings()(base_codec_token_ids)
+    inputs_embeds = torch.cat((talker_hidden_state.unsqueeze(1), base_codec_embedding), dim=1)
+    predictor_outputs = model.code_predictor(
+        inputs_embeds=inputs_embeds,
+        use_cache=True,
+    )
+    logits = predictor_outputs.logits
+    selected_token_ids = logits[:, -1, :].argmax(dim=-1)
+    predictor_token_ids.append(selected_token_ids)
+    predictor_steps.append(
+        {
+            "token_id": selected_token_ids.tolist(),
+            "logits": tensor_stats(logits),
+            "cache_len_before": 0,
+            "cache_len_after": cache_seq_len(predictor_outputs.past_key_values),
+        }
+    )
+
+    predictor_cache = predictor_outputs.past_key_values
+    for head_idx in range(1, model.config.num_code_groups - 1):
+        cache_len_before = cache_seq_len(predictor_cache)
+        predictor_outputs = model.code_predictor(
+            input_ids=selected_token_ids.unsqueeze(1),
+            past_key_values=predictor_cache,
+            cache_position=torch.arange(
+                cache_len_before,
+                cache_len_before + 1,
+                device=talker_hidden_state.device,
+            ),
+            use_cache=True,
+            generation_steps=head_idx,
+        )
+        logits = predictor_outputs.logits
+        selected_token_ids = logits[:, -1, :].argmax(dim=-1)
+        predictor_token_ids.append(selected_token_ids)
+        predictor_cache = predictor_outputs.past_key_values
+        predictor_steps.append(
+            {
+                "token_id": selected_token_ids.tolist(),
+                "logits": tensor_stats(logits),
+                "cache_len_before": cache_len_before,
+                "cache_len_after": cache_seq_len(predictor_cache),
+            }
+        )
+
+    predictor_token_ids = torch.stack(predictor_token_ids, dim=1)
+    codec_ids = torch.cat((base_codec_token_ids, predictor_token_ids), dim=1)
+    return {
+        "input": {
+            "talker_hidden_state": talker_hidden_state.tolist(),
+            "base_codec_token_id": base_codec_token_ids.tolist(),
+        },
+        "expected": {
+            "codec_ids": codec_ids.tolist(),
+            "predictor_token_ids": predictor_token_ids.tolist(),
+            "steps": predictor_steps,
+        },
+    }
+
+
 def generate_reference(model_dir, output_json, input_text="Hello", max_new_tokens=4):
     if max_new_tokens <= 0:
         raise ValueError("max_new_tokens must be greater than zero")
 
     # 1. Load Model
     config = Qwen3TTSTalkerConfig.from_pretrained(model_dir)
-    model = Qwen3TTSTalkerForConditionalGeneration.from_pretrained(model_dir, dtype="auto").eval()
+    model = Qwen3TTSTalkerForConditionalGeneration.from_pretrained(
+        model_dir,
+        dtype="auto",
+        attn_implementation="eager",
+    ).eval()
+    if getattr(model.config, "_attn_implementation", None) != "eager":
+        raise RuntimeError("Python reference must use eager attention to match the Rust attention operator")
     model_dtype = next(model.parameters()).dtype
     
     # 2. Prepare dummy but deterministic input
@@ -46,14 +128,6 @@ def generate_reference(model_dir, output_json, input_text="Hello", max_new_token
     # 3. Inference with hooks to catch layer outputs
     results = {"prefill": {}, "decode": {}}
     active_phase = {"name": "prefill"}
-
-    def tensor_stats(output):
-        flattened = output.flatten()
-        return {
-            "shape": list(output.shape),
-            "first_5": flattened[:5].tolist(),
-            "last_5": flattened[-5:].tolist(),
-        }
 
     def collect_prefill_outputs():
         activations = {}
@@ -80,7 +154,15 @@ def generate_reference(model_dir, output_json, input_text="Hello", max_new_token
             residual = hidden_states
             mlp_input = layer.post_attention_layernorm(hidden_states)
             activations[f"layers.{layer_idx}.post_attention_norm.output"] = tensor_stats(mlp_input)
-            mlp_output = layer.mlp(mlp_input)
+            mlp_gate = layer.mlp.gate_proj(mlp_input)
+            mlp_up = layer.mlp.up_proj(mlp_input)
+            mlp_activated_gate = layer.mlp.act_fn(mlp_gate)
+            mlp_product = mlp_activated_gate * mlp_up
+            mlp_output = layer.mlp.down_proj(mlp_product)
+            activations[f"layers.{layer_idx}.mlp.gate"] = tensor_stats(mlp_gate)
+            activations[f"layers.{layer_idx}.mlp.up"] = tensor_stats(mlp_up)
+            activations[f"layers.{layer_idx}.mlp.activated_gate"] = tensor_stats(mlp_activated_gate)
+            activations[f"layers.{layer_idx}.mlp.product"] = tensor_stats(mlp_product)
             hidden_states = residual + mlp_output
             activations[f"layers.{layer_idx}.mlp.output"] = tensor_stats(mlp_output)
             activations[f"layers.{layer_idx}.hidden.output"] = tensor_stats(hidden_states)
@@ -178,6 +260,12 @@ def generate_reference(model_dir, output_json, input_text="Hello", max_new_token
                     },
                 }
             )
+
+        code_predictor_generation = collect_code_predictor_generation(
+            model,
+            generation_prefill_outputs.last_hidden_state[:, -1, :],
+            prefill_selected_token_ids.unsqueeze(1),
+        )
         
     # 4. Save to JSON
     reference_data = {
@@ -211,6 +299,8 @@ def generate_reference(model_dir, output_json, input_text="Hello", max_new_token
             "prefill_selected_token_id": prefill_selected_token_ids.tolist(),
             "steps": generation_steps,
         },
+        "code_predictor_generation_input": code_predictor_generation["input"],
+        "code_predictor_generation_expected": code_predictor_generation["expected"],
     }
     
     with open(output_json, 'w') as f:

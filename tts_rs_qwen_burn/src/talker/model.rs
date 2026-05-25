@@ -25,7 +25,10 @@ pub struct Qwen3TtsTalker<B: Backend> {
     pub mrope: Qwen3RotaryEncoding<B>,
 }
 
-impl<B: Backend> Qwen3TtsTalker<B> {
+impl<B> Qwen3TtsTalker<B>
+where
+    B: Backend,
+{
     pub fn forward(
         &self,
         inputs_embeds: Tensor<B, 3>,
@@ -69,7 +72,10 @@ pub struct Qwen3TtsTalkerModel<B: Backend> {
     pub text_embedding: Embedding<B>,
 }
 
-impl<B: Backend> Qwen3TtsTalkerModel<B> {
+impl<B> Qwen3TtsTalkerModel<B>
+where
+    B: Backend,
+{
     pub fn forward(
         &self,
         inputs_embeds: Tensor<B, 3>,
@@ -126,6 +132,30 @@ impl<B: Backend> Qwen3TtsTalkerModel<B> {
                         .expect("post attention norm output collected when requested"),
                 );
                 activations.insert(
+                    format!("layers.{idx}.mlp.gate"),
+                    output
+                        .mlp_gate
+                        .expect("mlp gate output collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.mlp.up"),
+                    output
+                        .mlp_up
+                        .expect("mlp up output collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.mlp.activated_gate"),
+                    output
+                        .mlp_activated_gate
+                        .expect("mlp activated gate output collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.mlp.product"),
+                    output
+                        .mlp_product
+                        .expect("mlp product output collected when requested"),
+                );
+                activations.insert(
                     format!("layers.{idx}.mlp.output"),
                     output
                         .mlp_output
@@ -152,7 +182,10 @@ pub struct Qwen3TtsTalkerCodePredictor<B: Backend> {
     pub rope: RotaryEncoding<B>,
 }
 
-impl<B: Backend> Qwen3TtsTalkerCodePredictor<B> {
+impl<B> Qwen3TtsTalkerCodePredictor<B>
+where
+    B: Backend,
+{
     pub fn forward(
         &self,
         inputs_embeds: Tensor<B, 3>,
@@ -204,7 +237,10 @@ pub struct Qwen3TtsTalkerCodePredictorModel<B: Backend> {
     pub norm: RmsNorm<B>,
 }
 
-impl<B: Backend> Qwen3TtsTalkerCodePredictorModel<B> {
+impl<B> Qwen3TtsTalkerCodePredictorModel<B>
+where
+    B: Backend,
+{
     pub fn forward(
         &self,
         inputs_embeds: Tensor<B, 3>,
@@ -234,7 +270,7 @@ impl<B: Backend> Qwen3TtsTalkerCodePredictorModel<B> {
     }
 }
 
-fn build_attention_mask<B: Backend>(
+pub(crate) fn build_attention_mask<B: Backend>(
     batch_size: usize,
     query_len: usize,
     key_len: usize,

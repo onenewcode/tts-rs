@@ -39,6 +39,8 @@ impl<B: Backend> AutoregressiveCache<B> {
     /// Update the cache and return the current valid slice.
     pub fn forward(&mut self, tensor: Tensor<B, 4>) -> Tensor<B, 4> {
         let [batch_size, num_heads, seq_len, head_dim] = tensor.dims();
+        let original_tensor = tensor.clone();
+        let old_seq_len = self.cur_seq_len;
         assert!(
             batch_size <= self.max_batch_size,
             "cache batch size exceeded"
@@ -93,6 +95,10 @@ impl<B: Backend> AutoregressiveCache<B> {
         );
 
         self.cur_seq_len = new_seq_len;
+
+        if old_seq_len == 0 && seq_len == new_seq_len {
+            return original_tensor;
+        }
 
         cache_tensor.clone().slice([
             0..batch_size,

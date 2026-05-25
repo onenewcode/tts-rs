@@ -1017,7 +1017,6 @@ dependencies = [
  "bon",
  "burn-flex",
  "burn-ir",
- "burn-tch",
  "burn-tensor",
  "bytemuck",
  "derive-new",
@@ -6712,6 +6711,7 @@ name = "tts_rs_qwen_burn"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "burn-ndarray",
  "burn-store",
  "serde",
  "serde_json",
