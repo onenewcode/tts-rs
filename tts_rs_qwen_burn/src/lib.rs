@@ -38,18 +38,27 @@
 //! | `manifest` | Shared | Weight manifest and verification |
 //! | `paths` | Shared | Model directory discovery |
 
-pub mod error;
-pub mod manifest;
-pub mod paths;
+pub mod shared;
+// Backward-compat: old module paths re-export from shared/
+pub mod error {
+    pub use crate::shared::error::*;
+}
+pub mod manifest {
+    pub use crate::shared::manifest::*;
+}
+pub mod paths {
+    pub use crate::shared::paths::*;
+}
 pub mod speech_tokenizer;
 pub mod talker;
 
-pub use error::{Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsVerifyError};
-pub use manifest::{
+// Backward-compat re-exports from shared/
+pub use shared::error::{Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsVerifyError};
+pub use shared::manifest::{
     LoadReport, VerificationArtifacts, WeightComparisonReport, WeightManifest, WeightManifestEntry,
     WeightMismatch, WeightVerificationReport,
 };
-pub use paths::{default_workspace_root, find_local_qwen_tts_model_dir};
+pub use shared::paths::{default_workspace_root, find_local_qwen_tts_model_dir};
 pub use speech_tokenizer::{
     LoadedQwen3TtsSpeechTokenizer, Qwen3TtsSpeechTokenizerCheckpoint,
     decode_codec_tokens, decode_codec_tokens_single_step, load_qwen3_tts_speech_tokenizer,
