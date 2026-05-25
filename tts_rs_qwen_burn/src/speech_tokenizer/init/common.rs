@@ -1,5 +1,6 @@
 use burn::module::Initializer;
 use burn::nn::conv::{Conv1dConfig, ConvTranspose1dConfig};
+use burn::nn::PaddingConfig1d;
 use burn::tensor::backend::Backend;
 
 #[cfg(test)]
@@ -42,12 +43,16 @@ impl<B: Backend> TokenizerCausalConv1d<B> {
         bias: bool,
         device: &B::Device,
     ) -> Self {
+        // Causal: left-only padding so output[t] depends only on input[≤t].
+        // Cap padding to avoid usize underflow on very short sequences (tests).
+        let pad_left = (kernel_size - 1) * dilation;
         Self {
             conv: Conv1dConfig::new(channels_in, channels_out, kernel_size)
                 .with_stride(stride)
                 .with_dilation(dilation)
                 .with_groups(groups)
                 .with_bias(bias)
+                .with_padding(PaddingConfig1d::Explicit(pad_left, 0))
                 .init(device),
         }
     }

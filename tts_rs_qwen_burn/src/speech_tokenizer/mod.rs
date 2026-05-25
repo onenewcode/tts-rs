@@ -1,4 +1,5 @@
 mod config;
+mod inference;
 mod init {
     pub mod common;
     pub mod decoder;
@@ -22,6 +23,7 @@ pub use config::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
     Qwen3TtsSpeechTokenizerEncoderConfig,
 };
+pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
 pub use load::{LoadedQwen3TtsSpeechTokenizer, load_qwen3_tts_speech_tokenizer};
 pub use model::common::{
     Qwen3TtsSpeechTokenizerEmptyModule, TokenizerCausalConv1d, TokenizerCausalTransConv1d,

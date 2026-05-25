@@ -4,11 +4,15 @@
 
 This document defines the fifth Rust inference milestone: replacing hard-coded greedy argmax token selection with configurable sampling and adding stopping rules.
 
-Status: design-finalized, implementation-pending.
+Status: implemented (41 fast tests pass, V1-V4 backward-compatible greedy path unchanged).
+
+**Implementation note**: `repetition_penalty` was folded into V5 rather than deferred.
+The `SamplingConfig` includes `repetition_penalty: Option<f32>` and the penalty is applied
+via gather/scatter-add in `generate_talker_tokens` and `generate_code_predictor_groups`.
 
 V5 goals:
 
-- add `SamplingConfig` with `temperature`, `top_k`, `top_p`, `do_sample`, `seed`
+- add `SamplingConfig` with `temperature`, `top_k`, `top_p`, `do_sample`, `seed`, `repetition_penalty`
 - add `StoppingRules` with `max_new_tokens`, `eos_token_id`
 - add `suppress_tokens` filtering (matching Python's `suppress_tokens`)
 - wire sampling into `generate_talker_tokens` and `generate_code_predictor_groups`
@@ -16,8 +20,6 @@ V5 goals:
 - all sampling math stays inside Burn tensor/backend APIs
 
 V5 non-goals:
-
-- `repetition_penalty` (requires per-step token history tracking across the vocab — deferred to V6)
 - `min_new_tokens`
 - beam search or contrastive search
 - streaming token output

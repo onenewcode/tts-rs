@@ -692,6 +692,7 @@ fn sample_token_topk_1_equals_argmax() {
         top_k: Some(1),
         top_p: 1.0,
         seed: None,
+        repetition_penalty: None,
     };
     let (selected, _) = sample_token::<TestBackend>(
         logits, &sampling, None, &[], &device,
@@ -715,6 +716,7 @@ fn sample_token_suppresses_specified_tokens() {
         top_k: None,
         top_p: 1.0,
         seed: None,
+        repetition_penalty: None,
     };
     let (selected, _) = sample_token::<TestBackend>(
         logits, &sampling, None, &[2, 4], &device,

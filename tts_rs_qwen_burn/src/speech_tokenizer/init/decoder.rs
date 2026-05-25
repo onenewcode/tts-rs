@@ -174,7 +174,7 @@ impl Qwen3TtsSpeechTokenizerDecoderConfig {
         }
     }
 
-    fn init_quantizer<B: Backend>(
+    pub(crate) fn init_quantizer<B: Backend>(
         &self,
         device: &B::Device,
     ) -> Qwen3TtsSpeechTokenizerDecoderQuantizer<B> {

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, DType, Int, Tensor, TensorData};
+use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor, TensorData};
 
 use super::nn::mlp::native_linear_3d;
 
@@ -29,6 +29,9 @@ pub struct SamplingConfig {
     pub top_p: f32,
     /// PRNG seed for reproducibility. `None` = non-deterministic.
     pub seed: Option<u64>,
+    /// Repetition penalty. Values < 1.0 discourage repeated tokens, > 1.0 encourage.
+    /// `None` = off (no penalty). Applied before temperature/top-k/top-p.
+    pub repetition_penalty: Option<f32>,
 }
 
 impl Default for SamplingConfig {
@@ -39,6 +42,7 @@ impl Default for SamplingConfig {
             top_k: None,
             top_p: 1.0,
             seed: None,
+            repetition_penalty: None,
         }
     }
 }
@@ -267,10 +271,15 @@ where
     let sampling = &input.sampling;
     let eos_id = input.stopping.eos_token_id;
     let suppress = &input.suppress_token_ids;
+    let rep_penalty = sampling.repetition_penalty;
 
+    let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
+    let prefill_logits = apply_repetition_penalty_3d(
+        prefill_output.logits.clone(), &empty_history, rep_penalty,
+    );
     let (mut selected_token, mut eos_mask) =
-        sample_token::<B>(prefill_output.logits.clone(), sampling, eos_id, suppress, &device);
-    let mut generated_tokens = vec![selected_token.clone()];
+        sample_token::<B>(prefill_logits, sampling, eos_id, suppress, &device);
+    let mut generated_tokens: Vec<Tensor<B, 2, Int>> = vec![selected_token.clone()];
     let mut step_logits = Vec::new();
     let mut step_diagnostics = Vec::new();
 
@@ -302,8 +311,13 @@ where
         )?;
 
         let cache_len_after = validate_cache_lengths(cache)?;
+        // Concatenate past tokens for repetition penalty
+        let past_ids = Tensor::cat(generated_tokens.clone(), 1); // [batch, history]
+        let penalized_logits = apply_repetition_penalty_3d(
+            decode_output.logits.clone(), &past_ids, rep_penalty,
+        );
         let (next_token, next_eos) =
-            sample_token::<B>(decode_output.logits.clone(), sampling, eos_id, suppress, &device);
+            sample_token::<B>(penalized_logits, sampling, eos_id, suppress, &device);
         // EOS flag is sticky: once true, stays true
         eos_mask = eos_mask.bool_or(next_eos);
         selected_token = next_token;
@@ -439,8 +453,12 @@ where
     let sampling = &input.sampling;
     let eos_id: Option<usize> = None; // code predictor has no EOS — always generates N-1 tokens
     let suppress: &[usize] = &[];
+    let rep_penalty = sampling.repetition_penalty;
+    let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
+    let prefill_logits_pen =
+        apply_repetition_penalty_3d(prefill_logits.clone(), &empty_history, rep_penalty);
     let (mut selected_token, _) =
-        sample_token::<B>(prefill_logits.clone(), sampling, eos_id, suppress, &device);
+        sample_token::<B>(prefill_logits_pen, sampling, eos_id, suppress, &device);
     let mut predictor_tokens = vec![selected_token.clone()];
     let mut step_logits = Vec::new();
     let mut step_diagnostics = Vec::new();
@@ -461,7 +479,9 @@ where
             forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
         let logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[head_idx], step_hidden);
         let cache_len_after = validate_cache_lengths(cache)?;
-        let (next_token, _) = sample_token::<B>(logits.clone(), sampling, eos_id, suppress, &device);
+        let past_ids = Tensor::cat(predictor_tokens.clone(), 1); // [batch, history]
+        let logits_pen = apply_repetition_penalty_3d(logits.clone(), &past_ids, rep_penalty);
+        let (next_token, _) = sample_token::<B>(logits_pen, sampling, eos_id, suppress, &device);
         selected_token = next_token;
         predictor_tokens.push(selected_token.clone());
 
@@ -642,6 +662,35 @@ pub fn sample_token<B: Backend>(
     };
 
     (selected, eos_mask)
+}
+
+// -- Repetition penalty -------------------------------------------------------
+
+/// Apply repetition penalty to logits: `logits[:, token_id] /= penalty` for each
+/// past token. Uses gather + scatter-add for a pure Burn implementation.
+fn apply_repetition_penalty_3d<B: Backend>(
+    logits: Tensor<B, 3>,
+    past_token_ids: &Tensor<B, 2, Int>,
+    penalty: Option<f32>,
+) -> Tensor<B, 3> {
+    let Some(penalty) = penalty else { return logits };
+    if penalty == 1.0 {
+        return logits;
+    }
+    let [batch_size, seq_len, vocab_size] = logits.dims();
+    let history_len = past_token_ids.dims()[1];
+    if history_len == 0 {
+        return logits;
+    }
+    // Work in 2D: [batch, vocab]
+    let logits_2d = logits.reshape([batch_size, vocab_size]);
+    // Gather logits at past token positions: [batch, history]
+    let gathered = logits_2d.clone().gather(1, past_token_ids.clone());
+    // delta = orig * (1/penalty - 1); scatter-add delta → logit/penalty
+    let scale = 1.0 / penalty - 1.0;
+    let deltas = gathered.mul_scalar(scale);
+    let result_2d = logits_2d.scatter(1, past_token_ids.clone(), deltas, IndexingUpdateOp::Add);
+    result_2d.reshape([batch_size, seq_len, vocab_size])
 }
 
 fn validate_code_predictor_cache_layer_count<B: Backend>(

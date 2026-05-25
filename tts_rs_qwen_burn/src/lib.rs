@@ -12,7 +12,8 @@ pub use manifest::{
 pub use paths::{default_workspace_root, find_local_qwen_tts_model_dir};
 pub use speech_tokenizer::{
     LoadedQwen3TtsSpeechTokenizer, Qwen3TtsSpeechTokenizerCheckpoint,
-    load_qwen3_tts_speech_tokenizer, verify_qwen3_tts_speech_tokenizer_weights,
+    decode_codec_tokens, decode_codec_tokens_single_step, load_qwen3_tts_speech_tokenizer,
+    verify_qwen3_tts_speech_tokenizer_weights,
 };
 pub use talker::{
     CodePredictorGenerateInput, CodePredictorGenerateOutput,
