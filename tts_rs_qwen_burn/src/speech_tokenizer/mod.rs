@@ -17,7 +17,6 @@
 
 mod inference;
 mod factory {
-    pub mod common;
     pub mod decoder;
     pub mod encoder;
 }

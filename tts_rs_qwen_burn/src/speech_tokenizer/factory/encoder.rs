@@ -262,3 +262,14 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
         }
     }
 }
+
+impl<B: Backend> Qwen3TtsSpeechTokenizerEncoderCodebook<B> {
+    pub(crate) fn new(codebook_size: usize, dim: usize, device: &B::Device) -> Self {
+        use burn::module::Initializer;
+        Self {
+            initialized: Initializer::Ones.init([1], device),
+            cluster_usage: Initializer::Ones.init([codebook_size], device),
+            embed_sum: Initializer::Zeros.init([codebook_size, dim], device),
+        }
+    }
+}

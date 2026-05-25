@@ -6,7 +6,6 @@ use crate::shared::config::tokenizer::{
     Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
     Qwen3TtsSpeechTokenizerEncoderConfig,
 };
-use super::factory::common::tensor_param_dims;
 use super::factory::encoder::{derive_encoder_downsample_factor, derive_encoder_downsample_kernel};
 use crate::shared::nn::activation::{TokenizerLayerScale, TokenizerSnakeBeta};
 use crate::shared::nn::conv::{TokenizerCausalConv1d, TokenizerCausalTransConv1d};
@@ -28,6 +27,13 @@ use super::model::wave_decoder::{
 use crate::shared::io::tokenizer_remap::{speech_tokenizer_export_key_remapper, speech_tokenizer_load_key_remapper};
 
 type TestBackend = Flex;
+
+#[cfg(test)]
+fn tensor_param_dims<const D: usize, B: burn::tensor::backend::Backend>(
+    param: &burn::module::Param<burn::tensor::Tensor<B, D>>,
+) -> [usize; D] {
+    param.dims()
+}
 
 fn sample_config() -> Qwen3TtsSpeechTokenizerConfig {
     Qwen3TtsSpeechTokenizerConfig {

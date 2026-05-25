@@ -267,3 +267,12 @@ impl Qwen3TtsSpeechTokenizerDecoderConfig {
         }
     }
 }
+
+impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderCodebook<B> {
+    pub(crate) fn new(codebook_size: usize, dim: usize, device: &B::Device) -> Self {
+        Self {
+            cluster_usage: Initializer::Ones.init([codebook_size], device),
+            embedding_sum: Initializer::Zeros.init([codebook_size, dim], device),
+        }
+    }
+}

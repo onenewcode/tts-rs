@@ -47,3 +47,17 @@ impl<B: Backend> TokenizerLayerScale<B> {
         x.mul(scale)
     }
 }
+
+impl<B: Backend> TokenizerSnakeBeta<B> {
+    pub(crate) fn new(channels: usize, device: &B::Device) -> Self {
+        use burn::module::Initializer;
+        Self { alpha: Initializer::Zeros.init([channels], device), beta: Initializer::Zeros.init([channels], device) }
+    }
+}
+
+impl<B: Backend> TokenizerLayerScale<B> {
+    pub(crate) fn new(channels: usize, initial_scale: f64, device: &B::Device) -> Self {
+        use burn::module::Initializer;
+        Self { scale: Initializer::Constant { value: initial_scale }.init([channels], device) }
+    }
+}
