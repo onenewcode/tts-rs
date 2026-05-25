@@ -1,6 +1,7 @@
 pub mod attention;
 pub mod layer;
 pub mod mlp;
+pub mod rms_norm;
 pub mod rope;
 
 pub use attention::Qwen3TtsAttention;

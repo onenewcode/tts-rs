@@ -1,5 +1,5 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{DType, Int, Tensor, s};
+use burn::tensor::{DType, Tensor, s};
 
 /// Custom Qwen3-specific Multimodal Rotary Positional Encoding.
 /// It encapsulates the complex frequency interleaving logic for different modalities.
@@ -29,61 +29,80 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
 
     /// Calculate the cos and sin tensors for multimodal rotary encoding.
     /// Returns (cos, sin) each with shape [batch_size, 1, seq_len, head_dim]
+    ///
+    /// Matches PyTorch apply_interleaved_rope (mrope_interleaved=True):
+    ///   x_t = x[0].clone()
+    ///   for beg, end in [(1,60), (2,60)]:
+    ///       x_t[..., beg:end:3] = x[beg, ..., beg:end:3]
+    ///
+    /// We implement this without strided slices by iterating each of the 64 half_dim
+    /// positions and selecting the correct source modality via unit-stride slices.
     pub fn get_cos_sin(
         &self,
-        position_ids: Tensor<B, 3, Int>,
+        position_ids: Tensor<B, 3, burn::tensor::Int>,
         dtype: DType,
     ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let [modalities, batch_size, seq_len] = position_ids.dims();
         let half_dim = self.inv_freq.dims()[0];
 
-        // 1. Calculate frequencies per modality
+        // 1. Compute cos/sin per modality: stack to [M, B, S, half_dim]
         let inv_freq = self.inv_freq.clone().reshape([1, 1, half_dim]);
-        let mut modality_freqs = Vec::with_capacity(modalities);
+        let mut modality_cos = Vec::with_capacity(modalities);
+        let mut modality_sin = Vec::with_capacity(modalities);
         for modality in 0..modalities {
-            let modality_ids = position_ids
+            let ids = position_ids
                 .clone()
                 .slice_dim(0, modality..modality + 1)
                 .reshape([batch_size, seq_len, 1])
                 .float();
-            modality_freqs.push((modality_ids * inv_freq.clone()).unsqueeze::<4>());
+            let freqs = ids * inv_freq.clone();
+            modality_cos.push(freqs.clone().cos());
+            modality_sin.push(freqs.sin());
         }
-        let freqs = Tensor::cat(modality_freqs, 0);
+        let all_cos = Tensor::cat(modality_cos, 0).reshape([modalities, batch_size, seq_len, half_dim]);
+        let all_sin = Tensor::cat(modality_sin, 0).reshape([modalities, batch_size, seq_len, half_dim]);
 
-        // 2. Interleave modal sections
-        let mut interleaved = freqs
+        // 2. Interleave per-position (matching PyTorch apply_interleaved_rope):
+        //    x_t = x[0]; x_t[pos] = x[m][pos] where pos%M == m && pos/M < section_len[m]
+        let mut cos_half = all_cos
             .clone()
             .slice_dim(0, 0..1)
-            .reshape([batch_size, seq_len, half_dim]);
-
-        for (modality, section_len) in self.mrope_section.iter().copied().enumerate().skip(1) {
-            let source = freqs
-                .clone()
-                .slice_dim(0, modality..modality + 1)
-                .reshape([batch_size, seq_len, half_dim]);
-            let begin = modality;
-            let end = section_len * modalities;
-            let source_slice = source.clone().slice(s![.., .., begin..end;modalities]);
-            interleaved = interleaved.slice_assign(s![.., .., begin..end;modalities], source_slice);
+            .reshape([batch_size, seq_len, half_dim])
+            .clone();
+        let mut sin_half = all_sin
+            .clone()
+            .slice_dim(0, 0..1)
+            .reshape([batch_size, seq_len, half_dim])
+            .clone();
+        for pos in 0..half_dim {
+            let m = pos % modalities;
+            if m > 0 && pos / modalities < self.mrope_section[m] {
+                let src_cos = all_cos
+                    .clone()
+                    .slice_dim(0, m..m + 1)
+                    .reshape([batch_size, seq_len, half_dim])
+                    .slice(s![.., .., pos..pos + 1]);
+                let src_sin = all_sin
+                    .clone()
+                    .slice_dim(0, m..m + 1)
+                    .reshape([batch_size, seq_len, half_dim])
+                    .slice(s![.., .., pos..pos + 1]);
+                cos_half = cos_half.slice_assign(s![.., .., pos..pos + 1], src_cos);
+                sin_half = sin_half.slice_assign(s![.., .., pos..pos + 1], src_sin);
+            }
         }
 
-        let cos_half = interleaved.clone().cos();
-        let sin_half = interleaved.sin();
-
+        // 3. Duplicate half → full head_dim and unsqueeze for broadcast
         (
-            Tensor::cat(vec![cos_half.clone(), cos_half], 2)
-                .cast(dtype)
-                .unsqueeze::<4>(),
-            Tensor::cat(vec![sin_half.clone(), sin_half], 2)
-                .cast(dtype)
-                .unsqueeze::<4>(),
+            Tensor::cat(vec![cos_half.clone(), cos_half], 2).cast(dtype).unsqueeze_dim::<4>(1),
+            Tensor::cat(vec![sin_half.clone(), sin_half], 2).cast(dtype).unsqueeze_dim::<4>(1),
         )
     }
 
     /// Apply multimodal rotary encoding to a tensor.
     /// x: [batch_size, num_heads, seq_len, head_dim]
     /// position_ids: [modalities, batch_size, seq_len]
-    pub fn forward(&self, x: Tensor<B, 4>, position_ids: Tensor<B, 3, Int>) -> Tensor<B, 4> {
+    pub fn forward(&self, x: Tensor<B, 4>, position_ids: Tensor<B, 3, burn::tensor::Int>) -> Tensor<B, 4> {
         let (cos, sin) = self.get_cos_sin(position_ids, x.dtype());
 
         // 3. Apply rotation
@@ -102,11 +121,11 @@ pub(crate) fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::backend::Flex;
+    use burn::backend::LibTorch;
 
     #[test]
     fn test_mrope_numerical_golden_value() {
-        type TestBackend = Flex;
+        type TestBackend = LibTorch;
         let device = Default::default();
 
         // Setup a small case: head_dim=4, 3 modalities, seq_len=1
@@ -116,7 +135,7 @@ mod tests {
         let x = Tensor::<TestBackend, 4>::from_data([[[[1.0, 2.0, 3.0, 4.0]]]], &device);
 
         // Position IDs: [3 modalities, batch=1, seq=1]
-        let pos = Tensor::<TestBackend, 3, Int>::from_data([[[1]], [[2]], [[3]]], &device);
+        let pos = Tensor::<TestBackend, 3, burn::tensor::Int>::from_data([[[1]], [[2]], [[3]]], &device);
 
         let out = rope.forward(x, pos);
         let data = out.into_data();

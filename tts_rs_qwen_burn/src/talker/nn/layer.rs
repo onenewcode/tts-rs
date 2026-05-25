@@ -1,11 +1,21 @@
 use burn::module::Module;
-use burn::nn::{RmsNorm, RotaryEncoding};
+use burn::nn::RmsNorm;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
 use super::super::cache::KeyValueCache;
-use super::attention::Qwen3TtsAttention;
+use super::attention::{AttentionPosition, Qwen3TtsAttention};
 use super::mlp::Qwen3TtsTextMlp;
+use super::rms_norm::qwen_rms_norm;
+
+pub struct DecoderLayerOutput<B: Backend> {
+    pub hidden: Tensor<B, 3>,
+    pub input_norm: Option<Tensor<B, 3>>,
+    pub attn_residual: Option<Tensor<B, 3>>,
+    pub post_attention_norm: Option<Tensor<B, 3>>,
+    pub attn_output: Option<Tensor<B, 3>>,
+    pub mlp_output: Option<Tensor<B, 3>>,
+}
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsDecoderLayer<B: Backend> {
@@ -16,92 +26,39 @@ pub struct Qwen3TtsDecoderLayer<B: Backend> {
 }
 
 impl<B: Backend> Qwen3TtsDecoderLayer<B> {
-    /// Forward pass with multimodal RoPE (pre-calculated cos/sin)
     pub fn forward(
         &self,
         x: Tensor<B, 3>,
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        cos: Tensor<B, 4>,
-        sin: Tensor<B, 4>,
+        position: AttentionPosition<'_, B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
-    ) -> Tensor<B, 3> {
+        collect_activations: bool,
+    ) -> DecoderLayerOutput<B> {
         let residual = x.clone();
-        let x = self.input_layernorm.forward(x);
-        let x = self.self_attn.forward_mrope(
-            x,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            cos,
-            sin,
-            mask,
-            cache,
-        );
-        let x = residual + x;
-
-        let residual = x.clone();
-        let x = self.post_attention_layernorm.forward(x);
-        let x = self.mlp.forward(x);
-        residual + x
-    }
-
-    /// Forward pass with multimodal RoPE, returning attention and MLP branch outputs.
-    pub fn forward_with_activations(
-        &self,
-        x: Tensor<B, 3>,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        cos: Tensor<B, 4>,
-        sin: Tensor<B, 4>,
-        mask: Option<Tensor<B, 4, Bool>>,
-        cache: &mut KeyValueCache<B>,
-    ) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
-        let residual = x.clone();
-        let x = self.input_layernorm.forward(x);
-        let attn_output = self.self_attn.forward_mrope(
-            x,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            cos,
-            sin,
-            mask,
-            cache,
-        );
+        let x = qwen_rms_norm(&self.input_layernorm, x);
+        let input_norm = x.clone();
+        let attn_output =
+            self.self_attn
+                .forward(x, num_heads, num_kv_heads, head_dim, position, mask, cache);
         let x = residual + attn_output.clone();
+        let attn_residual = x.clone();
 
         let residual = x.clone();
-        let x = self.post_attention_layernorm.forward(x);
+        let x = qwen_rms_norm(&self.post_attention_layernorm, x);
+        let post_attention_norm = x.clone();
         let mlp_output = self.mlp.forward(x);
         let hidden = residual + mlp_output.clone();
-        (hidden, attn_output, mlp_output)
-    }
 
-    /// Forward pass with standard RoPE (official Module)
-    pub fn forward_with_rope(
-        &self,
-        x: Tensor<B, 3>,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        rope: &RotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
-        cache: &mut KeyValueCache<B>,
-    ) -> Tensor<B, 3> {
-        let residual = x.clone();
-        let x = self.input_layernorm.forward(x);
-        let x = self
-            .self_attn
-            .forward(x, num_heads, num_kv_heads, head_dim, rope, mask, cache);
-        let x = residual + x;
-
-        let residual = x.clone();
-        let x = self.post_attention_layernorm.forward(x);
-        let x = self.mlp.forward(x);
-        residual + x
+        DecoderLayerOutput {
+            hidden,
+            input_norm: collect_activations.then_some(input_norm),
+            attn_residual: collect_activations.then_some(attn_residual),
+            post_attention_norm: collect_activations.then_some(post_attention_norm),
+            attn_output: collect_activations.then_some(attn_output),
+            mlp_output: collect_activations.then_some(mlp_output),
+        }
     }
 }

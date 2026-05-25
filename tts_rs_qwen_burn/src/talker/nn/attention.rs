@@ -1,11 +1,22 @@
 use burn::module::Module;
 use burn::nn::{Linear, RmsNorm, RotaryEncoding};
+use burn::tensor::DType;
+use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::module::attention;
-use burn::tensor::ops::AttentionModuleOptions;
 use burn::tensor::{Bool, Tensor};
 
 use super::super::cache::KeyValueCache;
+use super::rms_norm::qwen_rms_norm;
+
+pub enum AttentionPosition<'a, B: Backend> {
+    Standard {
+        rope: &'a RotaryEncoding<B>,
+    },
+    Mrope {
+        cos: Tensor<B, 4>,
+        sin: Tensor<B, 4>,
+    },
+}
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAttention<B: Backend> {
@@ -18,14 +29,13 @@ pub struct Qwen3TtsAttention<B: Backend> {
 }
 
 impl<B: Backend> Qwen3TtsAttention<B> {
-    /// Forward pass for Qwen3TtsAttention with standard RoPE (for CodePredictor)
     pub fn forward(
         &self,
         x: Tensor<B, 3>,
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        rope: &RotaryEncoding<B>,
+        position: AttentionPosition<'_, B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
@@ -36,72 +46,31 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let v = self.v_proj.forward(x);
 
         // Apply norm PER HEAD (last dimension after reshape)
-        let q = self
-            .q_norm
-            .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
-            .swap_dims(1, 2);
-        let k = self
-            .k_norm
-            .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
-            .swap_dims(1, 2);
-        let v = v
-            .reshape([batch_size, seq_len, num_kv_heads, head_dim])
-            .swap_dims(1, 2);
-
-        // Apply official RoPE
-        let offset = cache.len();
-        let q = rope.apply(q, offset);
-        let k = rope.apply(k, offset);
-
-        let (k, v) = cache.forward(k, v);
-
-        self.execute_attention(
-            batch_size,
-            seq_len,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            q,
-            k,
-            v,
-            mask,
+        let q = qwen_rms_norm(
+            &self.q_norm,
+            q.reshape([batch_size, seq_len, num_heads, head_dim]),
         )
-    }
-
-    /// Forward pass for Qwen3TtsAttention with pre-calculated multimodal RoPE tensors (for Talker)
-    pub fn forward_mrope(
-        &self,
-        x: Tensor<B, 3>,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        cos: Tensor<B, 4>,
-        sin: Tensor<B, 4>,
-        mask: Option<Tensor<B, 4, Bool>>,
-        cache: &mut KeyValueCache<B>,
-    ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, _] = x.dims();
-
-        let q = self.q_proj.forward(x.clone());
-        let k = self.k_proj.forward(x.clone());
-        let v = self.v_proj.forward(x);
-
-        // Apply norm PER HEAD (last dimension after reshape)
-        let q = self
-            .q_norm
-            .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
-            .swap_dims(1, 2);
-        let k = self
-            .k_norm
-            .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
-            .swap_dims(1, 2);
+        .swap_dims(1, 2);
+        let k = qwen_rms_norm(
+            &self.k_norm,
+            k.reshape([batch_size, seq_len, num_kv_heads, head_dim]),
+        )
+        .swap_dims(1, 2);
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
 
-        // Apply mRoPE rotation
-        let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
-        let k = (k.clone() * cos) + (rotate_half(k) * sin);
+        let (q, k) = match position {
+            AttentionPosition::Standard { rope } => {
+                let offset = cache.len();
+                (rope.apply(q, offset), rope.apply(k, offset))
+            }
+            AttentionPosition::Mrope { cos, sin } => {
+                let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
+                let k = (k.clone() * cos) + (rotate_half(k) * sin);
+                (q, k)
+            }
+        };
 
         let (k, v) = cache.forward(k, v);
 
@@ -134,24 +103,24 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let k = repeat_kv(k, n_rep);
         let v = repeat_kv(v, n_rep);
 
-        let scale = (head_dim as f64).powf(-0.5);
-        let attn_output = attention(
-            q,
-            k,
-            v,
-            mask,
-            None,
-            AttentionModuleOptions {
-                scale: Some(scale),
-                softcap: None,
-                is_causal: true,
-            },
-        );
+        let dtype = q.dtype();
+        // Match Burn MHA attn_scores: Q @ K^T / sqrt(d_k), then FP32 softmax matching PyTorch.
+        let attn_scores = q
+            .matmul(k.swap_dims(2, 3))
+            .div_scalar((head_dim as f32).sqrt());
+        let attn_scores = if let Some(mask) = mask {
+            attn_scores.mask_fill(mask, f32::NEG_INFINITY)
+        } else {
+            attn_scores
+        };
+        let attn_weights = softmax(attn_scores.cast(DType::F32), 3).cast(dtype);
+        let attn_output = attn_weights.matmul(v);
 
-        let attn_output =
-            attn_output
-                .swap_dims(1, 2)
-                .reshape([batch_size, seq_len, num_heads * head_dim]);
+        // clone after swap_dims to ensure contiguous layout (matching PyTorch's .contiguous())
+        let attn_output = attn_output
+            .swap_dims(1, 2);
+        let attn_output = attn_output
+            .reshape([batch_size, seq_len, num_heads * head_dim]);
         self.o_proj.forward(attn_output)
     }
 }

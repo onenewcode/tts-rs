@@ -53,6 +53,7 @@ def generate_reference(model_dir, output_json, input_text="Hello", max_new_token
             "shape": list(output.shape),
             "first_5": flattened[:5].tolist(),
             "last_5": flattened[-5:].tolist(),
+            "values": flattened.tolist(),
         }
 
     def collect_prefill_outputs():

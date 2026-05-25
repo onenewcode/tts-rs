@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-burn = { workspace = true, features = ["std", "flex"] }
+burn = { workspace = true, features = ["std", "tch", "flex"] }
 burn-store = { workspace = true, features = ["std", "pytorch", "safetensors"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,14 +1,18 @@
-use burn::backend::Flex;
+use burn::backend::LibTorch;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
 use tts_rs_qwen_burn::{
-    KeyValueCache, TalkerDecodeInput, TalkerForwardInput, forward_talker_decode_step,
-    forward_talker_prefill, load_qwen3_tts_talker_for_inference,
+    KeyValueCache, TalkerDecodeInput, TalkerForwardInput, TalkerGenerateInput,
+    forward_talker_decode_step, forward_talker_prefill, generate_talker_tokens,
+    load_qwen3_tts_talker_for_inference,
 };
 
-type Backend = Flex;
+mod common;
+
+type Backend = LibTorch;
+const EDGE_ABS_TOLERANCE: f32 = 0.005;
 
 #[derive(Deserialize)]
 struct ReferenceData {
@@ -16,6 +20,8 @@ struct ReferenceData {
     decode_input: Option<DecodeInputData>,
     expected: ExpectedData,
     decode_expected: Option<DecodeExpectedData>,
+    generation_input: Option<GenerationInputData>,
+    generation_expected: Option<GenerationExpectedData>,
 }
 
 #[derive(Deserialize)]
@@ -51,11 +57,30 @@ struct DecodeExpectedData {
 }
 
 #[derive(Deserialize)]
+struct GenerationInputData {
+    max_new_tokens: usize,
+}
+
+#[derive(Deserialize)]
+struct GenerationExpectedData {
+    generated_token_ids: Vec<Vec<i32>>,
+    prefill_selected_token_id: Vec<i32>,
+    steps: Vec<GenerationStepExpectedData>,
+}
+
+#[derive(Deserialize)]
+struct GenerationStepExpectedData {
+    token_id: Vec<i32>,
+    logits: TensorStats,
+    cache_len_before: usize,
+    cache_len_after: usize,
+}
+
+#[derive(Deserialize)]
 struct TensorStats {
     shape: Vec<usize>,
-    sum: f32,
     first_5: Vec<f32>,
-    values: Option<Vec<f32>>,
+    last_5: Vec<f32>,
 }
 
 #[test]
@@ -64,14 +89,14 @@ fn test_numerical_alignment_with_python_reference() {
     let device = Default::default();
 
     // 1. Load reference data
-    let ref_path = "../reference.json";
+    let ref_path = common::workspace_root().join("reference.json");
     let ref_json = fs::read_to_string(ref_path)
         .expect("reference.json not found. Run `python py/generate_reference.py` first.");
     let ref_data: ReferenceData = serde_json::from_str(&ref_json).unwrap();
 
     // 2. Load Rust Model
-    let model_dir = "../Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice";
-    let loaded = load_qwen3_tts_talker_for_inference::<Backend>(model_dir, &device)
+    let model_dir = common::resolve_model_dir();
+    let loaded = load_qwen3_tts_talker_for_inference::<Backend>(&model_dir, &device)
         .expect("Failed to load Rust model");
 
     // 3. Prepare Input Tensors from JSON
@@ -130,76 +155,31 @@ fn test_numerical_alignment_with_python_reference() {
         .activations
         .get("model.norm.output")
         .expect("final norm activation should be collected");
-    compare_stats(
-        "Layer0",
-        layer_0.clone(),
-        &ref_data.expected.layer_0_output,
-        1.0,
-        0.03125,
-    );
     for layer_idx in 0..config.num_hidden_layers {
-        let name = format!("layers.{layer_idx}.hidden.output");
-        if let (Some(actual), Some(expected)) = (
-            output.activations.get(&name),
-            ref_data.expected.activations.get(&name),
-        ) {
-            compare_stats(&name, actual.clone(), expected, 8.0, 0.0625);
+        for suffix in [
+            "input_norm.output",
+            "attn.output",
+            "attn_residual.output",
+            "post_attention_norm.output",
+            "mlp.output",
+            "hidden.output",
+        ] {
+            let name = format!("layers.{layer_idx}.{suffix}");
+            if let (Some(actual), Some(expected)) = (
+                output.activations.get(&name),
+                ref_data.expected.activations.get(&name),
+            ) {
+                compare_edge_values(&name, actual.clone(), expected);
+            }
         }
     }
-    compare_stats(
+    compare_edge_values("Layer0", layer_0.clone(), &ref_data.expected.layer_0_output);
+    compare_edge_values(
         "FinalNorm",
         final_norm.clone(),
         &ref_data.expected.final_norm,
-        16.0,
-        0.25,
     );
-    assert_eq!(
-        actual_logits.dims(),
-        ref_data.expected.logits.shape.as_slice()
-    );
-    let actual_sum: f32 = actual_logits
-        .clone()
-        .cast(DType::F32)
-        .sum()
-        .into_data()
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .unwrap()[0];
-
-    println!("Python Logits Sum: {}", ref_data.expected.logits.sum);
-    println!("Rust   Logits Sum: {}", actual_sum);
-
-    let actual_first_5: Vec<f32> = actual_logits
-        .clone()
-        .flatten::<1>(0, 2)
-        .slice([0..5])
-        .into_data()
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .unwrap();
-    println!("Python First 5: {:?}", ref_data.expected.logits.first_5);
-    println!("Rust   First 5: {:?}", actual_first_5);
-
-    if let Some(expected_values) = &ref_data.expected.logits.values {
-        compare_full_values("Logits", actual_logits.clone(), expected_values);
-    }
-
-    let diff = (actual_sum - ref_data.expected.logits.sum).abs();
-    assert!(diff < 512.0, "Logits sum deviation too large: {}", diff);
-
-    for (i, (a, e)) in actual_first_5
-        .iter()
-        .zip(ref_data.expected.logits.first_5.iter())
-        .enumerate()
-    {
-        assert!(
-            (a - e).abs() < 0.25,
-            "Value mismatch at index {}: rust={}, py={}",
-            i,
-            a,
-            e
-        );
-    }
+    compare_edge_values("Logits", actual_logits.clone(), &ref_data.expected.logits);
 
     if let (Some(decode_input), Some(decode_expected)) =
         (&ref_data.decode_input, &ref_data.decode_expected)
@@ -274,131 +254,195 @@ fn test_numerical_alignment_with_python_reference() {
                 decode_output.activations.get(&name),
                 decode_expected.activations.get(&name),
             ) {
-                compare_stats(
-                    &format!("Decode {name}"),
-                    actual.clone(),
-                    expected,
-                    8.0,
-                    0.125,
-                );
+                compare_edge_values(&format!("Decode {name}"), actual.clone(), expected);
             }
         }
-        compare_stats(
+        compare_edge_values(
             "DecodeFinalNorm",
             decode_output.last_hidden_state.clone(),
             &decode_expected.last_hidden_state,
-            16.0,
-            0.75,
         );
-        compare_stats(
+        compare_edge_values(
             "DecodeLogits",
             decode_output.logits.clone(),
             &decode_expected.logits,
-            512.0,
-            0.75,
+        );
+    } else {
+        println!("Decode alignment skipped: reference.json has no V2 decode case");
+    }
+
+    if let (Some(generation_input), Some(generation_expected)) =
+        (&ref_data.generation_input, &ref_data.generation_expected)
+    {
+        let generation_embeds = Tensor::<Backend, 3>::from_data(
+            TensorData::new(
+                ref_data
+                    .input
+                    .inputs_embeds
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                dims3_f32(&ref_data.input.inputs_embeds),
+            ),
+            &device,
+        )
+        .cast(DType::BF16);
+        let generation_position_ids = Tensor::<Backend, 3, Int>::from_data(
+            TensorData::new(
+                ref_data
+                    .input
+                    .position_ids
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                dims3_i32(&ref_data.input.position_ids),
+            ),
+            &device,
+        );
+        let mut generation_cache = (0..config.num_hidden_layers)
+            .map(|_| KeyValueCache::new(1, config.num_key_value_heads, 512, config.head_dim))
+            .collect::<Vec<_>>();
+
+        let generation_output = generate_talker_tokens(
+            config,
+            &loaded,
+            TalkerGenerateInput {
+                prefill_inputs_embeds: generation_embeds,
+                prefill_position_ids: generation_position_ids,
+                prefill_attention_mask: None,
+                max_new_tokens: generation_input.max_new_tokens,
+                collect_step_diagnostics: true,
+            },
+            &mut generation_cache,
+        )
+        .expect("Rust generation failed");
+
+        let actual_token_ids = generation_output
+            .generated_token_ids
+            .clone()
+            .into_data()
+            .convert::<i32>()
+            .into_vec::<i32>()
+            .unwrap();
+        let expected_token_ids = generation_expected
+            .generated_token_ids
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_token_ids, expected_token_ids,
+            "generated token ids should match Python greedy generation"
         );
 
-        if let Some(expected_values) = &decode_expected.logits.values {
-            compare_full_values_with_tolerance(
-                "Decode logits",
-                decode_output.logits.clone(),
-                expected_values,
-                2.0,
-                0.2,
+        let actual_prefill_token = generation_output
+            .generated_token_ids
+            .clone()
+            .slice([0..1, 0..1])
+            .into_data()
+            .convert::<i32>()
+            .into_vec::<i32>()
+            .unwrap();
+        assert_eq!(
+            actual_prefill_token, generation_expected.prefill_selected_token_id,
+            "prefill selected token should come from the last prefill logits"
+        );
+
+        assert_eq!(
+            generation_output.step_logits.len(),
+            generation_expected.steps.len(),
+            "generation decode step count"
+        );
+        for (idx, (actual_logits, expected_step)) in generation_output
+            .step_logits
+            .iter()
+            .zip(generation_expected.steps.iter())
+            .enumerate()
+        {
+            let actual_step_token = generation_output
+                .generated_token_ids
+                .clone()
+                .slice([0..1, idx + 1..idx + 2])
+                .into_data()
+                .convert::<i32>()
+                .into_vec::<i32>()
+                .unwrap();
+            assert_eq!(
+                actual_step_token, expected_step.token_id,
+                "generation step {idx} selected token"
+            );
+            assert_eq!(
+                generation_output.step_diagnostics[idx].cache_len_before,
+                expected_step.cache_len_before,
+                "generation step {idx} cache length before"
+            );
+            assert_eq!(
+                generation_output.step_diagnostics[idx].cache_len_after,
+                expected_step.cache_len_after,
+                "generation step {idx} cache length after"
+            );
+            compare_edge_values(
+                &format!("Generation step {idx} logits"),
+                actual_logits.clone(),
+                &expected_step.logits,
             );
         }
     } else {
-        println!("Decode alignment skipped: reference.json has no V2 decode case");
+        println!("Generation alignment skipped: reference.json has no V3 generation case");
     }
 
     println!("Numerical alignment check PASSED!");
 }
 
-fn compare_stats(
-    name: &str,
-    tensor: Tensor<Backend, 3>,
-    expected: &TensorStats,
-    sum_tolerance: f32,
-    first_values_tolerance: f32,
-) {
+fn compare_edge_values(name: &str, tensor: Tensor<Backend, 3>, expected: &TensorStats) {
     assert_eq!(
         tensor.dims(),
         expected.shape.as_slice(),
         "{name} shape mismatch"
     );
-    let actual_sum: f32 = tensor
-        .clone()
-        .cast(DType::F32)
-        .sum()
-        .into_data()
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .unwrap()[0];
-    let actual_first_5 = tensor
+    let actual_values = tensor
         .flatten::<1>(0, 2)
-        .slice([0..5])
         .into_data()
         .convert::<f32>()
         .into_vec::<f32>()
         .unwrap();
-    println!("{name} Python Sum: {}", expected.sum);
-    println!("{name} Rust   Sum: {}", actual_sum);
+
+    let actual_first_5 = actual_values.iter().take(5).copied().collect::<Vec<_>>();
+    let mut actual_last_5 = actual_values
+        .iter()
+        .rev()
+        .take(5)
+        .copied()
+        .collect::<Vec<_>>();
+    actual_last_5.reverse();
+
     println!("{name} Python First 5: {:?}", expected.first_5);
     println!("{name} Rust   First 5: {:?}", actual_first_5);
-    let sum_diff = (actual_sum - expected.sum).abs();
-    assert!(
-        sum_diff < sum_tolerance,
-        "{name} sum deviation too large: {sum_diff}"
+    println!("{name} Python Last 5: {:?}", expected.last_5);
+    println!("{name} Rust   Last 5: {:?}", actual_last_5);
+
+    compare_edge_slice(name, "first_5", &actual_first_5, &expected.first_5);
+    compare_edge_slice(name, "last_5", &actual_last_5, &expected.last_5);
+}
+
+fn compare_edge_slice(name: &str, edge: &str, actual: &[f32], expected: &[f32]) {
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "{name} {edge} length mismatch"
     );
-    for (idx, (actual, expected)) in actual_first_5
-        .iter()
-        .zip(expected.first_5.iter())
-        .enumerate()
-    {
+    for (idx, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
         let diff = (actual - expected).abs();
+        println!("{name} {edge}[{idx}] rust={actual} py={expected} diff={diff}");
         assert!(
-            diff <= first_values_tolerance,
-            "{name} first_5[{idx}] mismatch: rust={actual}, py={expected}, diff={diff}"
+            diff <= EDGE_ABS_TOLERANCE,
+            "{name} {edge}[{idx}] mismatch: rust={actual}, py={expected}, diff={diff}, tolerance={EDGE_ABS_TOLERANCE}"
         );
     }
-}
-
-fn compare_full_values(name: &str, tensor: Tensor<Backend, 3>, expected_values: &[f32]) {
-    compare_full_values_with_tolerance(name, tensor, expected_values, 0.75, 0.08);
-}
-
-fn compare_full_values_with_tolerance(
-    name: &str,
-    tensor: Tensor<Backend, 3>,
-    expected_values: &[f32],
-    max_abs_tolerance: f32,
-    mean_abs_tolerance: f32,
-) {
-    let actual_values: Vec<f32> = tensor
-        .flatten::<1>(0, 2)
-        .into_data()
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .unwrap();
-    assert_eq!(actual_values.len(), expected_values.len());
-    let mut max_abs_diff = 0.0f32;
-    let mut sum_abs_diff = 0.0f32;
-    for (actual, expected) in actual_values.iter().zip(expected_values.iter()) {
-        let diff = (actual - expected).abs();
-        max_abs_diff = max_abs_diff.max(diff);
-        sum_abs_diff += diff;
-    }
-    let mean_abs_diff = sum_abs_diff / actual_values.len() as f32;
-    println!("{name} max abs diff: {max_abs_diff}");
-    println!("{name} mean abs diff: {mean_abs_diff}");
-    assert!(
-        max_abs_diff < max_abs_tolerance,
-        "{name} max abs diff too large: {max_abs_diff}"
-    );
-    assert!(
-        mean_abs_diff < mean_abs_tolerance,
-        "{name} mean abs diff too large: {mean_abs_diff}"
-    );
 }
 
 fn dims3_f32(values: &[Vec<Vec<f32>>]) -> [usize; 3] {

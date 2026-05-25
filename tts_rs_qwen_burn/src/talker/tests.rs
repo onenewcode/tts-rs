@@ -1,15 +1,16 @@
-use burn::backend::Flex;
+use burn::backend::LibTorch;
 use burn::tensor::Tensor;
 
 use super::cache::KeyValueCache;
 use super::config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::inference::{
-    CodePredictorTeacherForcedInput, TalkerDecodeInput, TalkerForwardInput,
+    CodePredictorTeacherForcedInput, TalkerDecodeInput, TalkerForwardInput, TalkerGenerateInput,
     forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
+    generate_talker_tokens,
 };
 use super::remap::{talker_export_key_remapper, talker_load_key_remapper};
 
-type TestBackend = Flex;
+type TestBackend = LibTorch;
 
 fn sample_talker_config(
     code_predictor_hidden_size: usize,
@@ -53,6 +54,19 @@ fn apply_remapper(remapper: &burn_store::KeyRemapper, key: &str) -> String {
         }
     }
     out
+}
+
+fn sample_loaded_talker(
+    config: &Qwen3TtsConfig,
+) -> crate::talker::LoadedQwen3TtsTalker<TestBackend> {
+    let device = Default::default();
+    crate::talker::LoadedQwen3TtsTalker {
+        config: config.clone(),
+        model: config.init_checkpoint::<TestBackend>(&device),
+        load_report: crate::manifest::LoadReport::default(),
+        model_dir: std::path::PathBuf::new(),
+        weights_path: std::path::PathBuf::new(),
+    }
 }
 
 #[test]
@@ -326,6 +340,139 @@ fn forward_talker_decode_step_rejects_multi_token_input() {
     .expect_err("decode should reject multi-token inputs");
 
     assert!(err.to_string().contains("exactly one token"));
+}
+
+#[test]
+fn generate_talker_tokens_rejects_zero_new_tokens() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let loaded = sample_loaded_talker(&config);
+    let mut cache = (0..config.talker_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let err = generate_talker_tokens(
+        &config.talker_config,
+        &loaded,
+        TalkerGenerateInput {
+            prefill_inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device),
+            prefill_position_ids: Tensor::from_data(
+                [[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]],
+                &device,
+            ),
+            prefill_attention_mask: None,
+            max_new_tokens: 0,
+            collect_step_diagnostics: false,
+        },
+        &mut cache,
+    )
+    .expect_err("generation should reject zero new tokens");
+
+    assert!(err.to_string().contains("max_new_tokens"));
+}
+
+#[test]
+fn generate_talker_tokens_returns_expected_shape_and_cache_len() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let loaded = sample_loaded_talker(&config);
+    let mut cache = (0..config.talker_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let output = generate_talker_tokens(
+        &config.talker_config,
+        &loaded,
+        TalkerGenerateInput {
+            prefill_inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device),
+            prefill_position_ids: Tensor::from_data(
+                [[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]],
+                &device,
+            ),
+            prefill_attention_mask: Some(Tensor::from_data([[1i32, 1, 1]], &device)),
+            max_new_tokens: 4,
+            collect_step_diagnostics: true,
+        },
+        &mut cache,
+    )
+    .expect("generation should succeed");
+
+    assert_eq!(output.generated_token_ids.dims(), [1, 4]);
+    assert_eq!(output.prefill_logits.dims(), [1, 3, 32]);
+    assert_eq!(output.step_logits.len(), 3);
+    assert_eq!(output.step_diagnostics.len(), 3);
+    assert!(cache.iter().all(|layer_cache| layer_cache.len() == 6));
+    assert_eq!(output.step_diagnostics[0].cache_len_before, 3);
+    assert_eq!(output.step_diagnostics[0].cache_len_after, 4);
+}
+
+#[test]
+fn generate_talker_tokens_selects_first_token_from_last_prefill_position() {
+    let config = sample_talker_config(12, 4);
+    let device = Default::default();
+    let loaded = sample_loaded_talker(&config);
+    let mut cache = (0..config.talker_config.num_hidden_layers)
+        .map(|_| {
+            KeyValueCache::new(
+                1,
+                config.talker_config.num_key_value_heads,
+                10,
+                config.talker_config.head_dim,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let output = generate_talker_tokens(
+        &config.talker_config,
+        &loaded,
+        TalkerGenerateInput {
+            prefill_inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device),
+            prefill_position_ids: Tensor::from_data(
+                [[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]],
+                &device,
+            ),
+            prefill_attention_mask: None,
+            max_new_tokens: 1,
+            collect_step_diagnostics: false,
+        },
+        &mut cache,
+    )
+    .expect("generation should succeed");
+
+    let expected_first_token = output
+        .prefill_logits
+        .clone()
+        .slice([0..1, 2..3, 0..32])
+        .argmax(2)
+        .reshape([1, 1])
+        .into_data()
+        .convert::<i32>()
+        .into_vec::<i32>()
+        .unwrap();
+    let actual_first_token = output
+        .generated_token_ids
+        .slice([0..1, 0..1])
+        .into_data()
+        .convert::<i32>()
+        .into_vec::<i32>()
+        .unwrap();
+
+    assert_eq!(actual_first_token, expected_first_token);
+    assert!(cache.iter().all(|layer_cache| layer_cache.len() == 3));
 }
 
 #[test]

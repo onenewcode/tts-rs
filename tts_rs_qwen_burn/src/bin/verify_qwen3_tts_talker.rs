@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use burn::backend::Flex;
+use burn::backend::LibTorch;
 use tts_rs_qwen_burn::{
     VerificationArtifacts, default_workspace_root, find_local_qwen_tts_model_dir,
     load_qwen3_tts_talker, verify_qwen3_tts_talker_weights,
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| default_workspace_root().join("artifacts/qwen3_tts/talker"));
 
     let device = Default::default();
-    let loaded = load_qwen3_tts_talker::<Flex>(&model_dir, &device)?;
+    let loaded = load_qwen3_tts_talker::<LibTorch>(&model_dir, &device)?;
     let artifacts = VerificationArtifacts::new(output_dir);
     let verification =
         verify_qwen3_tts_talker_weights(&loaded.model, &loaded.weights_path, Some(&artifacts))?;

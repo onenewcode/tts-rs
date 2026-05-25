@@ -42,6 +42,30 @@ pub struct TalkerDecodeOutput<B: Backend> {
 }
 
 #[derive(Debug)]
+pub struct TalkerGenerateInput<B: Backend> {
+    pub prefill_inputs_embeds: Tensor<B, 3>,
+    pub prefill_position_ids: Tensor<B, 3, Int>,
+    pub prefill_attention_mask: Option<Tensor<B, 2, Int>>,
+    pub max_new_tokens: usize,
+    pub collect_step_diagnostics: bool,
+}
+
+#[derive(Debug)]
+pub struct TalkerGenerateStepDiagnostic<B: Backend> {
+    pub cache_len_before: usize,
+    pub cache_len_after: usize,
+    pub activations: TalkerActivations<B>,
+}
+
+#[derive(Debug)]
+pub struct TalkerGenerateOutput<B: Backend> {
+    pub generated_token_ids: Tensor<B, 2, Int>,
+    pub prefill_logits: Tensor<B, 3>,
+    pub step_logits: Vec<Tensor<B, 3>>,
+    pub step_diagnostics: Vec<TalkerGenerateStepDiagnostic<B>>,
+}
+
+#[derive(Debug)]
 pub struct CodePredictorTeacherForcedInput<B: Backend> {
     pub talker_hidden_states: Tensor<B, 2>,
     pub codec_ids: Tensor<B, 2, Int>,
@@ -70,28 +94,16 @@ pub fn forward_talker_prefill<B: Backend>(
         None,
     )?;
 
-    let (last_hidden_state, logits, activations) = if input.collect_activations {
-        loaded.model.talker.forward_with_activations(
-            input.inputs_embeds,
-            input.position_ids,
-            input.attention_mask,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            cache,
-        )
-    } else {
-        let (last_hidden_state, logits) = loaded.model.talker.forward(
-            input.inputs_embeds,
-            input.position_ids,
-            input.attention_mask,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            cache,
-        );
-        (last_hidden_state, logits, BTreeMap::new())
-    };
+    let (last_hidden_state, logits, activations) = loaded.model.talker.forward(
+        input.inputs_embeds,
+        input.position_ids,
+        input.attention_mask,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+        cache,
+        input.collect_activations,
+    );
 
     Ok(TalkerForwardOutput {
         last_hidden_state,
@@ -116,33 +128,114 @@ pub fn forward_talker_decode_step<B: Backend>(
         Some(cache_len),
     )?;
 
-    let (last_hidden_state, logits, activations) = if input.collect_activations {
-        loaded.model.talker.forward_with_activations(
-            input.inputs_embeds,
-            input.position_ids,
-            input.attention_mask,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            cache,
-        )
-    } else {
-        let (last_hidden_state, logits) = loaded.model.talker.forward(
-            input.inputs_embeds,
-            input.position_ids,
-            input.attention_mask,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            cache,
-        );
-        (last_hidden_state, logits, BTreeMap::new())
-    };
+    let (last_hidden_state, logits, activations) = loaded.model.talker.forward(
+        input.inputs_embeds,
+        input.position_ids,
+        input.attention_mask,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+        cache,
+        input.collect_activations,
+    );
 
     Ok(TalkerDecodeOutput {
         last_hidden_state,
         logits,
         activations,
+    })
+}
+
+pub fn generate_talker_tokens<B: Backend>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    input: TalkerGenerateInput<B>,
+    cache: &mut [KeyValueCache<B>],
+) -> Result<TalkerGenerateOutput<B>, Qwen3TtsInferenceError> {
+    validate_cache_layer_count(config, cache)?;
+    if input.max_new_tokens == 0 {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "talker generation max_new_tokens must be greater than zero".to_string(),
+        });
+    }
+
+    for layer_cache in cache.iter_mut() {
+        layer_cache.reset();
+    }
+
+    let device = input.prefill_inputs_embeds.device();
+    let [batch_size, prefill_len, _hidden_size] = input.prefill_inputs_embeds.dims();
+    let collect_step_diagnostics = input.collect_step_diagnostics;
+
+    let prefill_output = forward_talker_prefill(
+        config,
+        loaded,
+        TalkerForwardInput {
+            inputs_embeds: input.prefill_inputs_embeds,
+            position_ids: input.prefill_position_ids,
+            attention_mask: input.prefill_attention_mask,
+            collect_activations: false,
+        },
+        cache,
+    )?;
+
+    let mut selected_token = select_last_position_token(prefill_output.logits.clone());
+    let mut generated_tokens = vec![selected_token.clone()];
+    let mut step_logits = Vec::new();
+    let mut step_diagnostics = Vec::new();
+
+    for _step_idx in 1..input.max_new_tokens {
+        let cache_len_before = validate_cache_lengths(cache)?;
+        let inputs_embeds = loaded
+            .model
+            .talker
+            .model
+            .codec_embedding
+            .forward(selected_token);
+        let position_ids =
+            Tensor::<B, 3, Int>::full([3, batch_size, 1], cache_len_before as i32, &device);
+        let decode_output = forward_talker_decode_step(
+            config,
+            loaded,
+            TalkerDecodeInput {
+                inputs_embeds,
+                position_ids,
+                attention_mask: None,
+                collect_activations: collect_step_diagnostics,
+            },
+            cache,
+        )?;
+
+        let cache_len_after = validate_cache_lengths(cache)?;
+        selected_token = select_last_position_token(decode_output.logits.clone());
+        generated_tokens.push(selected_token.clone());
+
+        if collect_step_diagnostics {
+            step_logits.push(decode_output.logits);
+            step_diagnostics.push(TalkerGenerateStepDiagnostic {
+                cache_len_before,
+                cache_len_after,
+                activations: decode_output.activations,
+            });
+        }
+    }
+
+    let generated_token_ids = Tensor::cat(generated_tokens, 1);
+    let expected_cache_len = prefill_len + input.max_new_tokens - 1;
+    let final_cache_len = validate_cache_lengths(cache)?;
+    if final_cache_len != expected_cache_len {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!(
+                "talker generation final cache length mismatch: expected {expected_cache_len}, got {final_cache_len}"
+            ),
+        });
+    }
+
+    Ok(TalkerGenerateOutput {
+        generated_token_ids,
+        prefill_logits: prefill_output.logits,
+        step_logits,
+        step_diagnostics,
     })
 }
 
@@ -188,6 +281,14 @@ pub fn forward_code_predictor_teacher_forced<B: Backend>(
         logits,
         activations: BTreeMap::new(),
     })
+}
+
+fn select_last_position_token<B: Backend>(logits: Tensor<B, 3>) -> Tensor<B, 2, Int> {
+    let [batch_size, seq_len, _vocab_size] = logits.dims();
+    logits
+        .slice([0..batch_size, seq_len - 1..seq_len, 0.._vocab_size])
+        .argmax(2)
+        .reshape([batch_size, 1])
 }
 
 fn validate_cache_layer_count<B: Backend>(
