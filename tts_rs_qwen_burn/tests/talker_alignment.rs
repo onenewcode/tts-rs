@@ -4,9 +4,9 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
 use tts_rs_qwen_burn::{
-    CodePredictorGenerateInput, KeyValueCache, TalkerDecodeInput, TalkerForwardInput,
-    TalkerGenerateInput, forward_talker_decode_step, forward_talker_prefill,
-    generate_code_predictor_groups, generate_talker_tokens,
+    CodePredictorGenerateInput, KeyValueCache, SamplingConfig, StoppingRules, TalkerDecodeInput,
+    TalkerForwardInput, TalkerGenerateInput, forward_talker_decode_step,
+    forward_talker_prefill, generate_code_predictor_groups, generate_talker_tokens,
     load_qwen3_tts_talker_for_inference,
 };
 
@@ -343,7 +343,9 @@ fn test_numerical_alignment_with_python_reference() {
                 prefill_inputs_embeds: generation_embeds,
                 prefill_position_ids: generation_position_ids,
                 prefill_attention_mask: None,
-                max_new_tokens: generation_input.max_new_tokens,
+                sampling: SamplingConfig::greedy(),
+                stopping: StoppingRules { max_new_tokens: generation_input.max_new_tokens, eos_token_id: None },
+                suppress_token_ids: vec![],
                 collect_step_diagnostics: true,
             },
             &mut generation_cache,
@@ -471,6 +473,7 @@ fn test_numerical_alignment_with_python_reference() {
             CodePredictorGenerateInput {
                 talker_hidden_state,
                 base_codec_token_id,
+                sampling: SamplingConfig::greedy(),
                 collect_step_diagnostics: true,
             },
             &mut predictor_cache,

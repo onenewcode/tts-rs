@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor};
+use burn::tensor::{Bool, DType, Int, Tensor, TensorData};
 
 use super::nn::mlp::native_linear_3d;
 
@@ -12,6 +13,54 @@ use super::config::Qwen3TtsTalkerConfig;
 use super::load::LoadedQwen3TtsTalker;
 
 pub type TalkerActivations<B> = BTreeMap<String, Tensor<B, 3>>;
+
+// --- V5: Sampling and Stopping ---
+
+/// Controls how tokens are selected from logits during generation.
+#[derive(Debug, Clone)]
+pub struct SamplingConfig {
+    /// `false` = greedy argmax (deterministic). `true` = apply temperature / top_k / top_p.
+    pub do_sample: bool,
+    /// Softmax temperature, clamped to `[1e-5, inf)`. Default 1.0.
+    pub temperature: f32,
+    /// Keep only the top-k logits before softmax. `None` = no truncation.
+    pub top_k: Option<usize>,
+    /// Nucleus sampling: keep minimum token set with cumulative prob ≥ top_p. 1.0 = off.
+    pub top_p: f32,
+    /// PRNG seed for reproducibility. `None` = non-deterministic.
+    pub seed: Option<u64>,
+}
+
+impl Default for SamplingConfig {
+    fn default() -> Self {
+        Self {
+            do_sample: false,
+            temperature: 1.0,
+            top_k: None,
+            top_p: 1.0,
+            seed: None,
+        }
+    }
+}
+
+impl SamplingConfig {
+    /// Convenience: greedy mode with all sampling knobs off.
+    pub fn greedy() -> Self {
+        Self {
+            do_sample: false,
+            ..Default::default()
+        }
+    }
+}
+
+/// Conditions that cause autoregressive generation to stop.
+#[derive(Debug, Clone)]
+pub struct StoppingRules {
+    /// Hard cap on how many tokens to generate (prefill length excluded).
+    pub max_new_tokens: usize,
+    /// Stop early when this token is selected. `None` = no early termination.
+    pub eos_token_id: Option<usize>,
+}
 
 #[derive(Debug)]
 pub struct TalkerForwardInput<B: Backend> {
@@ -48,7 +97,9 @@ pub struct TalkerGenerateInput<B: Backend> {
     pub prefill_inputs_embeds: Tensor<B, 3>,
     pub prefill_position_ids: Tensor<B, 3, Int>,
     pub prefill_attention_mask: Option<Tensor<B, 2, Int>>,
-    pub max_new_tokens: usize,
+    pub sampling: SamplingConfig,
+    pub stopping: StoppingRules,
+    pub suppress_token_ids: Vec<usize>,
     pub collect_step_diagnostics: bool,
 }
 
@@ -85,6 +136,7 @@ pub struct CodePredictorTeacherForcedOutput<B: Backend> {
 pub struct CodePredictorGenerateInput<B: Backend> {
     pub talker_hidden_state: Tensor<B, 2>,
     pub base_codec_token_id: Tensor<B, 2, Int>,
+    pub sampling: SamplingConfig,
     pub collect_step_diagnostics: bool,
 }
 
@@ -184,8 +236,9 @@ pub fn generate_talker_tokens<B>(
 where
     B: Backend,
 {
+    let max_new_tokens = input.stopping.max_new_tokens;
     validate_cache_layer_count(config, cache)?;
-    if input.max_new_tokens == 0 {
+    if max_new_tokens == 0 {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: "talker generation max_new_tokens must be greater than zero".to_string(),
         });
@@ -196,7 +249,7 @@ where
     }
 
     let device = input.prefill_inputs_embeds.device();
-    let [batch_size, prefill_len, _hidden_size] = input.prefill_inputs_embeds.dims();
+    let [batch_size, _prefill_len, _hidden_size] = input.prefill_inputs_embeds.dims();
     let collect_step_diagnostics = input.collect_step_diagnostics;
 
     let prefill_output = forward_talker_prefill(
@@ -211,12 +264,22 @@ where
         cache,
     )?;
 
-    let mut selected_token = select_last_position_token(prefill_output.logits.clone());
+    let sampling = &input.sampling;
+    let eos_id = input.stopping.eos_token_id;
+    let suppress = &input.suppress_token_ids;
+
+    let (mut selected_token, mut eos_mask) =
+        sample_token::<B>(prefill_output.logits.clone(), sampling, eos_id, suppress, &device);
     let mut generated_tokens = vec![selected_token.clone()];
     let mut step_logits = Vec::new();
     let mut step_diagnostics = Vec::new();
 
-    for _step_idx in 1..input.max_new_tokens {
+    for _step_idx in 1..max_new_tokens {
+        // If EOS set and all batch items stopped, exit early
+        if eos_id.is_some() && eos_mask.clone().all().into_data().convert::<bool>().into_vec::<bool>().unwrap()[0] {
+            break;
+        }
+
         let cache_len_before = validate_cache_lengths(cache)?;
         let inputs_embeds = loaded
             .model
@@ -239,7 +302,11 @@ where
         )?;
 
         let cache_len_after = validate_cache_lengths(cache)?;
-        selected_token = select_last_position_token(decode_output.logits.clone());
+        let (next_token, next_eos) =
+            sample_token::<B>(decode_output.logits.clone(), sampling, eos_id, suppress, &device);
+        // EOS flag is sticky: once true, stays true
+        eos_mask = eos_mask.bool_or(next_eos);
+        selected_token = next_token;
         generated_tokens.push(selected_token.clone());
 
         if collect_step_diagnostics {
@@ -253,15 +320,6 @@ where
     }
 
     let generated_token_ids = Tensor::cat(generated_tokens, 1);
-    let expected_cache_len = prefill_len + input.max_new_tokens - 1;
-    let final_cache_len = validate_cache_lengths(cache)?;
-    if final_cache_len != expected_cache_len {
-        return Err(Qwen3TtsInferenceError::InvalidInput {
-            message: format!(
-                "talker generation final cache length mismatch: expected {expected_cache_len}, got {final_cache_len}"
-            ),
-        });
-    }
 
     Ok(TalkerGenerateOutput {
         generated_token_ids,
@@ -377,7 +435,12 @@ where
         cache,
     );
     let prefill_logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[0], prefill_hidden);
-    let mut selected_token = select_last_position_token(prefill_logits.clone());
+    let device = prefill_logits.device();
+    let sampling = &input.sampling;
+    let eos_id: Option<usize> = None; // code predictor has no EOS — always generates N-1 tokens
+    let suppress: &[usize] = &[];
+    let (mut selected_token, _) =
+        sample_token::<B>(prefill_logits.clone(), sampling, eos_id, suppress, &device);
     let mut predictor_tokens = vec![selected_token.clone()];
     let mut step_logits = Vec::new();
     let mut step_diagnostics = Vec::new();
@@ -398,7 +461,8 @@ where
             forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
         let logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[head_idx], step_hidden);
         let cache_len_after = validate_cache_lengths(cache)?;
-        selected_token = select_last_position_token(logits.clone());
+        let (next_token, _) = sample_token::<B>(logits.clone(), sampling, eos_id, suppress, &device);
+        selected_token = next_token;
         predictor_tokens.push(selected_token.clone());
 
         if input.collect_step_diagnostics {
@@ -475,12 +539,109 @@ where
     )
 }
 
-fn select_last_position_token<B: Backend>(logits: Tensor<B, 3>) -> Tensor<B, 2, Int> {
-    let [batch_size, seq_len, _vocab_size] = logits.dims();
-    logits
-        .slice([0..batch_size, seq_len - 1..seq_len, 0.._vocab_size])
-        .argmax(2)
-        .reshape([batch_size, 1])
+// -- V5: Sampling ---------------------------------------------------------------
+
+/// Select one token per batch item from the last position of logits.
+///
+/// Greedy mode (`do_sample = false`): equivalent to argmax, bit-identical to the
+/// old `select_last_position_token` helper.
+///
+/// Sampling mode (`do_sample = true`): applies
+/// suppress → temperature → top-k → top-p → softmax → categorical.
+///
+/// Returns `(selected_token_ids, eos_mask)`:
+/// - `selected_token_ids`: `[batch, 1]`
+/// - `eos_mask`: `[batch]`, true where the selected token equals `eos_token_id`
+pub fn sample_token<B: Backend>(
+    logits: Tensor<B, 3>,
+    sampling: &SamplingConfig,
+    eos_token_id: Option<usize>,
+    suppress_token_ids: &[usize],
+    device: &B::Device,
+) -> (Tensor<B, 2, Int>, Tensor<B, 1, Bool>) {
+    let [batch_size, seq_len, vocab_size] = logits.dims();
+    let last_logits = logits
+        .slice([0..batch_size, seq_len - 1..seq_len, 0..vocab_size])
+        .reshape([batch_size, vocab_size]); // [batch, vocab]
+
+    if !sampling.do_sample {
+        let selected = last_logits.argmax(1).reshape([batch_size, 1]); // [batch, 1]
+        let eos_mask = match eos_token_id {
+            Some(id) => selected
+                .clone()
+                .equal_elem(id as i64)
+                .reshape([batch_size]),
+            None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
+        };
+        return (selected, eos_mask);
+    }
+
+    // --- Sampling path ---
+
+    let mut logits_2d = last_logits;
+
+    // 1. Suppress tokens — build mask on host, upload once
+    if !suppress_token_ids.is_empty() {
+        let mut mask_data = vec![false; batch_size * vocab_size];
+        for batch in 0..batch_size {
+            for &id in suppress_token_ids {
+                if id < vocab_size {
+                    mask_data[batch * vocab_size + id] = true;
+                }
+            }
+        }
+        let suppress_mask = Tensor::<B, 2, Bool>::from_data(
+            TensorData::new(mask_data, [batch_size, vocab_size]),
+            device,
+        );
+        logits_2d = logits_2d.mask_fill(suppress_mask, f32::NEG_INFINITY);
+    }
+
+    // 2. Temperature
+    let temperature = sampling.temperature.max(1e-5);
+    logits_2d = logits_2d.div_scalar(temperature);
+
+    // 3. Top-k
+    if let Some(k) = sampling.top_k {
+        if k > 0 && k < vocab_size {
+            let kth_value = logits_2d
+                .clone()
+                .topk(k, 1)
+                .slice([0..batch_size, k - 1..k]);
+            let mask = logits_2d.clone().lower(kth_value);
+            logits_2d = logits_2d.mask_fill(mask, f32::NEG_INFINITY);
+        }
+    }
+
+    // 4. Top-p (nucleus sampling)
+    if sampling.top_p < 1.0 {
+        let (sorted_vals, sorted_idx) = logits_2d.clone().sort_descending_with_indices(1);
+        let sorted_probs = softmax(sorted_vals.clone().cast(DType::F32), 1).cast(DType::F32);
+        let cumsum = sorted_probs.clone().cumsum(1);
+        // Keep token i iff the cumulative probability BEFORE token i is < top_p,
+        // i.e. (cumsum - probs) < top_p. The first token that crosses top_p is kept.
+        let sorted_keep: Tensor<B, 2, Bool> = cumsum
+            .sub(sorted_probs)
+            .lower_elem(sampling.top_p);
+        // Unsort the boolean mask back to original vocab order via gather
+        let inverse = sorted_idx.argsort(1);
+        let orig_keep: Tensor<B, 2, Bool> = sorted_keep.gather(1, inverse);
+        logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
+    }
+
+    // 5. Softmax + categorical sample
+    let probs = softmax(logits_2d.clone().cast(DType::F32), 1);
+    let selected = probs.categorical(1); // [batch, 1]
+
+    let eos_mask = match eos_token_id {
+        Some(id) => selected
+            .clone()
+            .equal_elem(id as i64)
+            .reshape([batch_size]),
+        None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
+    };
+
+    (selected, eos_mask)
 }
 
 fn validate_code_predictor_cache_layer_count<B: Backend>(

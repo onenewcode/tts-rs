@@ -17,10 +17,11 @@ pub use config::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalk
 pub use inference::{
     CodePredictorGenerateInput, CodePredictorGenerateOutput,
     CodePredictorGenerateStepDiagnostic, CodePredictorTeacherForcedInput,
-    CodePredictorTeacherForcedOutput, TalkerDecodeInput, TalkerDecodeOutput, TalkerForwardInput,
-    TalkerForwardOutput, TalkerGenerateInput, TalkerGenerateOutput, TalkerGenerateStepDiagnostic,
-    forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
-    generate_code_predictor_groups, generate_talker_tokens,
+    CodePredictorTeacherForcedOutput, SamplingConfig, StoppingRules, TalkerDecodeInput,
+    TalkerDecodeOutput, TalkerForwardInput, TalkerForwardOutput, TalkerGenerateInput,
+    TalkerGenerateOutput, TalkerGenerateStepDiagnostic, forward_code_predictor_teacher_forced,
+    forward_talker_decode_step, forward_talker_prefill, generate_code_predictor_groups,
+    generate_talker_tokens, sample_token,
 };
 pub use load::{LoadedQwen3TtsTalker, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference};
 pub use model::{
