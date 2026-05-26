@@ -1,7 +1,7 @@
 mod common;
 
 use tts_rs_qwen_burn::{
-    build_custom_voice_prompt, load_custom_voice_generation_config, CustomVoiceRequest,
+    CustomVoiceRequest, build_custom_voice_prompt, load_custom_voice_generation_config,
 };
 
 #[test]

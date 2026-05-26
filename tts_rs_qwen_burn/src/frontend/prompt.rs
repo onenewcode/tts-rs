@@ -94,14 +94,11 @@ pub(crate) fn resolve_custom_voice_control_ids(
     let mut language_id = if language == "auto" {
         None
     } else {
-        Some(
-            *talker
-                .codec_language_id
-                .get(&language)
-                .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
-                    message: format!("unsupported language: {language}"),
-                })?,
-        )
+        Some(*talker.codec_language_id.get(&language).ok_or_else(|| {
+            Qwen3TtsInferenceError::InvalidInput {
+                message: format!("unsupported language: {language}"),
+            }
+        })?)
     };
 
     if matches!(language.as_str(), "chinese" | "auto") {

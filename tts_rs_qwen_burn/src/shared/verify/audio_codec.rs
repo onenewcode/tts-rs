@@ -3,7 +3,9 @@ use std::path::Path;
 use burn::tensor::backend::Backend;
 
 use crate::Qwen3TtsVerifyError;
-use crate::shared::manifest::{VerificationArtifacts, WeightVerificationReport, verify_module_weights};
+use crate::shared::manifest::{
+    VerificationArtifacts, WeightVerificationReport, verify_module_weights,
+};
 
 use crate::audio_codec::Qwen3TtsAudioCodecCheckpoint;
 use crate::shared::io::audio_codec_remap::audio_codec_export_key_remapper;

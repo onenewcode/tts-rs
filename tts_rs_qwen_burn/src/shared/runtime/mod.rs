@@ -2,4 +2,4 @@ pub mod cache;
 pub mod sampling;
 
 pub use cache::KeyValueCache;
-pub use sampling::{sample_token, SamplingConfig, StoppingRules};
+pub use sampling::{SamplingConfig, StoppingRules, sample_token};

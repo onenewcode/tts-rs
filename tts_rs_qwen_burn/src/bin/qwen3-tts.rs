@@ -4,11 +4,11 @@ use burn::backend::Flex;
 use burn::tensor::{Int, Tensor};
 use clap::Parser;
 use tts_rs_qwen_burn::{
+    CodePredictorGenerateInput, CustomVoiceBatch, CustomVoiceRequest, KeyValueCache,
+    Qwen3TtsTextTokenizer, SamplingConfig, StoppingRules, TalkerGenerateInput,
     build_custom_voice_prefill_batch, decode_codec_tokens, generate_code_predictor_groups,
     generate_talker_tokens, load_custom_voice_generation_config, load_qwen3_tts_audio_codec,
-    load_qwen3_tts_talker_for_inference, save_wav, CodePredictorGenerateInput, CustomVoiceBatch,
-    CustomVoiceRequest, KeyValueCache, Qwen3TtsTextTokenizer, SamplingConfig, StoppingRules,
-    TalkerGenerateInput,
+    load_qwen3_tts_talker_for_inference, save_wav,
 };
 
 type Backend = Flex;
@@ -69,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             prefill_inputs_embeds: frontend.inputs_embeds,
             prefill_position_ids: frontend.position_ids,
             prefill_attention_mask: Some(frontend.attention_mask),
+            trailing_text_hidden: Some(frontend.trailing_text_hidden),
+            tts_pad_embed: Some(frontend.tts_pad_embed),
             sampling: SamplingConfig::greedy(),
             stopping: StoppingRules {
                 max_new_tokens: args.max_new_tokens,
@@ -135,7 +137,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|e| format!("audio codec decoding failed: {e}"))?;
 
     let wav_path = args.output_dir.join("0000.wav");
-    save_wav(&waveform, &wav_path, audio_codec.config.output_sample_rate as u32)?;
+    save_wav(
+        &waveform,
+        &wav_path,
+        audio_codec.config.output_sample_rate as u32,
+    )?;
     std::fs::write(
         args.output_dir.join("manifest.json"),
         format!(

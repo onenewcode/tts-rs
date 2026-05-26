@@ -24,11 +24,15 @@ impl<B: Backend> AudioCodecSnakeBeta<B> {
         let n_param = self.alpha.dims()[0];
         let [_, d1, _] = x.dims();
         let (alpha, beta) = if d1 == n_param {
-            (self.alpha.val().reshape([1, n_param, 1]),
-             self.beta.val().reshape([1, n_param, 1]))
+            (
+                self.alpha.val().reshape([1, n_param, 1]),
+                self.beta.val().reshape([1, n_param, 1]),
+            )
         } else {
-            (self.alpha.val().reshape([1, 1, n_param]),
-             self.beta.val().reshape([1, 1, n_param]))
+            (
+                self.alpha.val().reshape([1, 1, n_param]),
+                self.beta.val().reshape([1, 1, n_param]),
+            )
         };
         let sin_sq = (x.clone().mul(alpha)).sin().powf_scalar(2.0);
         x + sin_sq.div(beta.add_scalar(eps))
@@ -51,13 +55,21 @@ impl<B: Backend> AudioCodecLayerScale<B> {
 impl<B: Backend> AudioCodecSnakeBeta<B> {
     pub(crate) fn new(channels: usize, device: &B::Device) -> Self {
         use burn::module::Initializer;
-        Self { alpha: Initializer::Zeros.init([channels], device), beta: Initializer::Zeros.init([channels], device) }
+        Self {
+            alpha: Initializer::Zeros.init([channels], device),
+            beta: Initializer::Zeros.init([channels], device),
+        }
     }
 }
 
 impl<B: Backend> AudioCodecLayerScale<B> {
     pub(crate) fn new(channels: usize, initial_scale: f64, device: &B::Device) -> Self {
         use burn::module::Initializer;
-        Self { scale: Initializer::Constant { value: initial_scale }.init([channels], device) }
+        Self {
+            scale: Initializer::Constant {
+                value: initial_scale,
+            }
+            .init([channels], device),
+        }
     }
 }

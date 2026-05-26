@@ -7,8 +7,8 @@ use crate::Qwen3TtsLoadError;
 use crate::shared::manifest::LoadReport;
 
 use crate::shared::config::talker::Qwen3TtsConfig;
-use crate::talker::Qwen3TtsCheckpoint;
 use crate::shared::io::talker_remap::talker_load_key_remapper;
+use crate::talker::Qwen3TtsCheckpoint;
 
 #[derive(Debug)]
 pub struct LoadedQwen3TtsTalker<B: Backend> {

@@ -9,8 +9,8 @@ use burn::backend::Flex;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 use serde::Deserialize;
 use tts_rs_qwen_burn::{
-    KeyValueCache, SamplingConfig, StoppingRules, TalkerGenerateInput,
-    generate_talker_tokens, load_qwen3_tts_talker_for_inference,
+    KeyValueCache, SamplingConfig, StoppingRules, TalkerGenerateInput, generate_talker_tokens,
+    load_qwen3_tts_talker_for_inference,
 };
 
 mod common;
@@ -92,9 +92,7 @@ fn run_generation(
 ) -> (Vec<i64>, Vec<Vec<f32>>) {
     let _device = inputs_embeds.device();
     let mut cache = (0..config.num_hidden_layers)
-        .map(|_| {
-            KeyValueCache::new(1, config.num_key_value_heads, 512, config.head_dim)
-        })
+        .map(|_| KeyValueCache::new(1, config.num_key_value_heads, 512, config.head_dim))
         .collect::<Vec<_>>();
 
     let output = generate_talker_tokens(
@@ -104,6 +102,8 @@ fn run_generation(
             prefill_inputs_embeds: inputs_embeds,
             prefill_position_ids: position_ids,
             prefill_attention_mask: None,
+            trailing_text_hidden: None,
+            tts_pad_embed: None,
             sampling,
             stopping: StoppingRules {
                 max_new_tokens,
@@ -177,8 +177,10 @@ fn test_v6_penalty_off_matches_v3_greedy() {
         false,
     );
 
-    assert_eq!(tokens_rp_off, tokens_greedy,
-        "repetition_penalty=None must produce identical tokens to pure greedy");
+    assert_eq!(
+        tokens_rp_off, tokens_greedy,
+        "repetition_penalty=None must produce identical tokens to pure greedy"
+    );
 }
 
 #[test]
@@ -236,12 +238,22 @@ fn test_v5_sampling_deterministic_with_seed() {
 
     // Two runs with same seed should produce identical tokens
     let (tokens1, _) = run_generation(
-        &loaded, &config, inputs_embeds.clone(), position_ids.clone(),
-        sampling.clone(), 10, false,
+        &loaded,
+        &config,
+        inputs_embeds.clone(),
+        position_ids.clone(),
+        sampling.clone(),
+        10,
+        false,
     );
     let (tokens2, _) = run_generation(
-        &loaded, &config, inputs_embeds.clone(), position_ids.clone(),
-        sampling, 10, false,
+        &loaded,
+        &config,
+        inputs_embeds.clone(),
+        position_ids.clone(),
+        sampling,
+        10,
+        false,
     );
 
     // Note: seed reproducibility depends on Burn backend RNG support.
@@ -259,7 +271,10 @@ fn test_v5_near_greedy_matches_pure_greedy() {
 
     // top_k=1 + temperature=1e-5 should approximate greedy argmax
     let (near_greedy, _) = run_generation(
-        &loaded, &config, inputs_embeds.clone(), position_ids.clone(),
+        &loaded,
+        &config,
+        inputs_embeds.clone(),
+        position_ids.clone(),
         SamplingConfig {
             do_sample: true,
             temperature: 1e-5,
@@ -268,22 +283,32 @@ fn test_v5_near_greedy_matches_pure_greedy() {
             seed: None,
             repetition_penalty: None,
         },
-        10, false,
+        10,
+        false,
     );
 
     let (pure_greedy, _) = run_generation(
-        &loaded, &config, inputs_embeds, position_ids,
+        &loaded,
+        &config,
+        inputs_embeds,
+        position_ids,
         SamplingConfig::greedy(),
-        10, false,
+        10,
+        false,
     );
 
-    assert_eq!(near_greedy, pure_greedy,
-        "top_k=1 + near-zero temperature must equal pure greedy argmax");
+    assert_eq!(
+        near_greedy, pure_greedy,
+        "top_k=1 + near-zero temperature must equal pure greedy argmax"
+    );
 }
 
 #[test]
 fn test_v5_v6_unit_tests_pass() {
     // This is a meta-test: all fast unit tests from V5/V6 must pass.
     // It doesn't need real model weights — just confirms the compilation target exists.
-    assert!(true, "Fast unit tests are validated by `cargo test -p tts_rs_qwen_burn`");
+    assert!(
+        true,
+        "Fast unit tests are validated by `cargo test -p tts_rs_qwen_burn`"
+    );
 }

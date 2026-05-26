@@ -29,40 +29,35 @@ mod model {
 mod tests;
 
 pub use crate::shared::config::audio_codec::{
-    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecDecoderConfig,
-    Qwen3TtsAudioCodecEncoderConfig,
+    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecDecoderConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
-pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
 pub use crate::shared::io::audio_codec_load::{
     LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec,
 };
 pub use crate::shared::nn::activation::{
-    Qwen3TtsAudioCodecEmptyModule, AudioCodecLayerScale, AudioCodecSnakeBeta,
+    AudioCodecLayerScale, AudioCodecSnakeBeta, Qwen3TtsAudioCodecEmptyModule,
 };
 pub use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
+pub use crate::shared::verify::audio_codec::verify_qwen3_tts_audio_codec_weights;
+pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
 pub use model::decoder::{
-    Qwen3TtsAudioCodecCheckpoint, Qwen3TtsAudioCodecConvNeXtBlock,
-    Qwen3TtsAudioCodecDecoder, Qwen3TtsAudioCodecDecoderAttention,
-    Qwen3TtsAudioCodecDecoderCodebook, Qwen3TtsAudioCodecDecoderMlp,
-    Qwen3TtsAudioCodecDecoderQuantizer,
+    Qwen3TtsAudioCodecCheckpoint, Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder,
+    Qwen3TtsAudioCodecDecoderAttention, Qwen3TtsAudioCodecDecoderCodebook,
+    Qwen3TtsAudioCodecDecoderMlp, Qwen3TtsAudioCodecDecoderQuantizer,
     Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
-    Qwen3TtsAudioCodecDecoderResidualVectorQuantizer,
-    Qwen3TtsAudioCodecDecoderTransformer, Qwen3TtsAudioCodecDecoderTransformerLayer,
-    Qwen3TtsAudioCodecDecoderVectorQuantization,
+    Qwen3TtsAudioCodecDecoderResidualVectorQuantizer, Qwen3TtsAudioCodecDecoderTransformer,
+    Qwen3TtsAudioCodecDecoderTransformerLayer, Qwen3TtsAudioCodecDecoderVectorQuantization,
 };
 pub use model::encoder::{
     Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
     Qwen3TtsAudioCodecEncoderBackbone, Qwen3TtsAudioCodecEncoderBackboneLayer,
     Qwen3TtsAudioCodecEncoderCodebook, Qwen3TtsAudioCodecEncoderConvLayer,
     Qwen3TtsAudioCodecEncoderMlp, Qwen3TtsAudioCodecEncoderQuantizer,
-    Qwen3TtsAudioCodecEncoderResidualVectorQuantizer,
-    Qwen3TtsAudioCodecEncoderResnetLayer, Qwen3TtsAudioCodecEncoderTransformer,
-    Qwen3TtsAudioCodecEncoderTransformerLayer,
+    Qwen3TtsAudioCodecEncoderResidualVectorQuantizer, Qwen3TtsAudioCodecEncoderResnetLayer,
+    Qwen3TtsAudioCodecEncoderTransformer, Qwen3TtsAudioCodecEncoderTransformerLayer,
     Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
 pub use model::wave_decoder::{
     Qwen3TtsAudioCodecWaveDecoderConvEntry, Qwen3TtsAudioCodecWaveDecoderEntry,
-    Qwen3TtsAudioCodecWaveDecoderResidualUnit,
-    Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
+    Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
-pub use crate::shared::verify::audio_codec::verify_qwen3_tts_audio_codec_weights;

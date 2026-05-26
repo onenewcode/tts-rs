@@ -3,7 +3,7 @@ use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear};
 use burn::tensor::{Tensor, backend::Backend};
 
-use crate::shared::nn::activation::{Qwen3TtsAudioCodecEmptyModule, AudioCodecLayerScale};
+use crate::shared::nn::activation::{AudioCodecLayerScale, Qwen3TtsAudioCodecEmptyModule};
 use crate::shared::nn::conv::AudioCodecCausalConv1d;
 
 #[derive(Module, Debug)]
@@ -74,10 +74,8 @@ pub struct Qwen3TtsAudioCodecEncoderMlp<B: Backend> {
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecEncoderQuantizer<B: Backend> {
-    pub semantic_residual_vector_quantizer:
-        Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B>,
-    pub acoustic_residual_vector_quantizer:
-        Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B>,
+    pub semantic_residual_vector_quantizer: Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B>,
+    pub acoustic_residual_vector_quantizer: Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B>,
 }
 
 #[derive(Module, Debug)]

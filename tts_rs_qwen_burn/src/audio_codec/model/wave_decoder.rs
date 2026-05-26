@@ -3,8 +3,8 @@ use burn::nn::conv::Conv1d;
 use burn::tensor::Tensor;
 use burn::tensor::backend::Backend;
 
-use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 use crate::shared::nn::activation::AudioCodecSnakeBeta;
+use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 
 #[derive(Module, Debug)]
 pub enum Qwen3TtsAudioCodecWaveDecoderEntry<B: Backend> {

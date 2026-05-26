@@ -46,6 +46,8 @@ pub struct TalkerGenerateInput<B: Backend> {
     pub prefill_inputs_embeds: Tensor<B, 3>,
     pub prefill_position_ids: Tensor<B, 3, Int>,
     pub prefill_attention_mask: Option<Tensor<B, 2, Int>>,
+    pub trailing_text_hidden: Option<Tensor<B, 3>>,
+    pub tts_pad_embed: Option<Tensor<B, 3>>,
     pub sampling: SamplingConfig,
     pub stopping: StoppingRules,
     pub suppress_token_ids: Vec<usize>,

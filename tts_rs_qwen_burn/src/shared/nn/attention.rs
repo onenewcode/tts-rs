@@ -1,13 +1,13 @@
 use burn::module::Module;
-use burn::nn::{Linear, RmsNorm, RotaryEncoding};
+use burn::nn::{Linear, RmsNorm};
 use burn::tensor::DType;
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
-use crate::talker::KeyValueCache;
 use super::mlp::native_linear_3d;
 use super::rms_norm::qwen_rms_norm;
+use crate::talker::KeyValueCache;
 
 pub struct AttentionOutput<B: Backend> {
     pub output: Tensor<B, 3>,
@@ -16,9 +16,10 @@ pub struct AttentionOutput<B: Backend> {
     pub v_proj: Tensor<B, 3>,
 }
 
-pub enum AttentionPosition<'a, B: Backend> {
+pub enum AttentionPosition<B: Backend> {
     Standard {
-        rope: &'a RotaryEncoding<B>,
+        cos: Tensor<B, 4>,
+        sin: Tensor<B, 4>,
     },
     Mrope {
         cos: Tensor<B, 4>,
@@ -43,11 +44,12 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        position: AttentionPosition<'_, B>,
+        position: AttentionPosition<B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
-        self.forward_debug(x, num_heads, num_kv_heads, head_dim, position, mask, cache).output
+        self.forward_debug(x, num_heads, num_kv_heads, head_dim, position, mask, cache)
+            .output
     }
 
     pub fn forward_debug(
@@ -56,7 +58,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        position: AttentionPosition<'_, B>,
+        position: AttentionPosition<B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> AttentionOutput<B> {
@@ -88,9 +90,10 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             .clone();
 
         let (q, k) = match position {
-            AttentionPosition::Standard { rope } => {
-                let offset = cache.len();
-                (rope.apply(q, offset), rope.apply(k, offset))
+            AttentionPosition::Standard { cos, sin } => {
+                let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
+                let k = (k.clone() * cos) + (rotate_half(k) * sin);
+                (q, k)
             }
             AttentionPosition::Mrope { cos, sin } => {
                 let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
@@ -151,11 +154,8 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let attn_output = attn_weights.matmul(v);
 
         // clone after swap_dims to ensure contiguous layout (matching PyTorch's .contiguous())
-        let attn_output = attn_output
-            .swap_dims(1, 2)
-            .clone();
-        let attn_output = attn_output
-            .reshape([batch_size, seq_len, num_heads * head_dim]);
+        let attn_output = attn_output.swap_dims(1, 2).clone();
+        let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);
         native_linear_3d(&self.o_proj, attn_output)
     }
 }

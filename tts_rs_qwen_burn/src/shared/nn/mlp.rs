@@ -28,7 +28,8 @@ where
         let dtype = x.dtype();
         let gate = self.gate_proj.forward(x.clone());
         let up = self.up_proj.forward(x);
-        self.down_proj.forward(silu(gate.cast(DType::F32)).cast(dtype) * up)
+        self.down_proj
+            .forward(silu(gate.cast(DType::F32)).cast(dtype) * up)
     }
 
     pub fn forward_with_activations(&self, x: Tensor<B, 3>) -> Qwen3TtsTextMlpOutput<B> {
@@ -73,19 +74,16 @@ pub(crate) fn native_linear_3d<B: Backend>(linear: &Linear<B>, x: Tensor<B, 3>) 
 
     match &linear.bias {
         Some(bias) => {
-            // Fuse matmul + bias: [x, 1] @ [W; b] = x@W + b
-            // Avoids intermediate BF16 rounding from split matmul/add.
             let dtype = x_2d.dtype();
             let ones = Tensor::<B, 2>::ones([batch_size * seq_len, 1], &x_2d.device()).cast(dtype);
             let x_aug = Tensor::cat(vec![x_2d, ones], 1);
-            let w_aug = Tensor::cat(
-                vec![linear.weight.val(), bias.val().unsqueeze::<2>()],
-                0,
-            );
-            x_aug.matmul(w_aug).reshape([batch_size, seq_len, out_features])
+            let w_aug = Tensor::cat(vec![linear.weight.val(), bias.val().unsqueeze::<2>()], 0);
+            x_aug
+                .matmul(w_aug)
+                .reshape([batch_size, seq_len, out_features])
         }
-        None => {
-            linear.forward(x_2d).reshape([batch_size, seq_len, out_features])
-        }
+        None => linear
+            .forward(x_2d)
+            .reshape([batch_size, seq_len, out_features]),
     }
 }

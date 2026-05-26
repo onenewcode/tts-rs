@@ -20,8 +20,8 @@
 //! | `forward_talker_decode_step` | Single-step decode (incremental) |
 //! | `sample_token` | Token selection from logits |
 
-mod inference;
 mod factory;
+mod inference;
 mod model;
 pub mod nn;
 mod types;
@@ -29,26 +29,20 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub use crate::shared::runtime::cache::KeyValueCache;
 pub use crate::shared::config::talker::{
     Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
 };
 pub use crate::shared::io::talker_load::{
     LoadedQwen3TtsTalker, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference,
 };
+pub use crate::shared::runtime::cache::KeyValueCache;
 pub use crate::shared::verify::talker::verify_qwen3_tts_talker_weights;
 
+pub use crate::shared::runtime::sampling::{SamplingConfig, StoppingRules};
 pub use inference::{
     forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
     generate_code_predictor_groups, generate_talker_tokens, sample_token,
 };
-pub use types::{
-    CodePredictorGenerateInput, CodePredictorGenerateOutput,
-    CodePredictorGenerateStepDiagnostic, CodePredictorTeacherForcedInput,
-    CodePredictorTeacherForcedOutput, TalkerDecodeInput, TalkerDecodeOutput, TalkerForwardInput,
-    TalkerForwardOutput, TalkerGenerateInput, TalkerGenerateOutput, TalkerGenerateStepDiagnostic,
-};
-pub use crate::shared::runtime::sampling::{SamplingConfig, StoppingRules};
 pub use model::{
     Qwen3TtsCheckpoint, Qwen3TtsTalker, Qwen3TtsTalkerCodePredictor,
     Qwen3TtsTalkerCodePredictorModel, Qwen3TtsTalkerModel,
@@ -56,4 +50,10 @@ pub use model::{
 pub use nn::{
     Qwen3RotaryEncoding, Qwen3TtsAttention, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp,
     Qwen3TtsTextMlp,
+};
+pub use types::{
+    CodePredictorGenerateInput, CodePredictorGenerateOutput, CodePredictorGenerateStepDiagnostic,
+    CodePredictorTeacherForcedInput, CodePredictorTeacherForcedOutput, TalkerDecodeInput,
+    TalkerDecodeOutput, TalkerForwardInput, TalkerForwardOutput, TalkerGenerateInput,
+    TalkerGenerateOutput, TalkerGenerateStepDiagnostic,
 };

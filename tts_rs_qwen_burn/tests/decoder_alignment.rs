@@ -9,9 +9,7 @@ use burn::backend::Flex;
 use burn::tensor::{Int, Tensor, TensorData};
 use serde::Deserialize;
 use std::fs;
-use tts_rs_qwen_burn::{
-    decode_codec_tokens, load_qwen3_tts_audio_codec,
-};
+use tts_rs_qwen_burn::{decode_codec_tokens, load_qwen3_tts_audio_codec};
 
 mod common;
 
@@ -63,8 +61,9 @@ fn test_decoder_waveform_alignment() {
 
     // Load reference
     let ref_path = common::workspace_root().join("reference_v7_decoder.json");
-    let ref_json = fs::read_to_string(&ref_path)
-        .expect("reference_v7_decoder.json not found. Run `python py/generate_reference_v7.py` first.");
+    let ref_json = fs::read_to_string(&ref_path).expect(
+        "reference_v7_decoder.json not found. Run `python py/generate_reference_v7.py` first.",
+    );
     let ref_data: DecoderReference = serde_json::from_str(&ref_json).unwrap();
 
     // Load audio codec
@@ -86,12 +85,9 @@ fn test_decoder_waveform_alignment() {
     println!("Codec input shape: {:?}", codec_ids.dims());
 
     // Run decoder
-    let waveform = decode_codec_tokens::<Backend>(
-        &tokenizer,
-        codec_ids,
-        &tokenizer.config.decoder_config,
-    )
-    .expect("decoder forward failed");
+    let waveform =
+        decode_codec_tokens::<Backend>(&tokenizer, codec_ids, &tokenizer.config.decoder_config)
+            .expect("decoder forward failed");
 
     let actual_shape = waveform.dims();
     let expected_shape = &ref_data.expected.waveform.shape;
@@ -110,31 +106,42 @@ fn test_decoder_waveform_alignment() {
         .unwrap();
 
     let actual_first_5: Vec<f32> = actual_flat.iter().take(5).copied().collect();
-    let actual_last_5: Vec<f32> = actual_flat.iter().rev().take(5).copied()
-        .collect::<Vec<_>>().into_iter().rev().collect();
+    let actual_last_5: Vec<f32> = actual_flat
+        .iter()
+        .rev()
+        .take(5)
+        .copied()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
 
-    println!("Waveform first_5: py={:?}, rust={:?}",
-        ref_data.expected.waveform.first_5, actual_first_5);
-    println!("Waveform last_5:  py={:?}, rust={:?}",
-        ref_data.expected.waveform.last_5, actual_last_5);
+    println!(
+        "Waveform first_5: py={:?}, rust={:?}",
+        ref_data.expected.waveform.first_5, actual_first_5
+    );
+    println!(
+        "Waveform last_5:  py={:?}, rust={:?}",
+        ref_data.expected.waveform.last_5, actual_last_5
+    );
 
     // Check first/last values
-    for (i, (a, e)) in actual_first_5.iter()
+    for (i, (a, e)) in actual_first_5
+        .iter()
         .zip(ref_data.expected.waveform.first_5.iter())
         .enumerate()
     {
         let diff = (a - e).abs();
-        assert!(diff < 0.1,
-            "first_5[{i}] mismatch: rust={a}, py={e}, diff={diff}");
+        assert!(
+            diff < 0.1,
+            "first_5[{i}] mismatch: rust={a}, py={e}, diff={diff}"
+        );
     }
 
     // Compute max absolute difference across reference values
     if let Some(ref_values) = &ref_data.expected.waveform.values {
         let mut max_diff = 0.0f32;
-        for (_idx, (a, e)) in actual_flat.iter()
-            .zip(ref_values.iter())
-            .enumerate()
-        {
+        for (_idx, (a, e)) in actual_flat.iter().zip(ref_values.iter()).enumerate() {
             let diff = (a - e).abs();
             if diff > max_diff {
                 max_diff = diff;
@@ -149,5 +156,8 @@ fn test_decoder_waveform_alignment() {
 
 #[test]
 fn test_decoder_unit_tests_pass() {
-    assert!(true, "Fast unit tests validated by `cargo test -p tts_rs_qwen_burn`");
+    assert!(
+        true,
+        "Fast unit tests validated by `cargo test -p tts_rs_qwen_burn`"
+    );
 }

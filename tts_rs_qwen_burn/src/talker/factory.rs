@@ -1,14 +1,16 @@
-use burn::nn::{EmbeddingConfig, LinearConfig, RmsNormConfig, RotaryEncodingConfig};
+use burn::nn::{EmbeddingConfig, LinearConfig, RmsNormConfig};
 use burn::tensor::backend::Backend;
 
-use crate::shared::config::talker::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::model::{
     Qwen3TtsCheckpoint, Qwen3TtsTalker, Qwen3TtsTalkerCodePredictor,
     Qwen3TtsTalkerCodePredictorModel, Qwen3TtsTalkerModel,
 };
 use super::nn::{
-    Qwen3RotaryEncoding, Qwen3TtsAttention, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp,
-    Qwen3TtsTextMlp,
+    Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding, Qwen3TtsAttention, Qwen3TtsDecoderLayer,
+    Qwen3TtsTalkerResizeMlp, Qwen3TtsTextMlp,
+};
+use crate::shared::config::talker::{
+    Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
 };
 
 impl Qwen3TtsConfig {
@@ -141,12 +143,11 @@ impl Qwen3TtsTalkerConfig {
                 })
                 .collect(),
             small_to_mtp_projection: projection,
-            rope: RotaryEncodingConfig::new(
-                code_predictor.max_position_embeddings,
+            rope: Qwen3StandardRotaryEncoding::new(
                 code_predictor.head_dim,
-            )
-            .with_theta(code_predictor.rope_theta as f32)
-            .init(device),
+                code_predictor.rope_theta,
+                device,
+            ),
         }
     }
 }

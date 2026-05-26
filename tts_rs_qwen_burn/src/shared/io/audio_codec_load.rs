@@ -6,8 +6,8 @@ use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 use crate::Qwen3TtsLoadError;
 use crate::shared::manifest::LoadReport;
 
-use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
 use crate::audio_codec::Qwen3TtsAudioCodecCheckpoint;
+use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
 use crate::shared::io::audio_codec_remap::audio_codec_load_key_remapper;
 
 #[derive(Debug)]

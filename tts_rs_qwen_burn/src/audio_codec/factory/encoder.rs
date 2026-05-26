@@ -2,11 +2,6 @@ use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig};
 use burn::tensor::backend::Backend;
 
-use crate::shared::config::audio_codec::{
-    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
-};
-use crate::shared::nn::activation::Qwen3TtsAudioCodecEmptyModule;
-use crate::shared::nn::conv::AudioCodecCausalConv1d;
 use crate::audio_codec::model::decoder::Qwen3TtsAudioCodecCheckpoint;
 use crate::audio_codec::model::encoder::{
     Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
@@ -14,10 +9,14 @@ use crate::audio_codec::model::encoder::{
     Qwen3TtsAudioCodecEncoderConvLayer, Qwen3TtsAudioCodecEncoderMlp,
     Qwen3TtsAudioCodecEncoderQuantizer, Qwen3TtsAudioCodecEncoderResidualVectorQuantizer,
     Qwen3TtsAudioCodecEncoderResnetLayer, Qwen3TtsAudioCodecEncoderTransformer,
-    Qwen3TtsAudioCodecEncoderTransformerLayer,
-    Qwen3TtsAudioCodecEncoderVectorQuantization,
+    Qwen3TtsAudioCodecEncoderTransformerLayer, Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
-use crate::audio_codec::{Qwen3TtsAudioCodecEncoderCodebook, AudioCodecLayerScale};
+use crate::audio_codec::{AudioCodecLayerScale, Qwen3TtsAudioCodecEncoderCodebook};
+use crate::shared::config::audio_codec::{
+    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
+};
+use crate::shared::nn::activation::Qwen3TtsAudioCodecEmptyModule;
+use crate::shared::nn::conv::AudioCodecCausalConv1d;
 
 const ENCODER_BACKBONE_LEN: usize = 15;
 const ENCODER_RESIDUAL_POSITIONS: [usize; 4] = [1, 4, 7, 10];
@@ -91,13 +90,12 @@ impl Qwen3TtsAudioCodecEncoderConfig {
         .take(ENCODER_BACKBONE_LEN)
         .collect::<Vec<Qwen3TtsAudioCodecEncoderBackboneLayer<B>>>();
 
-        layers[0] = Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(
-            Qwen3TtsAudioCodecEncoderConvLayer {
+        layers[0] =
+            Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(Qwen3TtsAudioCodecEncoderConvLayer {
                 conv: Conv1dConfig::new(self.audio_channels, self.num_filters, self.kernel_size)
                     .with_bias(true)
                     .init(device),
-            },
-        );
+            });
 
         let mut scaling = 1;
         let mut residual_positions = ENCODER_RESIDUAL_POSITIONS.into_iter();

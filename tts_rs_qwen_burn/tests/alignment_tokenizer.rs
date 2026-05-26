@@ -3,7 +3,7 @@ mod common;
 use std::process::Command;
 
 use serde::Deserialize;
-use tts_rs_qwen_burn::{build_custom_voice_prompt, CustomVoiceRequest, Qwen3TtsTextTokenizer};
+use tts_rs_qwen_burn::{CustomVoiceRequest, Qwen3TtsTextTokenizer, build_custom_voice_prompt};
 
 #[derive(Debug, Deserialize)]
 struct TokenizerReference {
@@ -35,5 +35,8 @@ fn tokenizer_matches_python_oracle() {
     let tokenizer = Qwen3TtsTextTokenizer::from_model_dir(&model_dir).unwrap();
     let request = CustomVoiceRequest::new("其实我真的有发现，我是一个特别善于观察别人情绪的人。");
     assert_eq!(build_custom_voice_prompt(&request), reference.prompt);
-    assert_eq!(tokenizer.encode(&reference.prompt).unwrap(), reference.token_ids);
+    assert_eq!(
+        tokenizer.encode(&reference.prompt).unwrap(),
+        reference.token_ids
+    );
 }

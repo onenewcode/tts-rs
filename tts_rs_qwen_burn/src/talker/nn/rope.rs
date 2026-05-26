@@ -9,6 +9,51 @@ pub struct Qwen3RotaryEncoding<B: Backend> {
     mrope_section: Vec<usize>,
 }
 
+#[derive(burn::module::Module, Debug)]
+pub struct Qwen3StandardRotaryEncoding<B: Backend> {
+    inv_freq: Tensor<B, 1>,
+}
+
+impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
+    pub fn new(head_dim: usize, rope_theta: f64, device: &B::Device) -> Self {
+        let half_dim = head_dim / 2;
+        let inv_freq = (0..half_dim)
+            .map(|index| 1.0f32 / (rope_theta as f32).powf(index as f32 / half_dim as f32))
+            .collect::<Vec<_>>();
+        let inv_freq = Tensor::<B, 1>::from_floats(inv_freq.as_slice(), device);
+        Self { inv_freq }
+    }
+
+    pub fn get_cos_sin(
+        &self,
+        batch_size: usize,
+        seq_len: usize,
+        start: usize,
+        dtype: DType,
+        device: &B::Device,
+    ) -> (Tensor<B, 4>, Tensor<B, 4>) {
+        let half_dim = self.inv_freq.dims()[0];
+        let positions = Tensor::<B, 1, burn::tensor::Int>::arange(
+            start as i64..(start + seq_len) as i64,
+            device,
+        )
+        .float()
+        .reshape([1, seq_len, 1]);
+        let freqs = positions * self.inv_freq.clone().reshape([1, 1, half_dim]);
+        let cos_half = freqs.clone().cos();
+        let sin_half = freqs.sin();
+        let cos = Tensor::cat(vec![cos_half.clone(), cos_half], 2)
+            .cast(dtype)
+            .unsqueeze_dim::<4>(1)
+            .repeat_dim(0, batch_size);
+        let sin = Tensor::cat(vec![sin_half.clone(), sin_half], 2)
+            .cast(dtype)
+            .unsqueeze_dim::<4>(1)
+            .repeat_dim(0, batch_size);
+        (cos, sin)
+    }
+}
+
 impl<B: Backend> Qwen3RotaryEncoding<B> {
     pub fn new(
         head_dim: usize,
@@ -59,8 +104,10 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
             modality_cos.push(freqs.clone().cos());
             modality_sin.push(freqs.sin());
         }
-        let all_cos = Tensor::cat(modality_cos, 0).reshape([modalities, batch_size, seq_len, half_dim]);
-        let all_sin = Tensor::cat(modality_sin, 0).reshape([modalities, batch_size, seq_len, half_dim]);
+        let all_cos =
+            Tensor::cat(modality_cos, 0).reshape([modalities, batch_size, seq_len, half_dim]);
+        let all_sin =
+            Tensor::cat(modality_sin, 0).reshape([modalities, batch_size, seq_len, half_dim]);
 
         // 2. Interleave per-position (matching PyTorch apply_interleaved_rope):
         //    x_t = x[0]; x_t[pos] = x[m][pos] where pos%M == m && pos/M < section_len[m]
@@ -94,15 +141,23 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
 
         // 3. Duplicate half → full head_dim and unsqueeze for broadcast
         (
-            Tensor::cat(vec![cos_half.clone(), cos_half], 2).cast(dtype).unsqueeze_dim::<4>(1),
-            Tensor::cat(vec![sin_half.clone(), sin_half], 2).cast(dtype).unsqueeze_dim::<4>(1),
+            Tensor::cat(vec![cos_half.clone(), cos_half], 2)
+                .cast(dtype)
+                .unsqueeze_dim::<4>(1),
+            Tensor::cat(vec![sin_half.clone(), sin_half], 2)
+                .cast(dtype)
+                .unsqueeze_dim::<4>(1),
         )
     }
 
     /// Apply multimodal rotary encoding to a tensor.
     /// x: [batch_size, num_heads, seq_len, head_dim]
     /// position_ids: [modalities, batch_size, seq_len]
-    pub fn forward(&self, x: Tensor<B, 4>, position_ids: Tensor<B, 3, burn::tensor::Int>) -> Tensor<B, 4> {
+    pub fn forward(
+        &self,
+        x: Tensor<B, 4>,
+        position_ids: Tensor<B, 3, burn::tensor::Int>,
+    ) -> Tensor<B, 4> {
         let (cos, sin) = self.get_cos_sin(position_ids, x.dtype());
 
         // 3. Apply rotation
@@ -135,7 +190,8 @@ mod tests {
         let x = Tensor::<TestBackend, 4>::from_data([[[[1.0, 2.0, 3.0, 4.0]]]], &device);
 
         // Position IDs: [3 modalities, batch=1, seq=1]
-        let pos = Tensor::<TestBackend, 3, burn::tensor::Int>::from_data([[[1]], [[2]], [[3]]], &device);
+        let pos =
+            Tensor::<TestBackend, 3, burn::tensor::Int>::from_data([[[1]], [[2]], [[3]]], &device);
 
         let out = rope.forward(x, pos);
         let data = out.into_data();

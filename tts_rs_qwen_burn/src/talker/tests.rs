@@ -1,15 +1,17 @@
 use burn::backend::Flex;
 use burn::tensor::Tensor;
 
-use crate::shared::runtime::cache::KeyValueCache;
-use crate::shared::config::talker::{Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use super::inference::{
     CodePredictorGenerateInput, CodePredictorTeacherForcedInput, SamplingConfig, StoppingRules,
     TalkerDecodeInput, TalkerForwardInput, TalkerGenerateInput,
     forward_code_predictor_teacher_forced, forward_talker_decode_step, forward_talker_prefill,
     generate_code_predictor_groups, generate_talker_tokens, sample_token,
 };
+use crate::shared::config::talker::{
+    Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
+};
 use crate::shared::io::talker_remap::{talker_export_key_remapper, talker_load_key_remapper};
+use crate::shared::runtime::cache::KeyValueCache;
 
 type TestBackend = Flex;
 
@@ -369,8 +371,13 @@ fn generate_talker_tokens_rejects_zero_new_tokens() {
                 &device,
             ),
             prefill_attention_mask: None,
+            trailing_text_hidden: None,
+            tts_pad_embed: None,
             sampling: SamplingConfig::greedy(),
-            stopping: StoppingRules { max_new_tokens: 0, eos_token_id: None },
+            stopping: StoppingRules {
+                max_new_tokens: 0,
+                eos_token_id: None,
+            },
             suppress_token_ids: vec![],
             collect_step_diagnostics: false,
         },
@@ -407,8 +414,13 @@ fn generate_talker_tokens_returns_expected_shape_and_cache_len() {
                 &device,
             ),
             prefill_attention_mask: Some(Tensor::from_data([[1i32, 1, 1]], &device)),
+            trailing_text_hidden: None,
+            tts_pad_embed: None,
             sampling: SamplingConfig::greedy(),
-            stopping: StoppingRules { max_new_tokens: 4, eos_token_id: None },
+            stopping: StoppingRules {
+                max_new_tokens: 4,
+                eos_token_id: None,
+            },
             suppress_token_ids: vec![],
             collect_step_diagnostics: true,
         },
@@ -451,8 +463,13 @@ fn generate_talker_tokens_selects_first_token_from_last_prefill_position() {
                 &device,
             ),
             prefill_attention_mask: None,
+            trailing_text_hidden: None,
+            tts_pad_embed: None,
             sampling: SamplingConfig::greedy(),
-            stopping: StoppingRules { max_new_tokens: 1, eos_token_id: None },
+            stopping: StoppingRules {
+                max_new_tokens: 1,
+                eos_token_id: None,
+            },
             suppress_token_ids: vec![],
             collect_step_diagnostics: false,
         },
@@ -668,10 +685,12 @@ fn sample_token_greedy_equals_argmax() {
         &device,
     );
     let sampling = SamplingConfig::greedy();
-    let (selected, eos_mask) = sample_token::<TestBackend>(
-        logits, &sampling, None, &[], &device,
-    );
-    let token = selected.into_data().convert::<i64>().into_vec::<i64>().unwrap();
+    let (selected, eos_mask) = sample_token::<TestBackend>(logits, &sampling, None, &[], &device);
+    let token = selected
+        .into_data()
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .unwrap();
     assert_eq!(token, vec![2]); // argmax across last position
     // No EOS configured → mask all false
     let eos = eos_mask.into_data().into_vec::<bool>().unwrap();
@@ -681,10 +700,7 @@ fn sample_token_greedy_equals_argmax() {
 #[test]
 fn sample_token_topk_1_equals_argmax() {
     let device = Default::default();
-    let logits = Tensor::<TestBackend, 3>::from_data(
-        [[[0.0f32, 1.0, 2.0, 3.0]]],
-        &device,
-    );
+    let logits = Tensor::<TestBackend, 3>::from_data([[[0.0f32, 1.0, 2.0, 3.0]]], &device);
     // top_k=1 + do_sample=true + temperature=1e-5 should act like argmax
     let sampling = SamplingConfig {
         do_sample: true,
@@ -694,10 +710,12 @@ fn sample_token_topk_1_equals_argmax() {
         seed: None,
         repetition_penalty: None,
     };
-    let (selected, _) = sample_token::<TestBackend>(
-        logits, &sampling, None, &[], &device,
-    );
-    let token = selected.into_data().convert::<i64>().into_vec::<i64>().unwrap();
+    let (selected, _) = sample_token::<TestBackend>(logits, &sampling, None, &[], &device);
+    let token = selected
+        .into_data()
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .unwrap();
     assert_eq!(token, vec![3]); // max-value token
 }
 
@@ -705,10 +723,7 @@ fn sample_token_topk_1_equals_argmax() {
 fn sample_token_suppresses_specified_tokens() {
     let device = Default::default();
     // Token 2 is the max (logit 5.0), but it should be suppressed
-    let logits = Tensor::<TestBackend, 3>::from_data(
-        [[[0.1f32, 0.2, 5.0, 0.5, 4.0]]],
-        &device,
-    );
+    let logits = Tensor::<TestBackend, 3>::from_data([[[0.1f32, 0.2, 5.0, 0.5, 4.0]]], &device);
     // Suppress token 2, 4 → argmax should pick token 3 (4.0)
     let sampling = SamplingConfig {
         do_sample: true,
@@ -718,10 +733,12 @@ fn sample_token_suppresses_specified_tokens() {
         seed: None,
         repetition_penalty: None,
     };
-    let (selected, _) = sample_token::<TestBackend>(
-        logits, &sampling, None, &[2, 4], &device,
-    );
-    let token = selected.into_data().convert::<i64>().into_vec::<i64>().unwrap();
+    let (selected, _) = sample_token::<TestBackend>(logits, &sampling, None, &[2, 4], &device);
+    let token = selected
+        .into_data()
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .unwrap();
     assert_eq!(token, vec![3]); // suppressed 2 and 4, 3 is max remaining
 }
 
@@ -729,15 +746,20 @@ fn sample_token_suppresses_specified_tokens() {
 fn sample_token_eos_detection() {
     let device = Default::default();
     // Token 42 is the max, EOS is 42
-    let logits = Tensor::<TestBackend, 3>::from_data(
-        [[[0.1f32, 0.2, 100.0, 0.5]]],
-        &device,
-    );
+    let logits = Tensor::<TestBackend, 3>::from_data([[[0.1f32, 0.2, 100.0, 0.5]]], &device);
     let sampling = SamplingConfig::greedy();
     let (selected, eos_mask) = sample_token::<TestBackend>(
-        logits, &sampling, Some(2), &[], &device, // EOS = token 2
+        logits,
+        &sampling,
+        Some(2),
+        &[],
+        &device, // EOS = token 2
     );
-    let token = selected.into_data().convert::<i64>().into_vec::<i64>().unwrap();
+    let token = selected
+        .into_data()
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .unwrap();
     assert_eq!(token, vec![2]); // selected max-value token (2)
     let eos = eos_mask.into_data().into_vec::<bool>().unwrap();
     assert!(eos[0]); // EOS mask should be true
@@ -747,15 +769,15 @@ fn sample_token_eos_detection() {
 fn sample_token_eos_not_selected_when_not_max() {
     let device = Default::default();
     // Token 2 is the max, EOS is 0 (not max)
-    let logits = Tensor::<TestBackend, 3>::from_data(
-        [[[0.1f32, 0.2, 100.0, 0.5]]],
-        &device,
-    );
+    let logits = Tensor::<TestBackend, 3>::from_data([[[0.1f32, 0.2, 100.0, 0.5]]], &device);
     let sampling = SamplingConfig::greedy();
-    let (selected, eos_mask) = sample_token::<TestBackend>(
-        logits, &sampling, Some(0), &[], &device,
-    );
-    let token = selected.into_data().convert::<i64>().into_vec::<i64>().unwrap();
+    let (selected, eos_mask) =
+        sample_token::<TestBackend>(logits, &sampling, Some(0), &[], &device);
+    let token = selected
+        .into_data()
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .unwrap();
     assert_eq!(token, vec![2]); // selected max-value token (2), not EOS
     let eos = eos_mask.into_data().into_vec::<bool>().unwrap();
     assert!(!eos[0]); // EOS mask should be false
@@ -788,8 +810,13 @@ fn generate_talker_tokens_stops_early_on_eos() {
                 &device,
             ),
             prefill_attention_mask: None,
+            trailing_text_hidden: None,
+            tts_pad_embed: None,
             sampling: SamplingConfig::greedy(),
-            stopping: StoppingRules { max_new_tokens: 10, eos_token_id: Some(9999) },
+            stopping: StoppingRules {
+                max_new_tokens: 10,
+                eos_token_id: Some(9999),
+            },
             suppress_token_ids: vec![],
             collect_step_diagnostics: false,
         },
@@ -798,8 +825,10 @@ fn generate_talker_tokens_stops_early_on_eos() {
     .expect("generation should succeed");
 
     // No token equals 9999 in this random model, so full 10 tokens generated
-    assert!(output.generated_token_ids.dims()[1] <= 10,
-        "should not exceed max_new_tokens even without EOS hit");
+    assert!(
+        output.generated_token_ids.dims()[1] <= 10,
+        "should not exceed max_new_tokens even without EOS hit"
+    );
 }
 
 #[test]
@@ -828,8 +857,13 @@ fn generate_talker_tokens_respects_max_new_tokens_upper_bound() {
                 &device,
             ),
             prefill_attention_mask: None,
+            trailing_text_hidden: None,
+            tts_pad_embed: None,
             sampling: SamplingConfig::greedy(),
-            stopping: StoppingRules { max_new_tokens: 3, eos_token_id: None },
+            stopping: StoppingRules {
+                max_new_tokens: 3,
+                eos_token_id: None,
+            },
             suppress_token_ids: vec![],
             collect_step_diagnostics: false,
         },
@@ -837,8 +871,11 @@ fn generate_talker_tokens_respects_max_new_tokens_upper_bound() {
     )
     .expect("generation should succeed");
 
-    assert_eq!(output.generated_token_ids.dims(), [1, 3],
-        "generated token count should equal max_new_tokens");
+    assert_eq!(
+        output.generated_token_ids.dims(),
+        [1, 3],
+        "generated token count should equal max_new_tokens"
+    );
 }
 
 #[test]
@@ -891,6 +928,8 @@ fn code_predictor_groups_uses_sampling_config() {
 
     let tokens1 = run(&mut cache1);
     let tokens2 = run(&mut cache2);
-    assert_eq!(tokens1, tokens2,
-        "greedy code predictor must be deterministic across runs");
+    assert_eq!(
+        tokens1, tokens2,
+        "greedy code predictor must be deterministic across runs"
+    );
 }

@@ -35,7 +35,10 @@ impl Default for SamplingConfig {
 
 impl SamplingConfig {
     pub fn greedy() -> Self {
-        Self { do_sample: false, ..Default::default() }
+        Self {
+            do_sample: false,
+            ..Default::default()
+        }
     }
 }
 
@@ -55,20 +58,9 @@ pub fn sample_token<B: Backend>(
     device: &B::Device,
 ) -> (Tensor<B, 2, Int>, Tensor<B, 1, Bool>) {
     let [batch_size, seq_len, vocab_size] = logits.dims();
-    let last_logits = logits
+    let mut logits_2d = logits
         .slice([0..batch_size, seq_len - 1..seq_len, 0..vocab_size])
         .reshape([batch_size, vocab_size]);
-
-    if !sampling.do_sample {
-        let selected = last_logits.argmax(1).reshape([batch_size, 1]);
-        let eos_mask = match eos_token_id {
-            Some(id) => selected.clone().equal_elem(id as i64).reshape([batch_size]),
-            None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
-        };
-        return (selected, eos_mask);
-    }
-
-    let mut logits_2d = last_logits;
 
     // 1. Suppress tokens
     if !suppress_token_ids.is_empty() {
@@ -80,9 +72,20 @@ pub fn sample_token<B: Backend>(
                 }
             }
         }
-        let suppress_mask =
-            Tensor::<B, 2, Bool>::from_data(TensorData::new(mask_data, [batch_size, vocab_size]), device);
+        let suppress_mask = Tensor::<B, 2, Bool>::from_data(
+            TensorData::new(mask_data, [batch_size, vocab_size]),
+            device,
+        );
         logits_2d = logits_2d.mask_fill(suppress_mask, f32::NEG_INFINITY);
+    }
+
+    if !sampling.do_sample {
+        let selected = logits_2d.argmax(1).reshape([batch_size, 1]);
+        let eos_mask = match eos_token_id {
+            Some(id) => selected.clone().equal_elem(id as i64).reshape([batch_size]),
+            None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
+        };
+        return (selected, eos_mask);
     }
 
     // 2. Temperature
@@ -91,7 +94,10 @@ pub fn sample_token<B: Backend>(
     // 3. Top-k
     if let Some(k) = sampling.top_k {
         if k > 0 && k < vocab_size {
-            let kth_value = logits_2d.clone().topk(k, 1).slice([0..batch_size, k - 1..k]);
+            let kth_value = logits_2d
+                .clone()
+                .topk(k, 1)
+                .slice([0..batch_size, k - 1..k]);
             let mask = logits_2d.clone().lower(kth_value);
             logits_2d = logits_2d.mask_fill(mask, f32::NEG_INFINITY);
         }
@@ -127,11 +133,17 @@ pub fn apply_repetition_penalty<B: Backend>(
     past_token_ids: &Tensor<B, 2, Int>,
     penalty: Option<f32>,
 ) -> Tensor<B, 3> {
-    let Some(penalty) = penalty else { return logits };
-    if penalty == 1.0 { return logits; }
+    let Some(penalty) = penalty else {
+        return logits;
+    };
+    if penalty == 1.0 {
+        return logits;
+    }
     let [batch_size, seq_len, vocab_size] = logits.dims();
     let history_len = past_token_ids.dims()[1];
-    if history_len == 0 { return logits; }
+    if history_len == 0 {
+        return logits;
+    }
     let logits_2d = logits.reshape([batch_size, vocab_size]);
     let gathered = logits_2d.clone().gather(1, past_token_ids.clone());
     let scale = 1.0 / penalty - 1.0;

@@ -32,15 +32,15 @@ use super::nn::mlp::native_linear_3d;
 
 use crate::Qwen3TtsInferenceError;
 
-use crate::shared::runtime::cache::KeyValueCache;
 use crate::shared::config::talker::Qwen3TtsTalkerConfig;
 use crate::shared::io::talker_load::LoadedQwen3TtsTalker;
+use crate::shared::runtime::cache::KeyValueCache;
 
 // Re-exported from types.rs + shared/runtime/sampling.rs
 pub use super::types::*;
-#[allow(unused_imports)]
-pub use crate::shared::runtime::sampling::{sample_token, SamplingConfig, StoppingRules};
 use crate::shared::runtime::sampling::apply_repetition_penalty;
+#[allow(unused_imports)]
+pub use crate::shared::runtime::sampling::{SamplingConfig, StoppingRules, sample_token};
 
 pub fn forward_talker_prefill<B>(
     config: &Qwen3TtsTalkerConfig,
@@ -139,6 +139,14 @@ where
     let device = input.prefill_inputs_embeds.device();
     let [batch_size, _prefill_len, _hidden_size] = input.prefill_inputs_embeds.dims();
     let collect_step_diagnostics = input.collect_step_diagnostics;
+    let trailing_text_hidden = input.trailing_text_hidden;
+    let tts_pad_embed = input.tts_pad_embed;
+    validate_generation_side_inputs(
+        batch_size,
+        config.hidden_size,
+        trailing_text_hidden.as_ref().map(Tensor::dims),
+        tts_pad_embed.as_ref().map(Tensor::dims),
+    )?;
 
     let prefill_output = forward_talker_prefill(
         config,
@@ -158,9 +166,8 @@ where
     let rep_penalty = sampling.repetition_penalty;
 
     let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
-    let prefill_logits = apply_repetition_penalty(
-        prefill_output.logits.clone(), &empty_history, rep_penalty,
-    );
+    let prefill_logits =
+        apply_repetition_penalty(prefill_output.logits.clone(), &empty_history, rep_penalty);
     let (mut selected_token, mut eos_mask) =
         sample_token::<B>(prefill_logits, sampling, eos_id, suppress, &device);
     let mut generated_tokens: Vec<Tensor<B, 2, Int>> = vec![selected_token.clone()];
@@ -170,17 +177,51 @@ where
 
     for _step_idx in 1..max_new_tokens {
         // If EOS set and all batch items stopped, exit early
-        if eos_id.is_some() && eos_mask.clone().all().into_data().convert::<bool>().into_vec::<bool>().unwrap()[0] {
+        if eos_id.is_some()
+            && eos_mask
+                .clone()
+                .all()
+                .into_data()
+                .convert::<bool>()
+                .into_vec::<bool>()
+                .unwrap()[0]
+        {
             break;
         }
 
         let cache_len_before = validate_cache_lengths(cache)?;
-        let inputs_embeds = loaded
-            .model
-            .talker
-            .model
-            .codec_embedding
-            .forward(selected_token);
+        let previous_hidden_state = step_hidden_states
+            .last()
+            .expect("generation always has a hidden state for the selected token")
+            .clone();
+        let mut predictor_cache = (0..config.code_predictor_config.num_hidden_layers)
+            .map(|_| {
+                KeyValueCache::new(
+                    batch_size,
+                    config.code_predictor_config.num_key_value_heads,
+                    config.num_code_groups + 1,
+                    config.code_predictor_config.head_dim,
+                )
+            })
+            .collect::<Vec<_>>();
+        let codec_groups = generate_code_predictor_groups(
+            config,
+            loaded,
+            CodePredictorGenerateInput {
+                talker_hidden_state: previous_hidden_state,
+                base_codec_token_id: selected_token,
+                sampling: SamplingConfig::greedy(),
+                collect_step_diagnostics: false,
+            },
+            &mut predictor_cache,
+        )?;
+        let inputs_embeds = codec_group_context_embedding(config, loaded, codec_groups.codec_ids);
+        let inputs_embeds = add_trailing_text_embed(
+            inputs_embeds,
+            trailing_text_hidden.as_ref(),
+            tts_pad_embed.as_ref(),
+            generated_tokens.len() - 1,
+        );
         let position_ids =
             Tensor::<B, 3, Int>::full([3, batch_size, 1], cache_len_before as i32, &device);
         let decode_output = forward_talker_decode_step(
@@ -198,9 +239,8 @@ where
         let cache_len_after = validate_cache_lengths(cache)?;
         // Concatenate past tokens for repetition penalty
         let past_ids = Tensor::cat(generated_tokens.clone(), 1); // [batch, history]
-        let penalized_logits = apply_repetition_penalty(
-            decode_output.logits.clone(), &past_ids, rep_penalty,
-        );
+        let penalized_logits =
+            apply_repetition_penalty(decode_output.logits.clone(), &past_ids, rep_penalty);
         let (next_token, next_eos) =
             sample_token::<B>(penalized_logits, sampling, eos_id, suppress, &device);
         // EOS flag is sticky: once true, stays true
@@ -328,14 +368,12 @@ where
         vec![input.talker_hidden_state.unsqueeze::<3>(), base_embedding],
         1,
     );
-    let prefill_hidden = forward_code_predictor_hidden(
-        config,
-        loaded,
-        prefill_inputs,
-        None,
-        cache,
+    let prefill_hidden = forward_code_predictor_hidden(config, loaded, prefill_inputs, None, cache);
+    let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
+    let prefill_logits = native_linear_3d(
+        prefill_head,
+        prefill_hidden.cast(prefill_head.weight.val().dtype()),
     );
-    let prefill_logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[0], prefill_hidden);
     let device = prefill_logits.device();
     let sampling = &input.sampling;
     let eos_id: Option<usize> = None; // code predictor has no EOS — always generates N-1 tokens
@@ -362,9 +400,9 @@ where
         let cache_len_before = validate_cache_lengths(cache)?;
         let step_inputs = loaded.model.talker.code_predictor.model.codec_embedding[head_idx - 1]
             .forward(selected_token);
-        let step_hidden =
-            forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
-        let logits = native_linear_3d(&loaded.model.talker.code_predictor.lm_head[head_idx], step_hidden);
+        let step_hidden = forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
+        let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
+        let logits = native_linear_3d(head, step_hidden.cast(head.weight.val().dtype()));
         let cache_len_after = validate_cache_lengths(cache)?;
         let past_ids = Tensor::cat(predictor_tokens.clone(), 1); // [batch, history]
         let logits_pen = apply_repetition_penalty(logits.clone(), &past_ids, rep_penalty);
@@ -382,7 +420,10 @@ where
     }
 
     let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
-    let codec_ids = Tensor::cat(vec![input.base_codec_token_id, predictor_token_ids.clone()], 1);
+    let codec_ids = Tensor::cat(
+        vec![input.base_codec_token_id, predictor_token_ids.clone()],
+        1,
+    );
     let final_cache_len = validate_cache_lengths(cache)?;
     if final_cache_len != config.num_code_groups {
         return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -394,8 +435,7 @@ where
     }
 
     debug_assert_eq!(
-        predictor_config.num_code_groups,
-        config.num_code_groups,
+        predictor_config.num_code_groups, config.num_code_groups,
         "talker and code predictor code group counts should match"
     );
 
@@ -419,21 +459,27 @@ where
 {
     let predictor = &loaded.model.talker.code_predictor;
     let projected_inputs = if let Some(projection) = &predictor.small_to_mtp_projection {
-        native_linear_3d(projection, inputs_embeds.cast(projection.weight.val().dtype()))
+        native_linear_3d(
+            projection,
+            inputs_embeds.cast(projection.weight.val().dtype()),
+        )
     } else {
         inputs_embeds
     };
+    let projected_inputs = projected_inputs.cast(
+        predictor.model.layers[0]
+            .self_attn
+            .q_proj
+            .weight
+            .val()
+            .dtype(),
+    );
 
     let [batch_size, seq_len, _] = projected_inputs.dims();
     let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
     let device = projected_inputs.device();
-    let mask = super::model::build_attention_mask(
-        batch_size,
-        seq_len,
-        key_len,
-        attention_mask,
-        &device,
-    );
+    let mask =
+        super::model::build_attention_mask(batch_size, seq_len, key_len, attention_mask, &device);
 
     predictor.model.forward(
         projected_inputs,
@@ -451,6 +497,102 @@ fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {
     hidden
         .slice([0..batch_size, seq_len - 1..seq_len, 0..hidden_size])
         .reshape([batch_size, hidden_size])
+}
+
+fn add_trailing_text_embed<B: Backend>(
+    codec_embed: Tensor<B, 3>,
+    trailing_text_hidden: Option<&Tensor<B, 3>>,
+    tts_pad_embed: Option<&Tensor<B, 3>>,
+    generation_step: usize,
+) -> Tensor<B, 3> {
+    match (trailing_text_hidden, tts_pad_embed) {
+        (Some(trailing), Some(pad)) => {
+            let [batch_size, trailing_len, hidden_size] = trailing.dims();
+            if generation_step < trailing_len {
+                codec_embed
+                    + trailing.clone().slice([
+                        0..batch_size,
+                        generation_step..generation_step + 1,
+                        0..hidden_size,
+                    ])
+            } else {
+                codec_embed + pad.clone()
+            }
+        }
+        _ => codec_embed,
+    }
+}
+
+fn codec_group_context_embedding<B: Backend>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    codec_ids: Tensor<B, 2, Int>,
+) -> Tensor<B, 3> {
+    let [batch_size, _num_groups] = codec_ids.dims();
+    let mut group_embeds = Vec::with_capacity(config.num_code_groups);
+    let base_token = codec_ids
+        .clone()
+        .slice([0..batch_size, 0..1])
+        .reshape([batch_size, 1]);
+    group_embeds.push(
+        loaded
+            .model
+            .talker
+            .model
+            .codec_embedding
+            .forward(base_token),
+    );
+    for group_idx in 1..config.num_code_groups {
+        let token = codec_ids
+            .clone()
+            .slice([0..batch_size, group_idx..group_idx + 1])
+            .reshape([batch_size, 1]);
+        group_embeds.push(
+            loaded.model.talker.code_predictor.model.codec_embedding[group_idx - 1].forward(token),
+        );
+    }
+    Tensor::cat(group_embeds, 1).sum_dim(1)
+}
+
+fn validate_generation_side_inputs(
+    batch_size: usize,
+    hidden_size: usize,
+    trailing_dims: Option<[usize; 3]>,
+    pad_dims: Option<[usize; 3]>,
+) -> Result<(), Qwen3TtsInferenceError> {
+    match (trailing_dims, pad_dims) {
+        (None, None) => Ok(()),
+        (
+            Some([trailing_batch, trailing_len, trailing_hidden]),
+            Some([pad_batch, pad_len, pad_hidden]),
+        ) => {
+            if trailing_batch != batch_size || pad_batch != batch_size {
+                return Err(Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "generation side input batch mismatch: expected {batch_size}, got trailing={trailing_batch}, pad={pad_batch}"
+                    ),
+                });
+            }
+            if trailing_len == 0 || pad_len != 1 {
+                return Err(Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "generation side input length mismatch: trailing length must be > 0 and pad length must be 1, got trailing={trailing_len}, pad={pad_len}"
+                    ),
+                });
+            }
+            if trailing_hidden != hidden_size || pad_hidden != hidden_size {
+                return Err(Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "generation side input hidden mismatch: expected {hidden_size}, got trailing={trailing_hidden}, pad={pad_hidden}"
+                    ),
+                });
+            }
+            Ok(())
+        }
+        _ => Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "trailing_text_hidden and tts_pad_embed must be provided together".to_string(),
+        }),
+    }
 }
 
 fn validate_code_predictor_cache_layer_count<B: Backend>(

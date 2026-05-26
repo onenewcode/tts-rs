@@ -38,4 +38,6 @@ pub struct FrontendOutput<B: Backend> {
     pub inputs_embeds: Tensor<B, 3>,
     pub position_ids: Tensor<B, 3, Int>,
     pub attention_mask: Tensor<B, 2, Int>,
+    pub trailing_text_hidden: Tensor<B, 3>,
+    pub tts_pad_embed: Tensor<B, 3>,
 }

@@ -3,8 +3,7 @@ mod common;
 use burn::backend::Flex;
 
 use tts_rs_qwen_burn::{
-    VerificationArtifacts, load_qwen3_tts_audio_codec,
-    verify_qwen3_tts_audio_codec_weights,
+    VerificationArtifacts, load_qwen3_tts_audio_codec, verify_qwen3_tts_audio_codec_weights,
 };
 
 type TestBackend = Flex;
@@ -25,12 +24,9 @@ fn real_checkpoint_audio_codec_weights_roundtrip() {
     let artifacts = VerificationArtifacts::new(
         workspace_root.join("artifacts/qwen3_tts/audio_codec/test_roundtrip"),
     );
-    let verification = verify_qwen3_tts_audio_codec_weights(
-        &loaded.model,
-        &loaded.weights_path,
-        Some(&artifacts),
-    )
-    .expect("audio codec should roundtrip back to the source checkpoint");
+    let verification =
+        verify_qwen3_tts_audio_codec_weights(&loaded.model, &loaded.weights_path, Some(&artifacts))
+            .expect("audio codec should roundtrip back to the source checkpoint");
     assert_eq!(verification.tensor_count, loaded.load_report.applied);
     assert_eq!(verification.tensor_count, 496);
 }

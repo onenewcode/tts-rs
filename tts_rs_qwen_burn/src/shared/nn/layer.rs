@@ -4,10 +4,10 @@ use burn::tensor::DType;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
-use crate::talker::KeyValueCache;
 use super::attention::{AttentionPosition, Qwen3TtsAttention};
 use super::mlp::Qwen3TtsTextMlp;
 use super::rms_norm::qwen_rms_norm;
+use crate::talker::KeyValueCache;
 
 pub struct DecoderLayerOutput<B: Backend> {
     pub hidden: Tensor<B, 3>,
@@ -43,7 +43,7 @@ where
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        position: AttentionPosition<'_, B>,
+        position: AttentionPosition<B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
         collect_activations: bool,
@@ -51,9 +51,15 @@ where
         let residual = x.clone();
         let x = qwen_rms_norm(&self.input_layernorm, x);
         let input_norm = x.clone();
-        let attn_debug =
-            self.self_attn
-                .forward_debug(x, num_heads, num_kv_heads, head_dim, position, mask, cache);
+        let attn_debug = self.self_attn.forward_debug(
+            x,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            position,
+            mask,
+            cache,
+        );
         let attn_out = attn_debug.output;
         let dtype = attn_out.dtype();
         let x = (residual.cast(DType::F32) + attn_out.clone().cast(DType::F32)).cast(dtype);
@@ -63,7 +69,8 @@ where
         let x = qwen_rms_norm(&self.post_attention_layernorm, x);
         let post_attention_norm = x.clone();
         let mlp_output = self.mlp.forward_with_activations(x);
-        let hidden = (residual.cast(DType::F32) + mlp_output.output.clone().cast(DType::F32)).cast(dtype);
+        let hidden =
+            (residual.cast(DType::F32) + mlp_output.output.clone().cast(DType::F32)).cast(dtype);
 
         DecoderLayerOutput {
             hidden,

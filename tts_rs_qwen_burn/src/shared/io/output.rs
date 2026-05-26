@@ -1,8 +1,8 @@
 use std::io::Write;
 use std::path::Path;
 
-use burn::tensor::backend::Backend;
 use burn::tensor::Tensor;
+use burn::tensor::backend::Backend;
 
 pub fn save_wav<B: Backend>(
     waveform: &Tensor<B, 3>,

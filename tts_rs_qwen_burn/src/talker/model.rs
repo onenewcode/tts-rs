@@ -18,15 +18,17 @@ use std::collections::BTreeMap;
 
 use burn::module::Module;
 use burn::nn::attention::generate_autoregressive_mask;
-use burn::nn::{Embedding, Linear, RmsNorm, RotaryEncoding};
+use burn::nn::{Embedding, Linear, RmsNorm};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
-use crate::shared::runtime::cache::KeyValueCache;
 use super::nn::attention::AttentionPosition;
 use super::nn::mlp::native_linear_3d;
 use super::nn::rms_norm::qwen_rms_norm;
-use super::nn::{Qwen3RotaryEncoding, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp};
+use super::nn::{
+    Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp,
+};
+use crate::shared::runtime::cache::KeyValueCache;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsCheckpoint<B: Backend> {
@@ -208,7 +210,7 @@ pub struct Qwen3TtsTalkerCodePredictor<B: Backend> {
     pub model: Qwen3TtsTalkerCodePredictorModel<B>,
     pub lm_head: Vec<Linear<B>>,
     pub small_to_mtp_projection: Option<Linear<B>>,
-    pub rope: RotaryEncoding<B>,
+    pub rope: Qwen3StandardRotaryEncoding<B>,
 }
 
 impl<B> Qwen3TtsTalkerCodePredictor<B>
@@ -230,10 +232,14 @@ where
         let final_mask = build_attention_mask(batch_size, seq_len, key_len, mask, &device);
 
         let x = if let Some(projection) = &self.small_to_mtp_projection {
-            native_linear_3d(projection, inputs_embeds)
+            native_linear_3d(
+                projection,
+                inputs_embeds.cast(projection.weight.val().dtype()),
+            )
         } else {
             inputs_embeds
         };
+        let x = x.cast(self.model.layers[0].self_attn.q_proj.weight.val().dtype());
 
         let hidden_states = self.model.forward(
             x,
@@ -253,7 +259,10 @@ where
                 .clone()
                 .slice([0..batch_size, i + 1..i + 2, 0..hidden_size])
                 .reshape([batch_size, hidden_size]);
-            all_logits.push(head.forward(group_hidden).unsqueeze::<3>());
+            all_logits.push(
+                head.forward(group_hidden.cast(head.weight.val().dtype()))
+                    .unsqueeze::<3>(),
+            );
         }
         Tensor::cat(all_logits, 1)
     }
@@ -276,10 +285,19 @@ where
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        rope: &RotaryEncoding<B>,
+        rope: &Qwen3StandardRotaryEncoding<B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
+        let [batch_size, seq_len, _] = inputs_embeds.dims();
+        let start = cache.first().map_or(0, KeyValueCache::len);
+        let (cos, sin) = rope.get_cos_sin(
+            batch_size,
+            seq_len,
+            start,
+            inputs_embeds.dtype(),
+            &inputs_embeds.device(),
+        );
         let mut x = inputs_embeds;
         for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
             x = layer
@@ -288,7 +306,10 @@ where
                     num_heads,
                     num_kv_heads,
                     head_dim,
-                    AttentionPosition::Standard { rope },
+                    AttentionPosition::Standard {
+                        cos: cos.clone(),
+                        sin: sin.clone(),
+                    },
                     mask.clone(),
                     c,
                     false,
