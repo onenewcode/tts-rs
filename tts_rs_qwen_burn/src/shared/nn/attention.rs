@@ -14,6 +14,10 @@ pub struct AttentionOutput<B: Backend> {
     pub q_proj: Tensor<B, 3>,
     pub k_proj: Tensor<B, 3>,
     pub v_proj: Tensor<B, 3>,
+    pub q_norm: Tensor<B, 3>,
+    pub k_norm: Tensor<B, 3>,
+    pub q_rot: Tensor<B, 3>,
+    pub k_rot: Tensor<B, 3>,
 }
 
 pub enum AttentionPosition<B: Backend> {
@@ -88,6 +92,14 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2)
             .clone();
+        let q_norm_out =
+            q.clone()
+                .swap_dims(1, 2)
+                .reshape([batch_size, seq_len, num_heads * head_dim]);
+        let k_norm_out =
+            k.clone()
+                .swap_dims(1, 2)
+                .reshape([batch_size, seq_len, num_kv_heads * head_dim]);
 
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } => {
@@ -101,6 +113,14 @@ impl<B: Backend> Qwen3TtsAttention<B> {
                 (q, k)
             }
         };
+        let q_rot_out =
+            q.clone()
+                .swap_dims(1, 2)
+                .reshape([batch_size, seq_len, num_heads * head_dim]);
+        let k_rot_out =
+            k.clone()
+                .swap_dims(1, 2)
+                .reshape([batch_size, seq_len, num_kv_heads * head_dim]);
 
         let (k, v) = cache.forward(k, v);
 
@@ -121,6 +141,10 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             q_proj: q_proj_out,
             k_proj: k_proj_out,
             v_proj: v_proj_out,
+            q_norm: q_norm_out,
+            k_norm: k_norm_out,
+            q_rot: q_rot_out,
+            k_rot: k_rot_out,
         }
     }
 

@@ -193,6 +193,22 @@ where
                     format!("layers.{idx}.v_proj.output"),
                     output.v_proj.expect("v_proj collected when requested"),
                 );
+                activations.insert(
+                    format!("layers.{idx}.q_norm.output"),
+                    output.q_norm.expect("q_norm collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.k_norm.output"),
+                    output.k_norm.expect("k_norm collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.q_rot.output"),
+                    output.q_rot.expect("q_rot collected when requested"),
+                );
+                activations.insert(
+                    format!("layers.{idx}.k_rot.output"),
+                    output.k_rot.expect("k_rot collected when requested"),
+                );
             }
             x = output.hidden;
         }

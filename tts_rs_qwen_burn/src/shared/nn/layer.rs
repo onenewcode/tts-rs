@@ -23,6 +23,10 @@ pub struct DecoderLayerOutput<B: Backend> {
     pub q_proj: Option<Tensor<B, 3>>,
     pub k_proj: Option<Tensor<B, 3>>,
     pub v_proj: Option<Tensor<B, 3>>,
+    pub q_norm: Option<Tensor<B, 3>>,
+    pub k_norm: Option<Tensor<B, 3>>,
+    pub q_rot: Option<Tensor<B, 3>>,
+    pub k_rot: Option<Tensor<B, 3>>,
 }
 
 #[derive(Module, Debug)]
@@ -86,6 +90,10 @@ where
             q_proj: collect_activations.then_some(attn_debug.q_proj),
             k_proj: collect_activations.then_some(attn_debug.k_proj),
             v_proj: collect_activations.then_some(attn_debug.v_proj),
+            q_norm: collect_activations.then_some(attn_debug.q_norm),
+            k_norm: collect_activations.then_some(attn_debug.k_norm),
+            q_rot: collect_activations.then_some(attn_debug.q_rot),
+            k_rot: collect_activations.then_some(attn_debug.k_rot),
         }
     }
 }
