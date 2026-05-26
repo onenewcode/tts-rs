@@ -5,7 +5,7 @@ use burn::config::Config;
 use crate::Qwen3TtsLoadError;
 
 #[derive(Config, Debug)]
-pub struct Qwen3TtsSpeechTokenizerConfig {
+pub struct Qwen3TtsAudioCodecConfig {
     pub architectures: Vec<String>,
     pub model_type: String,
     pub encoder_valid_num_quantizers: usize,
@@ -13,13 +13,13 @@ pub struct Qwen3TtsSpeechTokenizerConfig {
     pub output_sample_rate: usize,
     pub decode_upsample_rate: usize,
     pub encode_downsample_rate: usize,
-    pub encoder_config: Qwen3TtsSpeechTokenizerEncoderConfig,
-    pub decoder_config: Qwen3TtsSpeechTokenizerDecoderConfig,
+    pub encoder_config: Qwen3TtsAudioCodecEncoderConfig,
+    pub decoder_config: Qwen3TtsAudioCodecDecoderConfig,
     pub transformers_version: String,
 }
 
 #[derive(Config, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderConfig {
+pub struct Qwen3TtsAudioCodecDecoderConfig {
     pub attention_bias: bool,
     pub attention_dropout: f64,
     pub latent_dim: usize,
@@ -47,7 +47,7 @@ pub struct Qwen3TtsSpeechTokenizerDecoderConfig {
 }
 
 #[derive(Config, Debug)]
-pub struct Qwen3TtsSpeechTokenizerEncoderConfig {
+pub struct Qwen3TtsAudioCodecEncoderConfig {
     pub _frame_rate: f64,
     pub attention_bias: bool,
     pub attention_dropout: f64,
@@ -91,12 +91,16 @@ pub struct Qwen3TtsSpeechTokenizerEncoderConfig {
     pub vector_quantization_hidden_dimension: usize,
 }
 
-impl Qwen3TtsSpeechTokenizerConfig {
+impl Qwen3TtsAudioCodecConfig {
     pub fn load_from_model_dir(model_dir: impl AsRef<Path>) -> Result<Self, Qwen3TtsLoadError> {
-        let path = model_dir
-            .as_ref()
-            .join("speech_tokenizer")
-            .join("config.json");
+        let model_dir = model_dir.as_ref();
+        let audio_codec_path = model_dir.join("audio_codec").join("config.json");
+        let speech_tokenizer_path = model_dir.join("speech_tokenizer").join("config.json");
+        let path = if audio_codec_path.exists() {
+            audio_codec_path
+        } else {
+            speech_tokenizer_path
+        };
         Self::load(&path).map_err(|source| Qwen3TtsLoadError::Config { path, source })
     }
 }

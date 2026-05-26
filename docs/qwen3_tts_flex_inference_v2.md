@@ -18,7 +18,7 @@ V2 non-goals:
 
 - multi-step autoregressive sampling loop
 - generated-mode `code_predictor` expansion
-- waveform decoding through `speech_tokenizer`
+- waveform decoding through `audio_codec`
 - end-to-end `generate_custom_voice`
 - text-side prompt assembly in Rust
 
@@ -136,6 +136,6 @@ After V2 is stable, continue in this order:
 1. add multi-step autoregressive token generation
 2. extend code predictor from teacher-forced mode to generated mode
 3. add sampling controls and stopping rules
-4. implement `speech_tokenizer` decoder inference
+4. implement `audio_codec` decoder inference
 5. connect generated talker codes to waveform decoding
 6. decide whether to pull text-side preprocessing into Rust

@@ -9,7 +9,7 @@ Status: implemented (builds and runs, validation-blocked on real text embeddings
 
 V8 goals:
 
-- load both models (talker + speech tokenizer) in a single binary
+- load both models (talker + audio codec) in a single binary
 - run talker autoregressive generation (V3 + V5 sampling/stopping)
 - expand codec groups via code predictor (V4)
 - decode accumulated codec tokens to waveform (V7)
@@ -29,7 +29,7 @@ V8 non-goals:
 │                      E2E Inference                           │
 ├──────────────────────────────────────────────────────────────┤
 │  1. Load talker model (config + weights)                     │
-│  2. Load speech tokenizer model (config + weights)           │
+│  2. Load audio codec model (config + weights)           │
 │                                                              │
 │  3. [Python-side] Text → token IDs → input embeddings        │
 │                                                              │
@@ -56,7 +56,7 @@ V8 non-goals:
 │  7. Stack all time steps:                                    │
 │     → codec_ids [batch, num_quantizers, time_steps]          │
 │                                                              │
-│  8. Speech tokenizer decoder:                                │
+│  8. Audio codec decoder:                                │
 │     Quantizer → pre_conv → Upsample → Transformer →          │
 │     Wave Decoder → waveform [batch, 1, samples]              │
 │                                                              │
@@ -102,7 +102,7 @@ Full end-to-end comparison requires:
 2. Run Python `Qwen3TTSModel.generate_custom_voice()` 
 3. Compare:
    - Generated token IDs (talker + code predictor)
-   - Waveform samples (speech tokenizer decoder)
+   - Waveform samples (audio codec decoder)
    - Audio quality (subjective listening or objective metrics like MCD)
 
 Required Python reference script: `py/generate_reference_v8.py`

@@ -1,22 +1,22 @@
-// SnakeBeta activation and LayerScale — shared by talker and speech tokenizer.
+// SnakeBeta activation and LayerScale — shared by talker and audio codec.
 use burn::module::{Module, Param};
 use burn::tensor::{Tensor, backend::Backend};
 
 #[derive(Module, Debug)]
-pub struct TokenizerSnakeBeta<B: Backend> {
+pub struct AudioCodecSnakeBeta<B: Backend> {
     pub alpha: Param<Tensor<B, 1>>,
     pub beta: Param<Tensor<B, 1>>,
 }
 
 #[derive(Module, Debug)]
-pub struct TokenizerLayerScale<B: Backend> {
+pub struct AudioCodecLayerScale<B: Backend> {
     pub scale: Param<Tensor<B, 1>>,
 }
 
 #[derive(Module, Debug, Default, Clone)]
-pub struct Qwen3TtsSpeechTokenizerEmptyModule;
+pub struct Qwen3TtsAudioCodecEmptyModule;
 
-impl<B: Backend> TokenizerSnakeBeta<B> {
+impl<B: Backend> AudioCodecSnakeBeta<B> {
     /// SnakeBeta activation: `x + sin^2(alpha * x) / (beta + eps)`
     /// Supports both `[B, C, T]` (CNN) and `[B, S, H]` (Transformer) formats.
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
@@ -35,7 +35,7 @@ impl<B: Backend> TokenizerSnakeBeta<B> {
     }
 }
 
-impl<B: Backend> TokenizerLayerScale<B> {
+impl<B: Backend> AudioCodecLayerScale<B> {
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let n_param = self.scale.dims()[0];
         let [_, d1, _] = x.dims();
@@ -48,14 +48,14 @@ impl<B: Backend> TokenizerLayerScale<B> {
     }
 }
 
-impl<B: Backend> TokenizerSnakeBeta<B> {
+impl<B: Backend> AudioCodecSnakeBeta<B> {
     pub(crate) fn new(channels: usize, device: &B::Device) -> Self {
         use burn::module::Initializer;
         Self { alpha: Initializer::Zeros.init([channels], device), beta: Initializer::Zeros.init([channels], device) }
     }
 }
 
-impl<B: Backend> TokenizerLayerScale<B> {
+impl<B: Backend> AudioCodecLayerScale<B> {
     pub(crate) fn new(channels: usize, initial_scale: f64, device: &B::Device) -> Self {
         use burn::module::Initializer;
         Self { scale: Initializer::Constant { value: initial_scale }.init([channels], device) }

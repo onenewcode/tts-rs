@@ -23,7 +23,7 @@ Useful focused runs:
 cargo test -p tts_rs_qwen_burn manifest::
 cargo test -p tts_rs_qwen_burn paths::
 cargo test -p tts_rs_qwen_burn talker::
-cargo test -p tts_rs_qwen_burn speech_tokenizer::
+cargo test -p tts_rs_qwen_burn audio_codec::
 ```
 
 These tests do not require local model weights.
@@ -36,7 +36,7 @@ Run them explicitly:
 
 ```bash
 cargo test -p tts_rs_qwen_burn --test talker_roundtrip -- --ignored --nocapture
-cargo test -p tts_rs_qwen_burn --test speech_tokenizer_roundtrip -- --ignored --nocapture
+cargo test -p tts_rs_qwen_burn --test audio_codec_roundtrip -- --ignored --nocapture
 ```
 
 Model discovery works in this order:
@@ -55,7 +55,7 @@ QWEN_TTS_MODEL_DIR=/path/to/Qwen/Qwen3-TTS cargo test -p tts_rs_qwen_burn --test
 Slow tests write verification artifacts into:
 
 - `artifacts/qwen3_tts/talker/test_roundtrip/`
-- `artifacts/qwen3_tts/speech_tokenizer/test_roundtrip/`
+- `artifacts/qwen3_tts/audio_codec/test_roundtrip/`
 
 Each directory contains:
 

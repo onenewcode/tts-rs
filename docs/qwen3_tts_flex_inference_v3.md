@@ -19,7 +19,7 @@ V3 non-goals:
 
 - generated-mode `code_predictor` expansion
 - sampling controls such as top-k, top-p, temperature, repetition penalty, or beam search
-- waveform decoding through `speech_tokenizer`
+- waveform decoding through `audio_codec`
 - end-to-end `generate_custom_voice`
 - Rust text-side prompt assembly
 - custom backend- or dtype-specific math helpers
@@ -172,6 +172,6 @@ After V3 is stable, continue in this order:
 
 1. extend `code_predictor` from teacher-forced mode to generated mode
 2. add sampling controls and stopping rules
-3. implement `speech_tokenizer` decoder inference
+3. implement `audio_codec` decoder inference
 4. connect generated talker codes to waveform decoding
 5. decide whether to pull text-side preprocessing into Rust

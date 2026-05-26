@@ -25,9 +25,8 @@
 
 use std::collections::BTreeMap;
 
-use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor, TensorData};
+use burn::tensor::{Int, Tensor};
 
 use super::nn::mlp::native_linear_3d;
 
@@ -39,6 +38,7 @@ use crate::shared::io::talker_load::LoadedQwen3TtsTalker;
 
 // Re-exported from types.rs + shared/runtime/sampling.rs
 pub use super::types::*;
+#[allow(unused_imports)]
 pub use crate::shared::runtime::sampling::{sample_token, SamplingConfig, StoppingRules};
 use crate::shared::runtime::sampling::apply_repetition_penalty;
 
@@ -164,6 +164,7 @@ where
     let (mut selected_token, mut eos_mask) =
         sample_token::<B>(prefill_logits, sampling, eos_id, suppress, &device);
     let mut generated_tokens: Vec<Tensor<B, 2, Int>> = vec![selected_token.clone()];
+    let mut step_hidden_states = vec![last_hidden_step(prefill_output.last_hidden_state.clone())];
     let mut step_logits = Vec::new();
     let mut step_diagnostics = Vec::new();
 
@@ -206,6 +207,7 @@ where
         eos_mask = eos_mask.bool_or(next_eos);
         selected_token = next_token;
         generated_tokens.push(selected_token.clone());
+        step_hidden_states.push(last_hidden_step(decode_output.last_hidden_state.clone()));
 
         if collect_step_diagnostics {
             step_logits.push(decode_output.logits);
@@ -221,6 +223,7 @@ where
 
     Ok(TalkerGenerateOutput {
         generated_token_ids,
+        step_hidden_states,
         prefill_logits: prefill_output.logits,
         step_logits,
         step_diagnostics,
@@ -416,7 +419,7 @@ where
 {
     let predictor = &loaded.model.talker.code_predictor;
     let projected_inputs = if let Some(projection) = &predictor.small_to_mtp_projection {
-        projection.forward(inputs_embeds)
+        native_linear_3d(projection, inputs_embeds.cast(projection.weight.val().dtype()))
     } else {
         inputs_embeds
     };
@@ -441,6 +444,13 @@ where
         mask,
         cache,
     )
+}
+
+fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {
+    let [batch_size, seq_len, hidden_size] = hidden.dims();
+    hidden
+        .slice([0..batch_size, seq_len - 1..seq_len, 0..hidden_size])
+        .reshape([batch_size, hidden_size])
 }
 
 fn validate_code_predictor_cache_layer_count<B: Backend>(

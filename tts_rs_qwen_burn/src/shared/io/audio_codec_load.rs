@@ -6,31 +6,37 @@ use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 use crate::Qwen3TtsLoadError;
 use crate::shared::manifest::LoadReport;
 
-use crate::shared::config::tokenizer::Qwen3TtsSpeechTokenizerConfig;
-use crate::speech_tokenizer::Qwen3TtsSpeechTokenizerCheckpoint;
-use crate::shared::io::tokenizer_remap::speech_tokenizer_load_key_remapper;
+use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
+use crate::audio_codec::Qwen3TtsAudioCodecCheckpoint;
+use crate::shared::io::audio_codec_remap::audio_codec_load_key_remapper;
 
 #[derive(Debug)]
-pub struct LoadedQwen3TtsSpeechTokenizer<B: Backend> {
-    pub config: Qwen3TtsSpeechTokenizerConfig,
-    pub model: Qwen3TtsSpeechTokenizerCheckpoint<B>,
+pub struct LoadedQwen3TtsAudioCodec<B: Backend> {
+    pub config: Qwen3TtsAudioCodecConfig,
+    pub model: Qwen3TtsAudioCodecCheckpoint<B>,
     pub load_report: LoadReport,
     pub model_dir: PathBuf,
     pub weights_path: PathBuf,
 }
 
-pub fn load_qwen3_tts_speech_tokenizer<B: Backend>(
+pub fn load_qwen3_tts_audio_codec<B: Backend>(
     model_dir: impl AsRef<Path>,
     device: &B::Device,
-) -> Result<LoadedQwen3TtsSpeechTokenizer<B>, Qwen3TtsLoadError> {
+) -> Result<LoadedQwen3TtsAudioCodec<B>, Qwen3TtsLoadError> {
     let model_dir = model_dir.as_ref().to_path_buf();
-    let weights_path = model_dir.join("speech_tokenizer").join("model.safetensors");
-    let config = Qwen3TtsSpeechTokenizerConfig::load_from_model_dir(&model_dir)?;
+    let audio_codec_weights = model_dir.join("audio_codec").join("model.safetensors");
+    let speech_tokenizer_weights = model_dir.join("speech_tokenizer").join("model.safetensors");
+    let weights_path = if audio_codec_weights.exists() {
+        audio_codec_weights
+    } else {
+        speech_tokenizer_weights
+    };
+    let config = Qwen3TtsAudioCodecConfig::load_from_model_dir(&model_dir)?;
     let mut model = config.init_checkpoint(device);
 
     let mut store = SafetensorsStore::from_file(&weights_path)
         .with_from_adapter(PyTorchToBurnAdapter)
-        .remap(speech_tokenizer_load_key_remapper())
+        .remap(audio_codec_load_key_remapper())
         .skip_enum_variants(true);
 
     let apply_result = model
@@ -47,7 +53,7 @@ pub fn load_qwen3_tts_speech_tokenizer<B: Backend>(
         unused: apply_result.unused.len(),
     };
 
-    Ok(LoadedQwen3TtsSpeechTokenizer {
+    Ok(LoadedQwen3TtsAudioCodec {
         config,
         model,
         load_report,

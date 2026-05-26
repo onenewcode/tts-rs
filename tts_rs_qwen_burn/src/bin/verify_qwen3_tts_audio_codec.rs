@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use burn::backend::Flex;
 use tts_rs_qwen_burn::{
     VerificationArtifacts, default_workspace_root, find_local_qwen_tts_model_dir,
-    load_qwen3_tts_speech_tokenizer, verify_qwen3_tts_speech_tokenizer_weights,
+    load_qwen3_tts_audio_codec, verify_qwen3_tts_audio_codec_weights,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,12 +15,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = args
         .next()
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_workspace_root().join("artifacts/qwen3_tts/speech_tokenizer"));
+        .unwrap_or_else(|| default_workspace_root().join("artifacts/qwen3_tts/audio_codec"));
 
     let device = Default::default();
-    let loaded = load_qwen3_tts_speech_tokenizer::<Flex>(&model_dir, &device)?;
+    let loaded = load_qwen3_tts_audio_codec::<Flex>(&model_dir, &device)?;
     let artifacts = VerificationArtifacts::new(output_dir);
-    let verification = verify_qwen3_tts_speech_tokenizer_weights(
+    let verification = verify_qwen3_tts_audio_codec_weights(
         &loaded.model,
         &loaded.weights_path,
         Some(&artifacts),

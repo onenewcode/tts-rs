@@ -1,4 +1,4 @@
-//! V7 alignment test: speech tokenizer decoder waveform output.
+//! V7 alignment test: audio codec decoder waveform output.
 //!
 //! Compares Rust decoder output against Python reference data.
 //!
@@ -10,7 +10,7 @@ use burn::tensor::{Int, Tensor, TensorData};
 use serde::Deserialize;
 use std::fs;
 use tts_rs_qwen_burn::{
-    decode_codec_tokens, load_qwen3_tts_speech_tokenizer,
+    decode_codec_tokens, load_qwen3_tts_audio_codec,
 };
 
 mod common;
@@ -67,10 +67,10 @@ fn test_decoder_waveform_alignment() {
         .expect("reference_v7_decoder.json not found. Run `python py/generate_reference_v7.py` first.");
     let ref_data: DecoderReference = serde_json::from_str(&ref_json).unwrap();
 
-    // Load speech tokenizer
-    let model_dir = common::resolve_model_dir().join("speech_tokenizer");
-    let tokenizer = load_qwen3_tts_speech_tokenizer::<Backend>(&model_dir, &device)
-        .expect("Failed to load speech tokenizer");
+    // Load audio codec
+    let model_dir = common::resolve_model_dir();
+    let tokenizer = load_qwen3_tts_audio_codec::<Backend>(&model_dir, &device)
+        .expect("Failed to load audio codec");
 
     // Prepare codec tokens
     let shape = &ref_data.input.codec_3d_shape;

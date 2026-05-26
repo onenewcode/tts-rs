@@ -4,8 +4,8 @@ use burn::tensor::{Int, Tensor};
 
 use crate::Qwen3TtsInferenceError;
 
-use crate::shared::config::tokenizer::Qwen3TtsSpeechTokenizerDecoderConfig;
-use crate::shared::io::tokenizer_load::LoadedQwen3TtsSpeechTokenizer;
+use crate::shared::config::audio_codec::Qwen3TtsAudioCodecDecoderConfig;
+use crate::shared::io::audio_codec_load::LoadedQwen3TtsAudioCodec;
 
 /// Decode codec token IDs to audio waveform.
 ///
@@ -14,9 +14,9 @@ use crate::shared::io::tokenizer_load::LoadedQwen3TtsSpeechTokenizer;
 ///
 /// Returns audio waveform: [batch, 1, num_samples].
 pub fn decode_codec_tokens<B: Backend>(
-    loaded: &LoadedQwen3TtsSpeechTokenizer<B>,
+    loaded: &LoadedQwen3TtsAudioCodec<B>,
     codec_ids: Tensor<B, 3, Int>,
-    config: &Qwen3TtsSpeechTokenizerDecoderConfig,
+    config: &Qwen3TtsAudioCodecDecoderConfig,
 ) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
     validate_codec_input_3d(&codec_ids, config)?;
 
@@ -42,9 +42,9 @@ pub fn decode_codec_tokens<B: Backend>(
 
 /// Single-time-step convenience: `codec_ids` as `[batch, num_quantizers]`.
 pub fn decode_codec_tokens_single_step<B: Backend>(
-    loaded: &LoadedQwen3TtsSpeechTokenizer<B>,
+    loaded: &LoadedQwen3TtsAudioCodec<B>,
     codec_ids: Tensor<B, 2, Int>,
-    config: &Qwen3TtsSpeechTokenizerDecoderConfig,
+    config: &Qwen3TtsAudioCodecDecoderConfig,
 ) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
     let [batch, num_q] = codec_ids.dims();
     let codec_3d = codec_ids.reshape([batch, num_q, 1]);
@@ -53,7 +53,7 @@ pub fn decode_codec_tokens_single_step<B: Backend>(
 
 fn validate_codec_input_3d<B: Backend>(
     codec_ids: &Tensor<B, 3, Int>,
-    config: &Qwen3TtsSpeechTokenizerDecoderConfig,
+    config: &Qwen3TtsAudioCodecDecoderConfig,
 ) -> Result<(), Qwen3TtsInferenceError> {
     let [batch, num_quantizers, _time_steps] = codec_ids.dims();
     if batch == 0 {

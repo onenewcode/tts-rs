@@ -18,7 +18,7 @@ V4 goals:
 V4 non-goals:
 
 - sampling controls such as top-k, top-p, temperature, repetition penalty, or beam search
-- waveform decoding through `speech_tokenizer`
+- waveform decoding through `audio_codec`
 - end-to-end `generate_custom_voice`
 - Rust text-side prompt assembly
 - custom backend- or dtype-specific math helpers
@@ -144,6 +144,6 @@ generated token IDs, and code predictor outputs in a single file.
 After V4 is stable, continue in this order:
 
 1. add sampling controls and stopping rules
-2. implement `speech_tokenizer` decoder inference
+2. implement `audio_codec` decoder inference
 3. connect generated talker codes to waveform decoding
 4. decide whether to pull text-side preprocessing into Rust

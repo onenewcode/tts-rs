@@ -21,8 +21,8 @@
 //! // Load models (auto-detects variant from config.json)
 //! let talker = load_qwen3_tts_talker_for_inference::<Backend>(
 //!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/talker", &device)?;
-//! let tokenizer = load_qwen3_tts_speech_tokenizer::<Backend>(
-//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/speech_tokenizer", &device)?;
+//! let tokenizer = load_qwen3_tts_audio_codec::<Backend>(
+//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/audio_codec", &device)?;
 //!
 //! // Run the pipeline...
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -33,7 +33,7 @@
 //! | Module | Domain | Purpose |
 //! |---|---|---|
 //! | `talker` | Codec generation | TalkerModel + autoregressive loop + code predictor |
-//! | `speech_tokenizer` | Waveform decoding | Decoder + quantizer + upsampling pipeline |
+//! | `audio_codec` | Waveform decoding | Decoder + quantizer + upsampling pipeline |
 //! | `error` | Shared | Error types |
 //! | `manifest` | Shared | Weight manifest and verification |
 //! | `paths` | Shared | Model directory discovery |
@@ -49,7 +49,8 @@ pub mod manifest {
 pub mod paths {
     pub use crate::shared::paths::*;
 }
-pub mod speech_tokenizer;
+pub mod audio_codec;
+pub mod frontend;
 pub mod talker;
 
 // Backward-compat re-exports from shared/
@@ -59,11 +60,17 @@ pub use shared::manifest::{
     WeightMismatch, WeightVerificationReport,
 };
 pub use shared::paths::{default_workspace_root, find_local_qwen_tts_model_dir};
-pub use speech_tokenizer::{
-    LoadedQwen3TtsSpeechTokenizer, Qwen3TtsSpeechTokenizerCheckpoint,
-    decode_codec_tokens, decode_codec_tokens_single_step, load_qwen3_tts_speech_tokenizer,
-    verify_qwen3_tts_speech_tokenizer_weights,
+pub use audio_codec::{
+    LoadedQwen3TtsAudioCodec, Qwen3TtsAudioCodecCheckpoint,
+    decode_codec_tokens, decode_codec_tokens_single_step, load_qwen3_tts_audio_codec,
+    verify_qwen3_tts_audio_codec_weights,
 };
+pub use frontend::{
+    CustomVoiceBatch, CustomVoiceRequest, FrontendOutput, Qwen3TtsTextTokenizer,
+    build_custom_voice_prefill_batch, build_custom_voice_prompt,
+    load_custom_voice_generation_config,
+};
+pub use shared::io::{save_wav, write_wav};
 pub use talker::{
     CodePredictorGenerateInput, CodePredictorGenerateOutput,
     CodePredictorGenerateStepDiagnostic, CodePredictorTeacherForcedInput,

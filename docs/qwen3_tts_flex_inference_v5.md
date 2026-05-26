@@ -184,6 +184,6 @@ Required fast unit tests:
 After V5 is stable:
 
 1. add `repetition_penalty` (V6)
-2. implement `speech_tokenizer` decoder inference (V7)
+2. implement `audio_codec` decoder inference (V7)
 3. connect generated talker codes to waveform decoding (V8)
 4. decide whether to pull text-side preprocessing into Rust

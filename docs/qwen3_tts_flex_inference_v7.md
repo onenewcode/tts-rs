@@ -2,7 +2,7 @@
 
 ## Summary
 
-This document defines the speech tokenizer decoder inference: converting quantized codec
+This document defines the audio codec decoder inference: converting quantized codec
 token IDs to raw audio waveform via theResidual Vector Quantization (RVQ) decoder.
 
 Status: implemented (forward methods complete, full decoder pipeline functional).
@@ -126,16 +126,16 @@ pub fn decode_codec_tokens_single_step<B>(loaded, codec_ids, config) -> Result<T
 
 ## Python Reference Alignment
 
-The speech tokenizer decoder should produce bit-identical output to Python when given
+The audio codec decoder should produce bit-identical output to Python when given
 the same codec token IDs. Test approach:
 
 1. Generate codec tokens from Python talker generation
-2. Pass same tokens through Python speech tokenizer decoder
+2. Pass same tokens through Python audio codec decoder
 3. Pass tokens through Rust `decode_codec_tokens`
 4. Compare waveform samples element-wise
 
 Required Python reference script: `py/generate_reference_v7.py`
-- Loads speech tokenizer model with `dtype="auto"`
+- Loads audio codec model with `dtype="auto"`
 - Takes codec token IDs from V3/V4 reference generation
 - Runs decoder forward
 - Exports waveform samples (first-100, last-100, max_abs_diff stats)

@@ -1,138 +1,53 @@
-# Qwen3-TTS Production Pipeline V9
+# Qwen3-TTS Flex Inference V9
 
-## Summary
+V9 moves the remaining production path into Rust and makes Python a test oracle
+only.
 
-This document defines the ninth milestone: bridging the remaining gaps between the
-current end-to-end pipeline (which produces white noise from zero embeddings) and
-a production-ready system that generates real speech from text.
+## Scope
 
-Status: design-finalized, implementation-pending.
+- Local 12Hz `0.6B CustomVoice`.
+- No streaming, voice cloning, or speaker encoder.
+- Library API supports batches in the frontend; CLI supports one sample.
 
-Current state (V8):
-- Talker generation from placeholder embeddings → white noise audio
-- Speech tokenizer decoder loads and runs correctly
-- WAV output working (24kHz, 16-bit mono)
-- 67 fast tests pass, weight roundtrip verified (402 + 496 tensors)
+## Rust Pipeline
 
-V9 goals:
+1. `Qwen3TtsTextTokenizer` loads `vocab.json`, `merges.txt`, and
+   `tokenizer_config.json`.
+2. `frontend::build_custom_voice_prefill_batch()` builds the fixed CustomVoice
+   prompt:
 
-- add `shared/io/output.rs` — reusable WAV writer extracted from e2e binary
-- add text-side preprocessing in Rust (or Python→Rust embedding bridge)
-- fix code predictor dtype mismatch for real codec group expansion
-- pass real talker hidden states to code predictor
-- validate full pipeline against Python reference for a short text prompt
-- produce a recognizable audio output (not white noise)
+   ```
+   <|im_start|>assistant
+   {text}<|im_end|>
+   <|im_start|>assistant
+   ```
 
-V9 non-goals:
+3. Text ids pass through `talker.model.text_embedding` and
+   `talker.text_projection`.
+4. `generate_talker_tokens()` returns generated token ids and matching hidden
+   states.
+5. Each generated token/hidden-state pair feeds
+   `generate_code_predictor_groups()`.
+6. Codec groups are stacked as `[batch, num_code_groups, time_steps]` and decoded
+   by `audio_codec::decode_codec_tokens()`.
+7. `shared::io::save_wav()` writes `0000.wav`; the CLI writes a manifest.
 
-- speaker encoder / voice cloning
-- streaming / real-time inference
-- batch inference
-- audio post-processing (normalization, denoising)
-- multi-format audio output (FLAC, MP3)
+## CLI
 
-## Sub-Stages
-
-### V9a: Audio Output Module
-
-Extract WAV writer from `e2e_inference.rs` into `shared/io/output.rs`.
-
-```rust
-/// Write a Burn tensor as a 16-bit PCM WAV file.
-pub fn save_wav<B: Backend>(
-    waveform: &Tensor<B, 3>,    // [batch, channels, samples]
-    path: impl AsRef<Path>,
-    sample_rate: u32,
-) -> Result<(), Box<dyn std::error::Error>>
+```sh
+cargo run -p tts_rs_qwen_burn --bin qwen3-tts -- \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "其实我真的有发现，我是一个特别善于观察别人情绪的人。" \
+  --language Chinese \
+  --speaker Vivian \
+  --output-dir output \
+  --max-new-tokens 256
 ```
 
-Rust interface:
-- `save_wav()` — full WAV file writer with RIFF header
-- `write_wav()` — streaming writer for large files
+## Python Oracles
 
-Python baseline:
-- `py/generate_reference_v9a.py` — generates known sine wave, exports raw PCM values
-- `tests/audio_alignment.rs` — compares Rust WAV output byte-for-byte with Python
+- `py/generate_reference_v9_tokenizer.py`
+- `py/generate_reference_v9_prefill.py`
+- `py/generate_reference_v9_e2e.py`
 
-### V9b: Text-Side Preprocessing Bridge
-
-Two options for getting real text embeddings into Rust:
-
-**Option A: Python export** — Python tokenizer encodes text, saves embeddings as `.npy` or JSON.
-Rust binary loads the file and uses it as input.
-
-**Option B: Rust tokenizer** — Implement tokenizer + embedding lookup in Rust using Burn's
-Embedding module. Requires porting the Qwen3 tokenizer config (`tokenizer_config.json`,
-`vocab.json`, `merges.txt`).
-
-Recommendation: Start with Option A (lower risk), plan Option B for V10.
-
-Python script: `py/export_text_embeddings.py`
-- Takes text prompt + model dir
-- Tokenizes text, looks up embeddings
-- Exports `text_embeddings.json` with shape + flattened values
-
-### V9c: Code Predictor Dtype Fix
-
-The code predictor fails with "matmul: dtype mismatch left: BF16 right: F32" when
-called from the e2e binary. The root cause is in the `small_to_mtp_projection` linear
-layer — its weights are F32 while the talker hidden state is BF16.
-
-Fix approach:
-1. Audit `Qwen3TtsTalkerCodePredictor` model loading — check dtype of projection weights
-2. Add explicit dtype cast in `forward_code_predictor_hidden` before projection
-3. Or ensure hidden state is cast to match the projection weight dtype
-
-### V9d: Real Hidden State Passing
-
-Currently the e2e binary passes zero tensors as hidden state to the code predictor.
-The correct approach: extract the last hidden state from each talker decode step
-and pass it to the code predictor.
-
-Changes to `generate_talker_tokens`:
-- Add option to collect hidden states per step
-- Return `step_hidden_states: Vec<Tensor<B, 2>>` alongside tokens
-
-Or: use `collect_step_diagnostics = true` which already collects activations, and
-extract `"model.norm.output"` as the hidden state.
-
-### V9e: Full Pipeline Validation
-
-End-to-end test with a real text prompt:
-
-1. Python: encode text → embeddings → run full pipeline → reference audio
-2. Rust: load embeddings → generate → decode → output audio
-3. Compare:
-   - Talker token IDs (should match Python greedy generation)
-   - Waveform samples (BF16 tolerance)
-
-## Python Reference Data
-
-| Script | Output | Covers |
-|---|---|---|
-| `py/generate_reference_v9a.py` | `reference_v9a_audio.json` | WAV encoding |
-| `py/export_text_embeddings.py` | `text_embeddings.json` | Text → embeddings bridge |
-| `py/generate_reference_v9e.py` | `reference_v9e_e2e.json` | Full pipeline with text |
-
-## Test Plan
-
-Required fast tests:
-
-- `save_wav` produces valid RIFF WAV header
-- `save_wav` roundtrips: write → read → same samples
-- `save_wav` rejects empty waveform
-- `save_wav` handles sample rate validation
-
-Required alignment tests:
-
-- `tests/audio_alignment.rs` — WAV bytes match Python (ignored, needs Python baseline)
-- `tests/talker_alignment.rs` (V1-V4) — continues to pass with hidden state collection enabled
-- `tests/decoder_alignment.rs` (V7) — decoder alignment updated for multi-step input
-
-## Acceptance Criteria
-
-- `cargo test -p tts_rs_qwen_burn` — all fast tests pass
-- `save_wav` produces byte-identical output to Python's `wave` module
-- Text embeddings bridge works (Python export → Rust load → same values)
-- Full pipeline with real text embeddings produces recognizable speech (not white noise)
-- (stretch) Talker tokens match Python greedy generation for same text input
+Generated JSON artifacts are written to `target/tmp` and are not committed.

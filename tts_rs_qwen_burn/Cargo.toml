@@ -10,3 +10,5 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tokenizers = "0.23.1"
+clap = { version = "4.5.51", features = ["derive"] }

@@ -6,7 +6,7 @@
 //! - **TalkerModel**: The main transformer that processes embeddings and produces
 //!   codec logits through 28+ decoder layers with M-RoPE attention.
 //! - **CodePredictor**: A smaller decoder that expands each generated talker token
-//!   into multiple codec groups for the speech tokenizer.
+//!   into multiple codec groups for the audio codec.
 //! - **KV Cache**: Optimized key-value caching for incremental autoregressive decoding.
 //! - **Sampling**: Configurable token selection (greedy, temperature, top-k, top-p).
 //!

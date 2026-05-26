@@ -17,7 +17,7 @@ V1 goals:
 
 V1 non-goals:
 
-- waveform decoding through `speech_tokenizer`
+- waveform decoding through `audio_codec`
 - end-to-end `generate_custom_voice`
 - streaming inference
 - sampling loop
@@ -155,7 +155,7 @@ After V1 is numerically stable, continue in this order:
 1. add `talker` single-step decode with cache support
 2. add multi-step autoregressive token generation
 3. extend code predictor from teacher-forced mode to generated mode
-4. implement `speech_tokenizer` decoder inference
+4. implement `audio_codec` decoder inference
 5. connect `talker` output codes to waveform decoding
 6. decide whether to pull text-side preprocessing into Rust
 

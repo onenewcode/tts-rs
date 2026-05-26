@@ -1,2 +1,2 @@
 pub mod talker;
-pub mod tokenizer;
+pub mod audio_codec;

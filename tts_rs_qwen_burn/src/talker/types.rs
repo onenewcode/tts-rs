@@ -62,6 +62,7 @@ pub struct TalkerGenerateStepDiagnostic<B: Backend> {
 #[derive(Debug)]
 pub struct TalkerGenerateOutput<B: Backend> {
     pub generated_token_ids: Tensor<B, 2, Int>,
+    pub step_hidden_states: Vec<Tensor<B, 2>>,
     pub prefill_logits: Tensor<B, 3>,
     pub step_logits: Vec<Tensor<B, 3>>,
     pub step_diagnostics: Vec<TalkerGenerateStepDiagnostic<B>>,

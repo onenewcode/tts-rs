@@ -2,29 +2,29 @@ use burn::backend::Flex;
 use burn::nn::RotaryEncodingConfig;
 use burn::tensor::{Int, Tensor};
 
-use crate::shared::config::tokenizer::{
-    Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerDecoderConfig,
-    Qwen3TtsSpeechTokenizerEncoderConfig,
+use crate::shared::config::audio_codec::{
+    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecDecoderConfig,
+    Qwen3TtsAudioCodecEncoderConfig,
 };
 use super::factory::encoder::{derive_encoder_downsample_factor, derive_encoder_downsample_kernel};
-use crate::shared::nn::activation::{TokenizerLayerScale, TokenizerSnakeBeta};
-use crate::shared::nn::conv::{TokenizerCausalConv1d, TokenizerCausalTransConv1d};
+use crate::shared::nn::activation::{AudioCodecLayerScale, AudioCodecSnakeBeta};
+use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 use super::model::decoder::{
-    Qwen3TtsSpeechTokenizerConvNeXtBlock, Qwen3TtsSpeechTokenizerDecoder,
-    Qwen3TtsSpeechTokenizerDecoderAttention, Qwen3TtsSpeechTokenizerDecoderCodebook,
-    Qwen3TtsSpeechTokenizerDecoderMlp, Qwen3TtsSpeechTokenizerDecoderQuantizer,
-    Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization,
-    Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantizer,
-    Qwen3TtsSpeechTokenizerDecoderTransformer, Qwen3TtsSpeechTokenizerDecoderTransformerLayer,
-    Qwen3TtsSpeechTokenizerDecoderVectorQuantization,
+    Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder,
+    Qwen3TtsAudioCodecDecoderAttention, Qwen3TtsAudioCodecDecoderCodebook,
+    Qwen3TtsAudioCodecDecoderMlp, Qwen3TtsAudioCodecDecoderQuantizer,
+    Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
+    Qwen3TtsAudioCodecDecoderResidualVectorQuantizer,
+    Qwen3TtsAudioCodecDecoderTransformer, Qwen3TtsAudioCodecDecoderTransformerLayer,
+    Qwen3TtsAudioCodecDecoderVectorQuantization,
 };
-use super::model::encoder::Qwen3TtsSpeechTokenizerEncoderBackboneLayer;
+use super::model::encoder::Qwen3TtsAudioCodecEncoderBackboneLayer;
 use super::model::wave_decoder::{
-    Qwen3TtsSpeechTokenizerWaveDecoderConvEntry, Qwen3TtsSpeechTokenizerWaveDecoderEntry,
-    Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit,
-    Qwen3TtsSpeechTokenizerWaveDecoderUpsampleStage,
+    Qwen3TtsAudioCodecWaveDecoderConvEntry, Qwen3TtsAudioCodecWaveDecoderEntry,
+    Qwen3TtsAudioCodecWaveDecoderResidualUnit,
+    Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
-use crate::shared::io::tokenizer_remap::{speech_tokenizer_export_key_remapper, speech_tokenizer_load_key_remapper};
+use crate::shared::io::audio_codec_remap::{audio_codec_export_key_remapper, audio_codec_load_key_remapper};
 
 type TestBackend = Flex;
 
@@ -35,16 +35,16 @@ fn tensor_param_dims<const D: usize, B: burn::tensor::backend::Backend>(
     param.dims()
 }
 
-fn sample_config() -> Qwen3TtsSpeechTokenizerConfig {
-    Qwen3TtsSpeechTokenizerConfig {
-        architectures: vec!["Qwen3TtsSpeechTokenizer".to_string()],
+fn sample_config() -> Qwen3TtsAudioCodecConfig {
+    Qwen3TtsAudioCodecConfig {
+        architectures: vec!["Qwen3TtsAudioCodec".to_string()],
         model_type: "qwen3_tts_tokenizer".to_string(),
         encoder_valid_num_quantizers: 2,
         input_sample_rate: 192,
         output_sample_rate: 24000,
         decode_upsample_rate: 2,
         encode_downsample_rate: 16,
-        encoder_config: Qwen3TtsSpeechTokenizerEncoderConfig {
+        encoder_config: Qwen3TtsAudioCodecEncoderConfig {
             _frame_rate: 12.0,
             attention_bias: true,
             attention_dropout: 0.0,
@@ -87,7 +87,7 @@ fn sample_config() -> Qwen3TtsSpeechTokenizerConfig {
             use_streaming: false,
             vector_quantization_hidden_dimension: 8,
         },
-        decoder_config: Qwen3TtsSpeechTokenizerDecoderConfig {
+        decoder_config: Qwen3TtsAudioCodecDecoderConfig {
             attention_bias: true,
             attention_dropout: 0.0,
             latent_dim: 16,
@@ -138,34 +138,34 @@ fn init_checkpoint_builds_expected_decoder_and_encoder_layouts() {
     assert_eq!(checkpoint.decoder.decoder.len(), 7);
     assert!(matches!(
         checkpoint.decoder.decoder.first(),
-        Some(Qwen3TtsSpeechTokenizerWaveDecoderEntry::InputConv(_))
+        Some(Qwen3TtsAudioCodecWaveDecoderEntry::InputConv(_))
     ));
     assert!(matches!(
         checkpoint.decoder.decoder.last(),
-        Some(Qwen3TtsSpeechTokenizerWaveDecoderEntry::OutputConv(_))
+        Some(Qwen3TtsAudioCodecWaveDecoderEntry::OutputConv(_))
     ));
     assert_eq!(checkpoint.decoder.quantizer.rvq_first.vq.layers.len(), 1);
     assert_eq!(checkpoint.decoder.quantizer.rvq_rest.vq.layers.len(), 4);
     assert_eq!(checkpoint.encoder.encoder.layers.len(), 15);
     assert!(matches!(
         checkpoint.encoder.encoder.layers[0],
-        Qwen3TtsSpeechTokenizerEncoderBackboneLayer::InputConv(_)
+        Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(_)
     ));
     assert!(matches!(
         checkpoint.encoder.encoder.layers[1],
-        Qwen3TtsSpeechTokenizerEncoderBackboneLayer::Resnet(_)
+        Qwen3TtsAudioCodecEncoderBackboneLayer::Resnet(_)
     ));
     assert!(matches!(
         checkpoint.encoder.encoder.layers[2],
-        Qwen3TtsSpeechTokenizerEncoderBackboneLayer::Empty(_)
+        Qwen3TtsAudioCodecEncoderBackboneLayer::Empty(_)
     ));
     assert!(matches!(
         checkpoint.encoder.encoder.layers[3],
-        Qwen3TtsSpeechTokenizerEncoderBackboneLayer::DownsampleConv(_)
+        Qwen3TtsAudioCodecEncoderBackboneLayer::DownsampleConv(_)
     ));
     assert!(matches!(
         checkpoint.encoder.encoder.layers[14],
-        Qwen3TtsSpeechTokenizerEncoderBackboneLayer::OutputConv(_)
+        Qwen3TtsAudioCodecEncoderBackboneLayer::OutputConv(_)
     ));
     assert_eq!(
         checkpoint
@@ -203,7 +203,7 @@ fn helper_initializers_create_expected_param_shapes() {
     let output_activation = &checkpoint.decoder.decoder[5];
 
     match first_stage {
-        Qwen3TtsSpeechTokenizerWaveDecoderEntry::UpsampleStage(stage) => {
+        Qwen3TtsAudioCodecWaveDecoderEntry::UpsampleStage(stage) => {
             assert_eq!(tensor_param_dims(&stage.block.0.alpha), [64]);
             assert_eq!(stage.block.1.conv.channels, [64, 32]);
         }
@@ -211,7 +211,7 @@ fn helper_initializers_create_expected_param_shapes() {
     }
 
     match output_activation {
-        Qwen3TtsSpeechTokenizerWaveDecoderEntry::OutputActivation(activation) => {
+        Qwen3TtsAudioCodecWaveDecoderEntry::OutputActivation(activation) => {
             assert_eq!(tensor_param_dims(&activation.alpha), [4]);
             assert_eq!(tensor_param_dims(&activation.beta), [4]);
         }
@@ -234,9 +234,9 @@ fn helper_initializers_create_expected_param_shapes() {
 }
 
 #[test]
-fn speech_tokenizer_load_remapper_only_touches_decoder_rmsnorm_keys() {
+fn audio_codec_load_remapper_only_touches_decoder_rmsnorm_keys() {
     let remapped = apply_remapper(
-        &speech_tokenizer_load_key_remapper(),
+        &audio_codec_load_key_remapper(),
         "decoder.pre_transformer.layers.0.input_layernorm.weight",
     );
     assert_eq!(
@@ -245,7 +245,7 @@ fn speech_tokenizer_load_remapper_only_touches_decoder_rmsnorm_keys() {
     );
 
     let untouched = apply_remapper(
-        &speech_tokenizer_load_key_remapper(),
+        &audio_codec_load_key_remapper(),
         "encoder.encoder_transformer.layers.0.input_layernorm.weight",
     );
     assert_eq!(
@@ -255,9 +255,9 @@ fn speech_tokenizer_load_remapper_only_touches_decoder_rmsnorm_keys() {
 }
 
 #[test]
-fn speech_tokenizer_export_remapper_reverses_decoder_rmsnorm_keys() {
+fn audio_codec_export_remapper_reverses_decoder_rmsnorm_keys() {
     let remapped = apply_remapper(
-        &speech_tokenizer_export_key_remapper(),
+        &audio_codec_export_key_remapper(),
         "decoder.pre_transformer.norm.gamma",
     );
     assert_eq!(remapped, "decoder.pre_transformer.norm.weight");
@@ -265,7 +265,7 @@ fn speech_tokenizer_export_remapper_reverses_decoder_rmsnorm_keys() {
 
 // --- Forward method tests ----------------------------------------------------
 
-fn make_decoder() -> (Qwen3TtsSpeechTokenizerDecoder<TestBackend>, Qwen3TtsSpeechTokenizerDecoderConfig) {
+fn make_decoder() -> (Qwen3TtsAudioCodecDecoder<TestBackend>, Qwen3TtsAudioCodecDecoderConfig) {
     // Match the quantizer: 1 semantic + 3 acoustic = 4 total.
     // rvq_first has 1 layer hardcoded, so num_semantic_quantizers must be 1.
     let mut config = sample_config();
@@ -277,14 +277,14 @@ fn make_decoder() -> (Qwen3TtsSpeechTokenizerDecoder<TestBackend>, Qwen3TtsSpeec
 }
 
 /// Config matching the quantizer layer counts exactly (1 semantic + 3 acoustic = 4 total).
-fn decoder_config_4layer() -> Qwen3TtsSpeechTokenizerDecoderConfig {
+fn decoder_config_4layer() -> Qwen3TtsAudioCodecDecoderConfig {
     let mut config = sample_config().decoder_config;
     config.num_quantizers = 4;
     config.num_semantic_quantizers = 1;
     config
 }
 
-fn make_rope(config: &Qwen3TtsSpeechTokenizerDecoderConfig) -> burn::nn::RotaryEncoding<TestBackend> {
+fn make_rope(config: &Qwen3TtsAudioCodecDecoderConfig) -> burn::nn::RotaryEncoding<TestBackend> {
     RotaryEncodingConfig::new(
         config.max_position_embeddings,
         config.head_dim,
@@ -296,7 +296,7 @@ fn make_rope(config: &Qwen3TtsSpeechTokenizerDecoderConfig) -> burn::nn::RotaryE
 #[test]
 fn snake_beta_forward_preserves_shape() {
     let device = Default::default();
-    let snake = TokenizerSnakeBeta::<TestBackend>::new(16, &device);
+    let snake = AudioCodecSnakeBeta::<TestBackend>::new(16, &device);
     let x = Tensor::<TestBackend, 3>::zeros([1, 16, 8], &device);
     let y = snake.forward(x);
     assert_eq!(y.dims(), [1, 16, 8]);
@@ -306,7 +306,7 @@ fn snake_beta_forward_preserves_shape() {
 fn causal_conv_forward_preserves_time_dimension() {
     let device = Default::default();
     // kernel=3, dilation=1 → pad_left=2, output length = input length
-    let conv = TokenizerCausalConv1d::<TestBackend>::new(4, 8, 3, 1, 1, 1, false, &device);
+    let conv = AudioCodecCausalConv1d::<TestBackend>::new(4, 8, 3, 1, 1, 1, false, &device);
     let x = Tensor::<TestBackend, 3>::zeros([1, 4, 10], &device);
     let y = conv.forward(x);
     assert_eq!(y.dims(), [1, 8, 10], "causal conv should preserve time length (left-only padding)");
@@ -315,7 +315,7 @@ fn causal_conv_forward_preserves_time_dimension() {
 #[test]
 fn causal_conv_kernel7_keeps_same_length() {
     let device = Default::default();
-    let conv = TokenizerCausalConv1d::<TestBackend>::new(8, 8, 7, 1, 1, 8, true, &device);
+    let conv = AudioCodecCausalConv1d::<TestBackend>::new(8, 8, 7, 1, 1, 8, true, &device);
     let x = Tensor::<TestBackend, 3>::zeros([1, 8, 20], &device);
     let y = conv.forward(x);
     assert_eq!(y.dims(), [1, 8, 20], "kernel=7 should preserve time dim via left padding");
@@ -325,7 +325,7 @@ fn causal_conv_kernel7_keeps_same_length() {
 fn causal_conv_with_dilation() {
     let device = Default::default();
     // kernel=3, dilation=3 → pad_left = (3-1)*3 = 6
-    let conv = TokenizerCausalConv1d::<TestBackend>::new(4, 4, 3, 1, 3, 1, false, &device);
+    let conv = AudioCodecCausalConv1d::<TestBackend>::new(4, 4, 3, 1, 3, 1, false, &device);
     let x = Tensor::<TestBackend, 3>::zeros([1, 4, 5], &device);
     let y = conv.forward(x);
     assert_eq!(y.dims(), [1, 4, 5], "dilated causal conv should preserve time dim");
@@ -334,7 +334,7 @@ fn causal_conv_with_dilation() {
 #[test]
 fn layer_scale_forward_preserves_shape() {
     let device = Default::default();
-    let scale = TokenizerLayerScale::<TestBackend>::new(8, 1.0, &device);
+    let scale = AudioCodecLayerScale::<TestBackend>::new(8, 1.0, &device);
     let x = Tensor::<TestBackend, 3>::ones([1, 8, 5], &device);
     let y = scale.forward(x);
     assert_eq!(y.dims(), [1, 8, 5]);
@@ -343,7 +343,7 @@ fn layer_scale_forward_preserves_shape() {
 #[test]
 fn codebook_lookup_returns_correct_shape() {
     let device = Default::default();
-    let codebook = Qwen3TtsSpeechTokenizerDecoderCodebook::<TestBackend>::new(16, 8, &device);
+    let codebook = Qwen3TtsAudioCodecDecoderCodebook::<TestBackend>::new(16, 8, &device);
     // token_ids: [batch=1, seq=3]
     let ids = Tensor::<TestBackend, 2, Int>::from_data([[0i32, 1, 2]], &device);
     let emb = codebook.forward(ids);
@@ -353,7 +353,7 @@ fn codebook_lookup_returns_correct_shape() {
 #[test]
 fn codebook_lookup_different_token_ids() {
     let device = Default::default();
-    let codebook = Qwen3TtsSpeechTokenizerDecoderCodebook::<TestBackend>::new(16, 4, &device);
+    let codebook = Qwen3TtsAudioCodecDecoderCodebook::<TestBackend>::new(16, 4, &device);
     let ids = Tensor::<TestBackend, 2, Int>::from_data([[3i32, 7, 0, 15]], &device);
     let emb = codebook.forward(ids);
     // embedding_sum starts as zeros / cluster_usage starts as ones
@@ -363,10 +363,10 @@ fn codebook_lookup_different_token_ids() {
 #[test]
 fn residual_vq_single_layer_sum() {
     let device = Default::default();
-    let layer = Qwen3TtsSpeechTokenizerDecoderVectorQuantization {
-        _codebook: Qwen3TtsSpeechTokenizerDecoderCodebook::<TestBackend>::new(16, 4, &device),
+    let layer = Qwen3TtsAudioCodecDecoderVectorQuantization {
+        _codebook: Qwen3TtsAudioCodecDecoderCodebook::<TestBackend>::new(16, 4, &device),
     };
-    let rvq = Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization {
+    let rvq = Qwen3TtsAudioCodecDecoderResidualVectorQuantization {
         layers: vec![layer],
     };
     let tokens = vec![Tensor::<TestBackend, 2, Int>::from_data([[0i32]], &device)];
@@ -378,11 +378,11 @@ fn residual_vq_single_layer_sum() {
 fn residual_vq_multi_layer_accumulates() {
     let device = Default::default();
     let layers: Vec<_> = (0..3)
-        .map(|_| Qwen3TtsSpeechTokenizerDecoderVectorQuantization {
-            _codebook: Qwen3TtsSpeechTokenizerDecoderCodebook::<TestBackend>::new(16, 4, &device),
+        .map(|_| Qwen3TtsAudioCodecDecoderVectorQuantization {
+            _codebook: Qwen3TtsAudioCodecDecoderCodebook::<TestBackend>::new(16, 4, &device),
         })
         .collect();
-    let rvq = Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization { layers };
+    let rvq = Qwen3TtsAudioCodecDecoderResidualVectorQuantization { layers };
     let tokens: Vec<_> = (0..3)
         .map(|i| Tensor::<TestBackend, 2, Int>::from_data([[i as i32]], &device))
         .collect();
@@ -392,7 +392,7 @@ fn residual_vq_multi_layer_accumulates() {
 
 #[test]
 fn residual_vq_empty_panics() {
-    let rvq = Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization::<TestBackend> {
+    let rvq = Qwen3TtsAudioCodecDecoderResidualVectorQuantization::<TestBackend> {
         layers: vec![],
     };
     let tokens: Vec<Tensor<TestBackend, 2, Int>> = vec![];
@@ -430,8 +430,8 @@ fn convnext_block_preserves_shape() {
     let device = Default::default();
     let config = sample_config();
     // Use a small test block: channels=8
-    let block = Qwen3TtsSpeechTokenizerConvNeXtBlock::<TestBackend> {
-        dwconv: TokenizerCausalConv1d::<TestBackend>::new(8, 8, 7, 1, 1, 8, true, &device),
+    let block = Qwen3TtsAudioCodecConvNeXtBlock::<TestBackend> {
+        dwconv: AudioCodecCausalConv1d::<TestBackend>::new(8, 8, 7, 1, 1, 8, true, &device),
         norm: burn::nn::LayerNormConfig::new(8).init(&device),
         pwconv1: burn::nn::LinearConfig::new(8, 32).init(&device),
         pwconv2: burn::nn::LinearConfig::new(32, 8).init(&device),
@@ -445,7 +445,7 @@ fn convnext_block_preserves_shape() {
 #[test]
 fn decoder_mlp_swiglu_shape() {
     let device = Default::default();
-    let mlp = Qwen3TtsSpeechTokenizerDecoderMlp::<TestBackend> {
+    let mlp = Qwen3TtsAudioCodecDecoderMlp::<TestBackend> {
         gate_proj: burn::nn::LinearConfig::new(16, 32).init(&device),
         up_proj: burn::nn::LinearConfig::new(16, 32).init(&device),
         down_proj: burn::nn::LinearConfig::new(32, 16).init(&device),
@@ -460,7 +460,7 @@ fn decoder_attention_shape() {
     let device = Default::default();
     let config = &sample_config().decoder_config;
     let rope = make_rope(config);
-    let attn = Qwen3TtsSpeechTokenizerDecoderAttention::<TestBackend> {
+    let attn = Qwen3TtsAudioCodecDecoderAttention::<TestBackend> {
         q_proj: burn::nn::LinearConfig::new(config.hidden_size, config.num_attention_heads * config.head_dim).init(&device),
         k_proj: burn::nn::LinearConfig::new(config.hidden_size, config.num_key_value_heads * config.head_dim).init(&device),
         v_proj: burn::nn::LinearConfig::new(config.hidden_size, config.num_key_value_heads * config.head_dim).init(&device),
@@ -476,22 +476,22 @@ fn decoder_transformer_layer_shape() {
     let device = Default::default();
     let config = &sample_config().decoder_config;
     let rope = make_rope(config);
-    let layer = Qwen3TtsSpeechTokenizerDecoderTransformerLayer::<TestBackend> {
-        self_attn: Qwen3TtsSpeechTokenizerDecoderAttention {
+    let layer = Qwen3TtsAudioCodecDecoderTransformerLayer::<TestBackend> {
+        self_attn: Qwen3TtsAudioCodecDecoderAttention {
             q_proj: burn::nn::LinearConfig::new(config.hidden_size, config.num_attention_heads * config.head_dim).init(&device),
             k_proj: burn::nn::LinearConfig::new(config.hidden_size, config.num_key_value_heads * config.head_dim).init(&device),
             v_proj: burn::nn::LinearConfig::new(config.hidden_size, config.num_key_value_heads * config.head_dim).init(&device),
             o_proj: burn::nn::LinearConfig::new(config.num_attention_heads * config.head_dim, config.hidden_size).init(&device),
         },
-        mlp: Qwen3TtsSpeechTokenizerDecoderMlp {
+        mlp: Qwen3TtsAudioCodecDecoderMlp {
             gate_proj: burn::nn::LinearConfig::new(config.hidden_size, config.intermediate_size).init(&device),
             up_proj: burn::nn::LinearConfig::new(config.hidden_size, config.intermediate_size).init(&device),
             down_proj: burn::nn::LinearConfig::new(config.intermediate_size, config.hidden_size).init(&device),
         },
         input_layernorm: burn::nn::RmsNormConfig::new(config.hidden_size).with_epsilon(config.rms_norm_eps).init(&device),
         post_attention_layernorm: burn::nn::RmsNormConfig::new(config.hidden_size).with_epsilon(config.rms_norm_eps).init(&device),
-        self_attn_layer_scale: TokenizerLayerScale::new(config.hidden_size, config.layer_scale_initial_scale as f64, &device),
-        mlp_layer_scale: TokenizerLayerScale::new(config.hidden_size, config.layer_scale_initial_scale as f64, &device),
+        self_attn_layer_scale: AudioCodecLayerScale::new(config.hidden_size, config.layer_scale_initial_scale as f64, &device),
+        mlp_layer_scale: AudioCodecLayerScale::new(config.hidden_size, config.layer_scale_initial_scale as f64, &device),
     };
     let x = Tensor::<TestBackend, 3>::ones([1, 5, config.hidden_size], &device);
     let y = layer.forward(x, config.num_attention_heads, config.num_key_value_heads, config.head_dim, &rope, None);
@@ -517,11 +517,11 @@ fn decoder_transformer_full_shape() {
 #[test]
 fn wave_decoder_residual_unit_preserves_shape() {
     let device = Default::default();
-    let unit = Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit::<TestBackend> {
-        act1: TokenizerSnakeBeta::new(8, &device),
-        conv1: TokenizerCausalConv1d::new(8, 8, 7, 1, 1, 8, true, &device),
-        act2: TokenizerSnakeBeta::new(8, &device),
-        conv2: TokenizerCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
+    let unit = Qwen3TtsAudioCodecWaveDecoderResidualUnit::<TestBackend> {
+        act1: AudioCodecSnakeBeta::new(8, &device),
+        conv1: AudioCodecCausalConv1d::new(8, 8, 7, 1, 1, 8, true, &device),
+        act2: AudioCodecSnakeBeta::new(8, &device),
+        conv2: AudioCodecCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
     };
     let x = Tensor::<TestBackend, 3>::ones([1, 8, 10], &device);
     let y = unit.forward(x);
@@ -532,27 +532,27 @@ fn wave_decoder_residual_unit_preserves_shape() {
 fn wave_decoder_upsample_stage_increases_time() {
     let device = Default::default();
     // Upsample rate=4: kernel=8, stride=4 → output time = input time * 4
-    let stage = Qwen3TtsSpeechTokenizerWaveDecoderUpsampleStage::<TestBackend> {
+    let stage = Qwen3TtsAudioCodecWaveDecoderUpsampleStage::<TestBackend> {
         block: (
-            TokenizerSnakeBeta::new(16, &device),
-            TokenizerCausalTransConv1d::new(16, 8, 8, 4, 1, false, &device),
-            Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit {
-                act1: TokenizerSnakeBeta::new(8, &device),
-                conv1: TokenizerCausalConv1d::new(8, 8, 7, 1, 1, 8, true, &device),
-                act2: TokenizerSnakeBeta::new(8, &device),
-                conv2: TokenizerCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
+            AudioCodecSnakeBeta::new(16, &device),
+            AudioCodecCausalTransConv1d::new(16, 8, 8, 4, 1, false, &device),
+            Qwen3TtsAudioCodecWaveDecoderResidualUnit {
+                act1: AudioCodecSnakeBeta::new(8, &device),
+                conv1: AudioCodecCausalConv1d::new(8, 8, 7, 1, 1, 8, true, &device),
+                act2: AudioCodecSnakeBeta::new(8, &device),
+                conv2: AudioCodecCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
             },
-            Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit {
-                act1: TokenizerSnakeBeta::new(8, &device),
-                conv1: TokenizerCausalConv1d::new(8, 8, 7, 1, 3, 8, true, &device),
-                act2: TokenizerSnakeBeta::new(8, &device),
-                conv2: TokenizerCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
+            Qwen3TtsAudioCodecWaveDecoderResidualUnit {
+                act1: AudioCodecSnakeBeta::new(8, &device),
+                conv1: AudioCodecCausalConv1d::new(8, 8, 7, 1, 3, 8, true, &device),
+                act2: AudioCodecSnakeBeta::new(8, &device),
+                conv2: AudioCodecCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
             },
-            Qwen3TtsSpeechTokenizerWaveDecoderResidualUnit {
-                act1: TokenizerSnakeBeta::new(8, &device),
-                conv1: TokenizerCausalConv1d::new(8, 8, 7, 1, 9, 8, true, &device),
-                act2: TokenizerSnakeBeta::new(8, &device),
-                conv2: TokenizerCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
+            Qwen3TtsAudioCodecWaveDecoderResidualUnit {
+                act1: AudioCodecSnakeBeta::new(8, &device),
+                conv1: AudioCodecCausalConv1d::new(8, 8, 7, 1, 9, 8, true, &device),
+                act2: AudioCodecSnakeBeta::new(8, &device),
+                conv2: AudioCodecCausalConv1d::new(8, 8, 1, 1, 1, 8, true, &device),
             },
         ),
     };
@@ -566,8 +566,8 @@ fn wave_decoder_upsample_stage_increases_time() {
 fn wave_decoder_entry_dispatch() {
     let device = Default::default();
     // Test InputConv variant
-    let entry = Qwen3TtsSpeechTokenizerWaveDecoderEntry::InputConv(
-        Qwen3TtsSpeechTokenizerWaveDecoderConvEntry {
+    let entry = Qwen3TtsAudioCodecWaveDecoderEntry::InputConv(
+        Qwen3TtsAudioCodecWaveDecoderConvEntry {
             conv: burn::nn::conv::Conv1dConfig::new(8, 16, 7).with_padding(burn::nn::PaddingConfig1d::Explicit(3, 3)).init(&device),
         },
     );
@@ -576,8 +576,8 @@ fn wave_decoder_entry_dispatch() {
     assert_eq!(y.dims(), [1, 16, 4]);
 
     // Test OutputActivation variant
-    let entry = Qwen3TtsSpeechTokenizerWaveDecoderEntry::OutputActivation(
-        TokenizerSnakeBeta::new(16, &device),
+    let entry = Qwen3TtsAudioCodecWaveDecoderEntry::OutputActivation(
+        AudioCodecSnakeBeta::new(16, &device),
     );
     let x = Tensor::<TestBackend, 3>::ones([1, 16, 4], &device);
     let y = entry.forward(x);
@@ -679,7 +679,7 @@ fn quantizer_decoder_rejects_empty_batch() {
 #[test]
 fn codebook_lookup_out_of_range_token() {
     let device = Default::default();
-    let codebook = Qwen3TtsSpeechTokenizerDecoderCodebook::<TestBackend>::new(16, 4, &device);
+    let codebook = Qwen3TtsAudioCodecDecoderCodebook::<TestBackend>::new(16, 4, &device);
     // Token 99 exceeds codebook_size=16 — Burn's select behavior on OOB is backend-specific
     let ids = Tensor::<TestBackend, 2, Int>::from_data([[99i32]], &device);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

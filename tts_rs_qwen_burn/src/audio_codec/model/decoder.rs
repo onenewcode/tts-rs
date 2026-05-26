@@ -1,4 +1,4 @@
-//! # Speech Tokenizer Decoder
+//! # Audio Codec Decoder
 //!
 //! Converts quantized codec token IDs to audio waveform through:
 //!
@@ -22,32 +22,32 @@ use burn::tensor::activation::{silu, softmax};
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor};
 
-use crate::shared::nn::conv::TokenizerCausalConv1d;
-use crate::shared::nn::activation::TokenizerLayerScale;
-use super::encoder::Qwen3TtsSpeechTokenizerEncoder;
-use super::wave_decoder::Qwen3TtsSpeechTokenizerWaveDecoderEntry;
+use crate::shared::nn::conv::AudioCodecCausalConv1d;
+use crate::shared::nn::activation::AudioCodecLayerScale;
+use super::encoder::Qwen3TtsAudioCodecEncoder;
+use super::wave_decoder::Qwen3TtsAudioCodecWaveDecoderEntry;
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerCheckpoint<B: Backend> {
-    pub decoder: Qwen3TtsSpeechTokenizerDecoder<B>,
-    pub encoder: Qwen3TtsSpeechTokenizerEncoder<B>,
+pub struct Qwen3TtsAudioCodecCheckpoint<B: Backend> {
+    pub decoder: Qwen3TtsAudioCodecDecoder<B>,
+    pub encoder: Qwen3TtsAudioCodecEncoder<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoder<B: Backend> {
-    pub pre_transformer: Qwen3TtsSpeechTokenizerDecoderTransformer<B>,
-    pub quantizer: Qwen3TtsSpeechTokenizerDecoderQuantizer<B>,
-    pub pre_conv: TokenizerCausalConv1d<B>,
+pub struct Qwen3TtsAudioCodecDecoder<B: Backend> {
+    pub pre_transformer: Qwen3TtsAudioCodecDecoderTransformer<B>,
+    pub quantizer: Qwen3TtsAudioCodecDecoderQuantizer<B>,
+    pub pre_conv: AudioCodecCausalConv1d<B>,
     pub upsample: Vec<(
-        crate::shared::nn::conv::TokenizerCausalTransConv1d<B>,
-        Qwen3TtsSpeechTokenizerConvNeXtBlock<B>,
+        crate::shared::nn::conv::AudioCodecCausalTransConv1d<B>,
+        Qwen3TtsAudioCodecConvNeXtBlock<B>,
     )>,
-    pub decoder: Vec<Qwen3TtsSpeechTokenizerWaveDecoderEntry<B>>,
+    pub decoder: Vec<Qwen3TtsAudioCodecWaveDecoderEntry<B>>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerConvNeXtBlock<B: Backend> {
-    pub dwconv: TokenizerCausalConv1d<B>,
+pub struct Qwen3TtsAudioCodecConvNeXtBlock<B: Backend> {
+    pub dwconv: AudioCodecCausalConv1d<B>,
     pub norm: LayerNorm<B>,
     pub pwconv1: Linear<B>,
     pub pwconv2: Linear<B>,
@@ -55,25 +55,25 @@ pub struct Qwen3TtsSpeechTokenizerConvNeXtBlock<B: Backend> {
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderTransformer<B: Backend> {
-    pub layers: Vec<Qwen3TtsSpeechTokenizerDecoderTransformerLayer<B>>,
+pub struct Qwen3TtsAudioCodecDecoderTransformer<B: Backend> {
+    pub layers: Vec<Qwen3TtsAudioCodecDecoderTransformerLayer<B>>,
     pub norm: RmsNorm<B>,
     pub input_proj: Linear<B>,
     pub output_proj: Linear<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderTransformerLayer<B: Backend> {
-    pub self_attn: Qwen3TtsSpeechTokenizerDecoderAttention<B>,
-    pub mlp: Qwen3TtsSpeechTokenizerDecoderMlp<B>,
+pub struct Qwen3TtsAudioCodecDecoderTransformerLayer<B: Backend> {
+    pub self_attn: Qwen3TtsAudioCodecDecoderAttention<B>,
+    pub mlp: Qwen3TtsAudioCodecDecoderMlp<B>,
     pub input_layernorm: RmsNorm<B>,
     pub post_attention_layernorm: RmsNorm<B>,
-    pub self_attn_layer_scale: TokenizerLayerScale<B>,
-    pub mlp_layer_scale: TokenizerLayerScale<B>,
+    pub self_attn_layer_scale: AudioCodecLayerScale<B>,
+    pub mlp_layer_scale: AudioCodecLayerScale<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderAttention<B: Backend> {
+pub struct Qwen3TtsAudioCodecDecoderAttention<B: Backend> {
     pub q_proj: Linear<B>,
     pub k_proj: Linear<B>,
     pub v_proj: Linear<B>,
@@ -81,44 +81,44 @@ pub struct Qwen3TtsSpeechTokenizerDecoderAttention<B: Backend> {
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderMlp<B: Backend> {
+pub struct Qwen3TtsAudioCodecDecoderMlp<B: Backend> {
     pub gate_proj: Linear<B>,
     pub up_proj: Linear<B>,
     pub down_proj: Linear<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderQuantizer<B: Backend> {
-    pub rvq_first: Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantizer<B>,
-    pub rvq_rest: Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantizer<B>,
+pub struct Qwen3TtsAudioCodecDecoderQuantizer<B: Backend> {
+    pub rvq_first: Qwen3TtsAudioCodecDecoderResidualVectorQuantizer<B>,
+    pub rvq_rest: Qwen3TtsAudioCodecDecoderResidualVectorQuantizer<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantizer<B: Backend> {
+pub struct Qwen3TtsAudioCodecDecoderResidualVectorQuantizer<B: Backend> {
     pub input_proj: Conv1d<B>,
     pub output_proj: Conv1d<B>,
-    pub vq: Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization<B>,
+    pub vq: Qwen3TtsAudioCodecDecoderResidualVectorQuantization<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization<B: Backend> {
-    pub layers: Vec<Qwen3TtsSpeechTokenizerDecoderVectorQuantization<B>>,
+pub struct Qwen3TtsAudioCodecDecoderResidualVectorQuantization<B: Backend> {
+    pub layers: Vec<Qwen3TtsAudioCodecDecoderVectorQuantization<B>>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderVectorQuantization<B: Backend> {
-    pub _codebook: Qwen3TtsSpeechTokenizerDecoderCodebook<B>,
+pub struct Qwen3TtsAudioCodecDecoderVectorQuantization<B: Backend> {
+    pub _codebook: Qwen3TtsAudioCodecDecoderCodebook<B>,
 }
 
 #[derive(Module, Debug)]
-pub struct Qwen3TtsSpeechTokenizerDecoderCodebook<B: Backend> {
+pub struct Qwen3TtsAudioCodecDecoderCodebook<B: Backend> {
     pub cluster_usage: Param<Tensor<B, 1>>,
     pub embedding_sum: Param<Tensor<B, 2>>,
 }
 
 // ---- Forward implementations -------------------------------------------------
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerConvNeXtBlock<B> {
+impl<B: Backend> Qwen3TtsAudioCodecConvNeXtBlock<B> {
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let residual = x.clone();
         let [batch, channels, time] = x.dims();
@@ -132,7 +132,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerConvNeXtBlock<B> {
         let h = h.swap_dims(1, 2).reshape([batch * time, channels]);
         let h = self.pwconv1.forward(h); // [B*T, expand]
         let h = silu(h);
-        let [_, expand] = h.dims();
+        let [_, _expand] = h.dims();
         let h = self.pwconv2.forward(h); // [B*T, channels]
         let h = h.reshape([batch, time, channels]).swap_dims(1, 2); // [B, C, T]
         // Gamma scaling (per-channel)
@@ -142,7 +142,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerConvNeXtBlock<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderMlp<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderMlp<B> {
     /// SwiGLU: `down_proj(silu(gate_proj(x)) * up_proj(x))`
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let [batch, seq_len, hidden] = x.dims();
@@ -156,7 +156,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderMlp<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderAttention<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
     /// Multi-head self-attention with RoPE.
     pub fn forward(
         &self,
@@ -181,7 +181,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderAttention<B> {
             .swap_dims(1, 2);
 
         // Apply RoPE
-        let offset = 0; // No KV cache for speech tokenizer decoder (full-sequence)
+        let offset = 0; // No KV cache for audio codec decoder (full-sequence)
         let q = rope.apply(q, offset);
         let k = rope.apply(k, offset);
 
@@ -214,7 +214,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderAttention<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderTransformerLayer<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformerLayer<B> {
     pub fn forward(
         &self,
         x: Tensor<B, 3>,
@@ -243,7 +243,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderTransformerLayer<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderTransformer<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
     pub fn forward(
         &self,
         x: Tensor<B, 3>,
@@ -282,7 +282,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderTransformer<B> {
 
 // -- Quantizer (codebook lookup) -----------------------------------------------
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderCodebook<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderCodebook<B> {
     /// Look up embedding vectors for given token indices.
     /// `token_ids`: [batch_size, seq_len] integer tensor
     /// Returns: [batch_size, embed_dim, seq_len]
@@ -300,14 +300,14 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderCodebook<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderVectorQuantization<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderVectorQuantization<B> {
     /// Look up codebook embedding and return the vector.
     pub fn forward(&self, token_ids: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         self._codebook.forward(token_ids)
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderResidualVectorQuantization<B> {
     /// Sum of codebook embeddings across all layers.
     pub fn forward(&self, token_ids: &[Tensor<B, 2, Int>]) -> Tensor<B, 3> {
         let mut out: Option<Tensor<B, 3>> = None;
@@ -322,7 +322,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantization<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantizer<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderResidualVectorQuantizer<B> {
     /// Decode token IDs to embedding vectors.
     ///
     /// For decoder inference, we skip `input_proj` (which compresses encoder output
@@ -334,7 +334,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderResidualVectorQuantizer<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderQuantizer<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoderQuantizer<B> {
     /// Decode codec tokens to continuous embedding.
     /// `codec_ids`: [batch, num_quantizers, time_steps] (3D) — one token per quantizer
     ///   layer for each time step.
@@ -367,7 +367,7 @@ impl<B: Backend> Qwen3TtsSpeechTokenizerDecoderQuantizer<B> {
 
 // -- Top-level decoder ---------------------------------------------------------
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerDecoder<B> {
+impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
     /// Full decoder forward: codec tokens → audio waveform.
     ///
     /// `codec_ids`: [batch, num_quantizers, time_steps] — one token per quantizer layer

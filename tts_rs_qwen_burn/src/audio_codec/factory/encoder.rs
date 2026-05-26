@@ -2,22 +2,22 @@ use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig};
 use burn::tensor::backend::Backend;
 
-use crate::shared::config::tokenizer::{
-    Qwen3TtsSpeechTokenizerConfig, Qwen3TtsSpeechTokenizerEncoderConfig,
+use crate::shared::config::audio_codec::{
+    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
-use crate::shared::nn::activation::Qwen3TtsSpeechTokenizerEmptyModule;
-use crate::shared::nn::conv::TokenizerCausalConv1d;
-use crate::speech_tokenizer::model::decoder::Qwen3TtsSpeechTokenizerCheckpoint;
-use crate::speech_tokenizer::model::encoder::{
-    Qwen3TtsSpeechTokenizerEncoder, Qwen3TtsSpeechTokenizerEncoderAttention,
-    Qwen3TtsSpeechTokenizerEncoderBackbone, Qwen3TtsSpeechTokenizerEncoderBackboneLayer,
-    Qwen3TtsSpeechTokenizerEncoderConvLayer, Qwen3TtsSpeechTokenizerEncoderMlp,
-    Qwen3TtsSpeechTokenizerEncoderQuantizer, Qwen3TtsSpeechTokenizerEncoderResidualVectorQuantizer,
-    Qwen3TtsSpeechTokenizerEncoderResnetLayer, Qwen3TtsSpeechTokenizerEncoderTransformer,
-    Qwen3TtsSpeechTokenizerEncoderTransformerLayer,
-    Qwen3TtsSpeechTokenizerEncoderVectorQuantization,
+use crate::shared::nn::activation::Qwen3TtsAudioCodecEmptyModule;
+use crate::shared::nn::conv::AudioCodecCausalConv1d;
+use crate::audio_codec::model::decoder::Qwen3TtsAudioCodecCheckpoint;
+use crate::audio_codec::model::encoder::{
+    Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
+    Qwen3TtsAudioCodecEncoderBackbone, Qwen3TtsAudioCodecEncoderBackboneLayer,
+    Qwen3TtsAudioCodecEncoderConvLayer, Qwen3TtsAudioCodecEncoderMlp,
+    Qwen3TtsAudioCodecEncoderQuantizer, Qwen3TtsAudioCodecEncoderResidualVectorQuantizer,
+    Qwen3TtsAudioCodecEncoderResnetLayer, Qwen3TtsAudioCodecEncoderTransformer,
+    Qwen3TtsAudioCodecEncoderTransformerLayer,
+    Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
-use crate::speech_tokenizer::{Qwen3TtsSpeechTokenizerEncoderCodebook, TokenizerLayerScale};
+use crate::audio_codec::{Qwen3TtsAudioCodecEncoderCodebook, AudioCodecLayerScale};
 
 const ENCODER_BACKBONE_LEN: usize = 15;
 const ENCODER_RESIDUAL_POSITIONS: [usize; 4] = [1, 4, 7, 10];
@@ -41,18 +41,18 @@ pub(crate) fn derive_encoder_downsample_kernel(downsample_factor: usize) -> usiz
     downsample_factor * 2
 }
 
-impl Qwen3TtsSpeechTokenizerConfig {
+impl Qwen3TtsAudioCodecConfig {
     pub fn init_checkpoint<B: Backend>(
         &self,
         device: &B::Device,
-    ) -> Qwen3TtsSpeechTokenizerCheckpoint<B> {
-        Qwen3TtsSpeechTokenizerCheckpoint {
+    ) -> Qwen3TtsAudioCodecCheckpoint<B> {
+        Qwen3TtsAudioCodecCheckpoint {
             decoder: self.decoder_config.init(device),
             encoder: self.init_encoder(device),
         }
     }
 
-    fn init_encoder<B: Backend>(&self, device: &B::Device) -> Qwen3TtsSpeechTokenizerEncoder<B> {
+    fn init_encoder<B: Backend>(&self, device: &B::Device) -> Qwen3TtsAudioCodecEncoder<B> {
         let downsample_factor = derive_encoder_downsample_factor(
             self.input_sample_rate,
             self.encode_downsample_rate,
@@ -62,10 +62,10 @@ impl Qwen3TtsSpeechTokenizerConfig {
         );
         let downsample_kernel = derive_encoder_downsample_kernel(downsample_factor);
 
-        Qwen3TtsSpeechTokenizerEncoder {
+        Qwen3TtsAudioCodecEncoder {
             encoder: self.encoder_config.init_backbone::<B>(device),
             encoder_transformer: self.encoder_config.init_transformer::<B>(device),
-            downsample: TokenizerCausalConv1d::<B>::new(
+            downsample: AudioCodecCausalConv1d::<B>::new(
                 self.encoder_config.hidden_size,
                 self.encoder_config.hidden_size,
                 downsample_kernel,
@@ -80,19 +80,19 @@ impl Qwen3TtsSpeechTokenizerConfig {
     }
 }
 
-impl Qwen3TtsSpeechTokenizerEncoderConfig {
+impl Qwen3TtsAudioCodecEncoderConfig {
     pub(crate) fn init_backbone<B: Backend>(
         &self,
         device: &B::Device,
-    ) -> Qwen3TtsSpeechTokenizerEncoderBackbone<B> {
+    ) -> Qwen3TtsAudioCodecEncoderBackbone<B> {
         let mut layers = std::iter::repeat_with(|| {
-            Qwen3TtsSpeechTokenizerEncoderBackboneLayer::Empty(Qwen3TtsSpeechTokenizerEmptyModule)
+            Qwen3TtsAudioCodecEncoderBackboneLayer::Empty(Qwen3TtsAudioCodecEmptyModule)
         })
         .take(ENCODER_BACKBONE_LEN)
-        .collect::<Vec<Qwen3TtsSpeechTokenizerEncoderBackboneLayer<B>>>();
+        .collect::<Vec<Qwen3TtsAudioCodecEncoderBackboneLayer<B>>>();
 
-        layers[0] = Qwen3TtsSpeechTokenizerEncoderBackboneLayer::InputConv(
-            Qwen3TtsSpeechTokenizerEncoderConvLayer {
+        layers[0] = Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(
+            Qwen3TtsAudioCodecEncoderConvLayer {
                 conv: Conv1dConfig::new(self.audio_channels, self.num_filters, self.kernel_size)
                     .with_bias(true)
                     .init(device),
@@ -107,11 +107,11 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
 
             let position = residual_positions.next().expect("fixed encoder layout");
             let hidden = current_scale / self.compress;
-            layers[position] = Qwen3TtsSpeechTokenizerEncoderBackboneLayer::Resnet(
-                Qwen3TtsSpeechTokenizerEncoderResnetLayer {
+            layers[position] = Qwen3TtsAudioCodecEncoderBackboneLayer::Resnet(
+                Qwen3TtsAudioCodecEncoderResnetLayer {
                     block: (
-                        Qwen3TtsSpeechTokenizerEmptyModule,
-                        TokenizerCausalConv1d::<B>::new(
+                        Qwen3TtsAudioCodecEmptyModule,
+                        AudioCodecCausalConv1d::<B>::new(
                             current_scale,
                             hidden,
                             self.residual_kernel_size,
@@ -121,8 +121,8 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
                             true,
                             device,
                         ),
-                        Qwen3TtsSpeechTokenizerEmptyModule,
-                        TokenizerCausalConv1d::<B>::new(
+                        Qwen3TtsAudioCodecEmptyModule,
+                        AudioCodecCausalConv1d::<B>::new(
                             hidden,
                             current_scale,
                             1,
@@ -137,8 +137,8 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
             );
 
             let position = conv_positions.next().expect("fixed encoder layout");
-            layers[position] = Qwen3TtsSpeechTokenizerEncoderBackboneLayer::DownsampleConv(
-                Qwen3TtsSpeechTokenizerEncoderConvLayer {
+            layers[position] = Qwen3TtsAudioCodecEncoderBackboneLayer::DownsampleConv(
+                Qwen3TtsAudioCodecEncoderConvLayer {
                     conv: Conv1dConfig::new(current_scale, current_scale * 2, ratio * 2)
                         .with_stride(ratio)
                         .with_bias(true)
@@ -148,8 +148,8 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
             scaling *= 2;
         }
 
-        layers[14] = Qwen3TtsSpeechTokenizerEncoderBackboneLayer::OutputConv(
-            Qwen3TtsSpeechTokenizerEncoderConvLayer {
+        layers[14] = Qwen3TtsAudioCodecEncoderBackboneLayer::OutputConv(
+            Qwen3TtsAudioCodecEncoderConvLayer {
                 conv: Conv1dConfig::new(
                     scaling * self.num_filters,
                     self.hidden_size,
@@ -160,20 +160,20 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
             },
         );
 
-        Qwen3TtsSpeechTokenizerEncoderBackbone { layers }
+        Qwen3TtsAudioCodecEncoderBackbone { layers }
     }
 
     pub(crate) fn init_transformer<B: Backend>(
         &self,
         device: &B::Device,
-    ) -> Qwen3TtsSpeechTokenizerEncoderTransformer<B> {
+    ) -> Qwen3TtsAudioCodecEncoderTransformer<B> {
         let q_out = self.num_attention_heads * self.head_dim;
         let kv_out = self.num_key_value_heads * self.head_dim;
 
-        Qwen3TtsSpeechTokenizerEncoderTransformer {
+        Qwen3TtsAudioCodecEncoderTransformer {
             layers: (0..self.num_hidden_layers)
-                .map(|_| Qwen3TtsSpeechTokenizerEncoderTransformerLayer {
-                    self_attn: Qwen3TtsSpeechTokenizerEncoderAttention {
+                .map(|_| Qwen3TtsAudioCodecEncoderTransformerLayer {
+                    self_attn: Qwen3TtsAudioCodecEncoderAttention {
                         q_proj: LinearConfig::new(self.hidden_size, q_out)
                             .with_bias(self.attention_bias)
                             .init(device),
@@ -187,7 +187,7 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
                             .with_bias(self.attention_bias)
                             .init(device),
                     },
-                    mlp: Qwen3TtsSpeechTokenizerEncoderMlp {
+                    mlp: Qwen3TtsAudioCodecEncoderMlp {
                         fc1: LinearConfig::new(self.hidden_size, self.intermediate_size)
                             .with_bias(false)
                             .init(device),
@@ -203,12 +203,12 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
                         .with_epsilon(self.norm_eps)
                         .with_bias(true)
                         .init(device),
-                    self_attn_layer_scale: TokenizerLayerScale::new(
+                    self_attn_layer_scale: AudioCodecLayerScale::new(
                         self.hidden_size,
                         self.layer_scale_initial_scale,
                         device,
                     ),
-                    mlp_layer_scale: TokenizerLayerScale::new(
+                    mlp_layer_scale: AudioCodecLayerScale::new(
                         self.hidden_size,
                         self.layer_scale_initial_scale,
                         device,
@@ -221,8 +221,8 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
     pub(crate) fn init_quantizer<B: Backend>(
         &self,
         device: &B::Device,
-    ) -> Qwen3TtsSpeechTokenizerEncoderQuantizer<B> {
-        Qwen3TtsSpeechTokenizerEncoderQuantizer {
+    ) -> Qwen3TtsAudioCodecEncoderQuantizer<B> {
+        Qwen3TtsAudioCodecEncoderQuantizer {
             semantic_residual_vector_quantizer: self
                 .init_encoder_rvq(self.num_semantic_quantizers, device),
             acoustic_residual_vector_quantizer: self
@@ -234,8 +234,8 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
         &self,
         num_layers: usize,
         device: &B::Device,
-    ) -> Qwen3TtsSpeechTokenizerEncoderResidualVectorQuantizer<B> {
-        Qwen3TtsSpeechTokenizerEncoderResidualVectorQuantizer {
+    ) -> Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B> {
+        Qwen3TtsAudioCodecEncoderResidualVectorQuantizer {
             input_proj: Conv1dConfig::new(
                 self.hidden_size,
                 self.vector_quantization_hidden_dimension,
@@ -251,8 +251,8 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
             .with_bias(false)
             .init(device),
             layers: (0..num_layers)
-                .map(|_| Qwen3TtsSpeechTokenizerEncoderVectorQuantization {
-                    codebook: Qwen3TtsSpeechTokenizerEncoderCodebook::new(
+                .map(|_| Qwen3TtsAudioCodecEncoderVectorQuantization {
+                    codebook: Qwen3TtsAudioCodecEncoderCodebook::new(
                         self.codebook_size,
                         self.codebook_dim,
                         device,
@@ -263,7 +263,7 @@ impl Qwen3TtsSpeechTokenizerEncoderConfig {
     }
 }
 
-impl<B: Backend> Qwen3TtsSpeechTokenizerEncoderCodebook<B> {
+impl<B: Backend> Qwen3TtsAudioCodecEncoderCodebook<B> {
     pub(crate) fn new(codebook_size: usize, dim: usize, device: &B::Device) -> Self {
         use burn::module::Initializer;
         Self {
