@@ -80,3 +80,38 @@ Expected shape for the current model path:
 - 24000 Hz sample rate
 - 16-bit PCM
 - non-zero frame count
+
+## Benchmarks
+
+Use `criterion` benchmarks for long-term local performance comparisons. All
+benchmark inputs are fixed synthetic data so prompt content and numeric inputs
+stay stable across runs. The `engine_bench` target still requires real model
+weights because it measures the actual inference path.
+
+Fast synthetic-only benches:
+
+```bash
+cargo bench -p tts_qwen --bench prompt_bench
+cargo bench -p tts_qwen --bench sampling_bench
+cargo bench -p tts_qwen --bench wav_bench
+```
+
+Model-backed benchmark targets:
+
+```bash
+QWEN_TTS_MODEL_DIR=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  cargo bench -p tts_qwen --bench tokenizer_bench
+
+QWEN_TTS_MODEL_DIR=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  cargo bench -p tts_qwen --bench engine_bench
+```
+
+Benchmark reports are written under `target/criterion/`.
+
+Interpretation rules:
+
+- compare results only on the same machine, same model directory, and same
+  compiled backend
+- treat `engine_bench` as the main inference optimization baseline
+- do not compare different backends as one trend line; compare within the same
+  backend only

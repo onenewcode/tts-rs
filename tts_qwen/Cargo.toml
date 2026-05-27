@@ -3,6 +3,9 @@ name = "tts_qwen"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+bench = false
+
 [features]
 default = ["flex", "fusion"]
 fusion = ["burn/fusion"]
@@ -23,3 +26,26 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+name = "prompt_bench"
+harness = false
+
+[[bench]]
+name = "tokenizer_bench"
+harness = false
+
+[[bench]]
+name = "sampling_bench"
+harness = false
+
+[[bench]]
+name = "wav_bench"
+harness = false
+
+[[bench]]
+name = "engine_bench"
+harness = false
