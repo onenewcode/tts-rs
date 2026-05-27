@@ -60,21 +60,23 @@ where
         None,
     )?;
 
-    let (last_hidden_state, logits, activations) = loaded.model.talker.forward(
-        input.inputs_embeds,
-        input.position_ids,
-        input.attention_mask,
-        config.num_attention_heads,
-        config.num_key_value_heads,
-        config.head_dim,
-        cache,
-        input.collect_activations,
-    );
+    let (last_hidden_state, logits, activations, attention_activations) =
+        loaded.model.talker.forward(
+            input.inputs_embeds,
+            input.position_ids,
+            input.attention_mask,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
+            cache,
+            input.collect_activations,
+        );
 
     Ok(TalkerForwardOutput {
         last_hidden_state,
         logits,
         activations,
+        attention_activations,
     })
 }
 
@@ -97,21 +99,23 @@ where
         Some(cache_len),
     )?;
 
-    let (last_hidden_state, logits, activations) = loaded.model.talker.forward(
-        input.inputs_embeds,
-        input.position_ids,
-        input.attention_mask,
-        config.num_attention_heads,
-        config.num_key_value_heads,
-        config.head_dim,
-        cache,
-        input.collect_activations,
-    );
+    let (last_hidden_state, logits, activations, attention_activations) =
+        loaded.model.talker.forward(
+            input.inputs_embeds,
+            input.position_ids,
+            input.attention_mask,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
+            cache,
+            input.collect_activations,
+        );
 
     Ok(TalkerDecodeOutput {
         last_hidden_state,
         logits,
         activations,
+        attention_activations,
     })
 }
 
@@ -222,6 +226,7 @@ where
             tts_pad_embed.as_ref(),
             generated_tokens.len() - 1,
         );
+        let diagnostic_inputs_embeds = collect_step_diagnostics.then(|| inputs_embeds.clone());
         let position_ids =
             Tensor::<B, 3, Int>::full([3, batch_size, 1], cache_len_before as i32, &device);
         let decode_output = forward_talker_decode_step(
@@ -251,10 +256,15 @@ where
 
         if collect_step_diagnostics {
             step_logits.push(decode_output.logits);
+            let mut activations = decode_output.activations;
+            if let Some(inputs_embeds) = diagnostic_inputs_embeds {
+                activations.insert("decode.inputs_embeds".to_string(), inputs_embeds);
+            }
             step_diagnostics.push(TalkerGenerateStepDiagnostic {
                 cache_len_before,
                 cache_len_after,
-                activations: decode_output.activations,
+                activations,
+                attention_activations: decode_output.attention_activations,
             });
         }
     }
@@ -314,6 +324,7 @@ where
     Ok(CodePredictorTeacherForcedOutput {
         logits,
         activations: BTreeMap::new(),
+        attention_activations: BTreeMap::new(),
     })
 }
 
@@ -368,11 +379,21 @@ where
         vec![input.talker_hidden_state.unsqueeze::<3>(), base_embedding],
         1,
     );
-    let prefill_hidden = forward_code_predictor_hidden(config, loaded, prefill_inputs, None, cache);
+    let (prefill_hidden, prefill_activations, prefill_attention_activations) =
+        forward_code_predictor_hidden(
+            config,
+            loaded,
+            prefill_inputs,
+            None,
+            cache,
+            input.collect_step_diagnostics,
+        );
     let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
     let prefill_logits = native_linear_3d(
         prefill_head,
-        prefill_hidden.cast(prefill_head.weight.val().dtype()),
+        prefill_hidden
+            .clone()
+            .cast(prefill_head.weight.val().dtype()),
     );
     let device = prefill_logits.device();
     let sampling = &input.sampling;
@@ -382,8 +403,8 @@ where
     let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
     let prefill_logits_pen =
         apply_repetition_penalty(prefill_logits.clone(), &empty_history, rep_penalty);
-    let (mut selected_token, _) =
-        sample_token::<B>(prefill_logits_pen, sampling, eos_id, suppress, &device);
+    let mut selected_token =
+        sample_token::<B>(prefill_logits_pen, sampling, eos_id, suppress, &device).0;
     let mut predictor_tokens = vec![selected_token.clone()];
     let mut step_logits = Vec::new();
     let mut step_diagnostics = Vec::new();
@@ -393,6 +414,9 @@ where
         step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
             cache_len_before: 0,
             cache_len_after: validate_cache_lengths(cache)?,
+            activations: prefill_activations,
+            attention_activations: prefill_attention_activations,
+            cache_activations: cache_snapshots(cache),
         });
     }
 
@@ -400,13 +424,21 @@ where
         let cache_len_before = validate_cache_lengths(cache)?;
         let step_inputs = loaded.model.talker.code_predictor.model.codec_embedding[head_idx - 1]
             .forward(selected_token);
-        let step_hidden = forward_code_predictor_hidden(config, loaded, step_inputs, None, cache);
+        let (step_hidden, step_activations, step_attention_activations) =
+            forward_code_predictor_hidden(
+                config,
+                loaded,
+                step_inputs,
+                None,
+                cache,
+                input.collect_step_diagnostics,
+            );
         let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
-        let logits = native_linear_3d(head, step_hidden.cast(head.weight.val().dtype()));
+        let logits = native_linear_3d(head, step_hidden.clone().cast(head.weight.val().dtype()));
         let cache_len_after = validate_cache_lengths(cache)?;
         let past_ids = Tensor::cat(predictor_tokens.clone(), 1); // [batch, history]
         let logits_pen = apply_repetition_penalty(logits.clone(), &past_ids, rep_penalty);
-        let (next_token, _) = sample_token::<B>(logits_pen, sampling, eos_id, suppress, &device);
+        let next_token = sample_token::<B>(logits_pen, sampling, eos_id, suppress, &device).0;
         selected_token = next_token;
         predictor_tokens.push(selected_token.clone());
 
@@ -415,6 +447,9 @@ where
             step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
                 cache_len_before,
                 cache_len_after,
+                activations: step_activations,
+                attention_activations: step_attention_activations,
+                cache_activations: cache_snapshots(cache),
             });
         }
     }
@@ -447,13 +482,31 @@ where
     })
 }
 
+fn cache_snapshots<B: Backend>(cache: &[KeyValueCache<B>]) -> BTreeMap<String, Tensor<B, 4>> {
+    let mut snapshots = BTreeMap::new();
+    for (layer_idx, layer_cache) in cache.iter().enumerate() {
+        if let Some(key) = layer_cache.key_snapshot() {
+            snapshots.insert(format!("layers.{layer_idx}.cache.key"), key);
+        }
+        if let Some(value) = layer_cache.value_snapshot() {
+            snapshots.insert(format!("layers.{layer_idx}.cache.value"), value);
+        }
+    }
+    snapshots
+}
+
 fn forward_code_predictor_hidden<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
     inputs_embeds: Tensor<B, 3>,
     attention_mask: Option<Tensor<B, 2, Int>>,
     cache: &mut [KeyValueCache<B>],
-) -> Tensor<B, 3>
+    collect_activations: bool,
+) -> (
+    Tensor<B, 3>,
+    BTreeMap<String, Tensor<B, 3>>,
+    BTreeMap<String, Tensor<B, 4>>,
+)
 where
     B: Backend,
 {
@@ -481,15 +534,31 @@ where
     let mask =
         super::model::build_attention_mask(batch_size, seq_len, key_len, attention_mask, &device);
 
-    predictor.model.forward(
-        projected_inputs,
-        config.code_predictor_config.num_attention_heads,
-        config.code_predictor_config.num_key_value_heads,
-        config.code_predictor_config.head_dim,
-        &predictor.rope,
-        mask,
-        cache,
-    )
+    if collect_activations {
+        predictor.model.forward_with_activations(
+            projected_inputs,
+            config.code_predictor_config.num_attention_heads,
+            config.code_predictor_config.num_key_value_heads,
+            config.code_predictor_config.head_dim,
+            &predictor.rope,
+            mask,
+            cache,
+        )
+    } else {
+        (
+            predictor.model.forward(
+                projected_inputs,
+                config.code_predictor_config.num_attention_heads,
+                config.code_predictor_config.num_key_value_heads,
+                config.code_predictor_config.head_dim,
+                &predictor.rope,
+                mask,
+                cache,
+            ),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+    }
 }
 
 fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {

@@ -10,6 +10,7 @@ use burn::tensor::{Int, Tensor};
 use crate::shared::runtime::sampling::{SamplingConfig, StoppingRules};
 
 pub type TalkerActivations<B> = BTreeMap<String, Tensor<B, 3>>;
+pub type TalkerAttentionActivations<B> = BTreeMap<String, Tensor<B, 4>>;
 
 #[derive(Debug)]
 pub struct TalkerForwardInput<B: Backend> {
@@ -24,6 +25,7 @@ pub struct TalkerForwardOutput<B: Backend> {
     pub last_hidden_state: Tensor<B, 3>,
     pub logits: Tensor<B, 3>,
     pub activations: TalkerActivations<B>,
+    pub attention_activations: TalkerAttentionActivations<B>,
 }
 
 #[derive(Debug)]
@@ -39,6 +41,7 @@ pub struct TalkerDecodeOutput<B: Backend> {
     pub last_hidden_state: Tensor<B, 3>,
     pub logits: Tensor<B, 3>,
     pub activations: TalkerActivations<B>,
+    pub attention_activations: TalkerAttentionActivations<B>,
 }
 
 #[derive(Debug)]
@@ -59,6 +62,7 @@ pub struct TalkerGenerateStepDiagnostic<B: Backend> {
     pub cache_len_before: usize,
     pub cache_len_after: usize,
     pub activations: TalkerActivations<B>,
+    pub attention_activations: TalkerAttentionActivations<B>,
 }
 
 #[derive(Debug)]
@@ -82,6 +86,7 @@ pub struct CodePredictorTeacherForcedInput<B: Backend> {
 pub struct CodePredictorTeacherForcedOutput<B: Backend> {
     pub logits: Tensor<B, 3>,
     pub activations: TalkerActivations<B>,
+    pub attention_activations: TalkerAttentionActivations<B>,
 }
 
 #[derive(Debug)]
@@ -93,9 +98,12 @@ pub struct CodePredictorGenerateInput<B: Backend> {
 }
 
 #[derive(Debug)]
-pub struct CodePredictorGenerateStepDiagnostic {
+pub struct CodePredictorGenerateStepDiagnostic<B: Backend> {
     pub cache_len_before: usize,
     pub cache_len_after: usize,
+    pub activations: TalkerActivations<B>,
+    pub attention_activations: TalkerAttentionActivations<B>,
+    pub cache_activations: TalkerAttentionActivations<B>,
 }
 
 #[derive(Debug)]
@@ -103,5 +111,5 @@ pub struct CodePredictorGenerateOutput<B: Backend> {
     pub codec_ids: Tensor<B, 2, Int>,
     pub predictor_token_ids: Tensor<B, 2, Int>,
     pub step_logits: Vec<Tensor<B, 3>>,
-    pub step_diagnostics: Vec<CodePredictorGenerateStepDiagnostic>,
+    pub step_diagnostics: Vec<CodePredictorGenerateStepDiagnostic<B>>,
 }

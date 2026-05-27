@@ -80,7 +80,7 @@ pub fn sample_token<B: Backend>(
     }
 
     if !sampling.do_sample {
-        let selected = logits_2d.argmax(1).reshape([batch_size, 1]);
+        let selected = greedy_argmax_lowest_index(logits_2d, batch_size, vocab_size, device);
         let eos_mask = match eos_token_id {
             Some(id) => selected.clone().equal_elem(id as i64).reshape([batch_size]),
             None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
@@ -124,6 +124,32 @@ pub fn sample_token<B: Backend>(
     };
 
     (selected, eos_mask)
+}
+
+fn greedy_argmax_lowest_index<B: Backend>(
+    logits: Tensor<B, 2>,
+    batch_size: usize,
+    vocab_size: usize,
+    device: &B::Device,
+) -> Tensor<B, 2, Int> {
+    let values = logits
+        .into_data()
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .expect("greedy logits should be convertible to f32");
+    let mut selected = Vec::with_capacity(batch_size);
+    for row in values.chunks(vocab_size) {
+        let mut best_id = 0_i32;
+        let mut best_value = f32::NEG_INFINITY;
+        for (id, value) in row.iter().copied().enumerate() {
+            if value > best_value {
+                best_id = id as i32;
+                best_value = value;
+            }
+        }
+        selected.push(best_id);
+    }
+    Tensor::<B, 2, Int>::from_data(TensorData::new(selected, [batch_size, 1]), device)
 }
 
 /// Apply repetition penalty: `logits[:, t] /= penalty` for each past token `t`.

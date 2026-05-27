@@ -51,3 +51,10 @@ cargo run -p tts_rs_qwen_burn --bin qwen3-tts -- \
 - `py/generate_reference_v9_e2e.py`
 
 Generated JSON artifacts are written to `target/tmp` and are not committed.
+
+## Alignment Debug Log
+
+All V9 Python-vs-Rust drift investigations must be recorded in
+`docs/qwen3_tts_flex_inference_v9_alignment_debug.md` before trying another
+variant. The current E2E drift changes codec groups and waveform previews, so it
+must not be treated as harmless until the ignored E2E oracle is stable.

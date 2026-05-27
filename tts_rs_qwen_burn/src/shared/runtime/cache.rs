@@ -112,6 +112,18 @@ impl<B: Backend> AutoregressiveCache<B> {
     pub fn len(&self) -> usize {
         self.cur_seq_len
     }
+
+    /// Returns the currently valid cached slice.
+    pub fn snapshot(&self) -> Option<Tensor<B, 4>> {
+        let cache = self.cache.as_ref()?;
+        let [batch_size, _num_heads, _seq_len, _head_dim] = cache.dims();
+        Some(cache.clone().slice([
+            0..batch_size,
+            0..self.num_heads,
+            0..self.cur_seq_len,
+            0..self.head_dim,
+        ]))
+    }
 }
 
 /// Key-Value cache for a single transformer layer.
@@ -148,5 +160,13 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn len(&self) -> usize {
         self.key.len()
+    }
+
+    pub fn key_snapshot(&self) -> Option<Tensor<B, 4>> {
+        self.key.snapshot()
+    }
+
+    pub fn value_snapshot(&self) -> Option<Tensor<B, 4>> {
+        self.value.snapshot()
     }
 }

@@ -94,3 +94,18 @@ Notes:
 - The Python exporter may print a SoX warning during import; that does not block reference generation.
 - Alignment compares prefill and one-step decode shapes, cache length before/after decode, selected activation stats, and full-logits max/mean absolute differences.
 - Logits sums are printed as diagnostics, but full-logits max/mean absolute diff is the primary numeric signal for checkpoint-dtype Flex runs.
+
+## V9 Alignment Tests
+
+Run V9 alignment checks in release mode to reduce runtime:
+
+```bash
+cargo test --release -p tts_rs_qwen_burn --test alignment_prefill -- --nocapture
+cargo test --release -p tts_rs_qwen_burn --test alignment_talker_prefill -- --ignored --nocapture
+cargo test --release -p tts_rs_qwen_burn --test alignment_e2e -- --ignored --nocapture
+```
+
+Record every new V9 drift investigation in
+`docs/qwen3_tts_flex_inference_v9_alignment_debug.md`. Current policy: if
+generated codec groups or waveform previews differ from the Python oracle, the
+drift is not considered harmless.

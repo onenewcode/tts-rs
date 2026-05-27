@@ -140,6 +140,7 @@ fn e2e_matches_python_oracle() {
     let mut codec_steps = Vec::with_capacity(reference.base_token_ids.len());
     let mut rust_groups = Vec::with_capacity(reference.base_token_ids.len());
     let mut first_step_topk = Vec::new();
+    let mut all_step_topk = Vec::new();
     for t in 0..reference.base_token_ids.len() {
         let base_token = generated
             .generated_token_ids
@@ -163,27 +164,20 @@ fn e2e_matches_python_oracle() {
                 talker_hidden_state: hidden,
                 base_codec_token_id: base_token,
                 sampling: SamplingConfig::greedy(),
-                collect_step_diagnostics: t == 0,
+                collect_step_diagnostics: true,
             },
             &mut predictor_cache,
         )
         .unwrap();
+        let topk = groups
+            .step_logits
+            .iter()
+            .map(|logits| top5_last_position(logits.clone()))
+            .collect::<Vec<_>>();
         if t == 0 {
-            first_step_topk = groups
-                .step_logits
-                .iter()
-                .map(|logits| {
-                    top5(
-                        logits
-                            .clone()
-                            .into_data()
-                            .convert::<f32>()
-                            .into_vec::<f32>()
-                            .unwrap(),
-                    )
-                })
-                .collect();
+            first_step_topk = topk.clone();
         }
+        all_step_topk.push(topk);
         rust_groups.push(
             groups
                 .codec_ids
@@ -195,10 +189,6 @@ fn e2e_matches_python_oracle() {
         );
         codec_steps.push(groups.codec_ids.reshape([1, cfg.num_code_groups, 1]));
     }
-    assert_eq!(
-        rust_groups, reference.codec_groups,
-        "talker hidden preview max_abs={hidden_max_abs}, first_step_max_abs={first_hidden_max_abs}; first Rust predictor topk: {first_step_topk:?}"
-    );
     let codec_tokens: Tensor<Backend, 3, Int> = Tensor::cat(codec_steps, 2);
     assert_eq!(
         codec_tokens.dims().as_slice(),
@@ -222,5 +212,67 @@ fn e2e_matches_python_oracle() {
         .zip(reference.waveform.values.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0_f32, f32::max);
+    let codec_mismatch = codec_group_mismatch_summary(&rust_groups, &reference.codec_groups);
+    let first_mismatch_topk =
+        first_mismatch_topk_report(&rust_groups, &reference.codec_groups, &all_step_topk);
+    assert_eq!(
+        rust_groups, reference.codec_groups,
+        "talker hidden preview max_abs={hidden_max_abs}, first_step_max_abs={first_hidden_max_abs}; {codec_mismatch}; waveform preview max_abs={max_abs}; first Rust predictor topk: {first_step_topk:?}; first mismatch Rust topk: {first_mismatch_topk}"
+    );
     assert!(max_abs <= 1e-1, "waveform preview max_abs={max_abs}");
+}
+
+fn first_mismatch_topk_report(
+    actual: &[Vec<i32>],
+    expected: &[Vec<i32>],
+    all_step_topk: &[Vec<Vec<(usize, f32)>>],
+) -> String {
+    for (step_idx, (actual_step, expected_step)) in actual.iter().zip(expected.iter()).enumerate() {
+        for (group_idx, (actual_id, expected_id)) in
+            actual_step.iter().zip(expected_step.iter()).enumerate()
+        {
+            if actual_id != expected_id {
+                let predictor_idx = group_idx.saturating_sub(1);
+                let topk = all_step_topk
+                    .get(step_idx)
+                    .and_then(|step| step.get(predictor_idx));
+                return format!(
+                    "step {step_idx} group {group_idx} rust={actual_id} python={expected_id} topk={topk:?}"
+                );
+            }
+        }
+    }
+    "none".to_string()
+}
+
+fn top5_last_position(logits: Tensor<Backend, 3>) -> Vec<(usize, f32)> {
+    let [_batch_size, seq_len, vocab_size] = logits.dims();
+    let values = logits
+        .into_data()
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .unwrap();
+    let start = (seq_len - 1) * vocab_size;
+    top5(values[start..start + vocab_size].to_vec())
+}
+
+fn codec_group_mismatch_summary(actual: &[Vec<i32>], expected: &[Vec<i32>]) -> String {
+    let mut mismatch_count = 0_usize;
+    let mut first = None;
+    for (step_idx, (actual_step, expected_step)) in actual.iter().zip(expected.iter()).enumerate() {
+        for (group_idx, (actual_id, expected_id)) in
+            actual_step.iter().zip(expected_step.iter()).enumerate()
+        {
+            if actual_id != expected_id {
+                mismatch_count += 1;
+                first.get_or_insert((step_idx, group_idx, *actual_id, *expected_id));
+            }
+        }
+    }
+    match first {
+        Some((step, group, actual_id, expected_id)) => format!(
+            "codec mismatches={mismatch_count}, first=step {step} group {group}: rust={actual_id}, python={expected_id}"
+        ),
+        None => "codec mismatches=0".to_string(),
+    }
 }

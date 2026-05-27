@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use burn::backend::Flex;
 use burn::tensor::{Int, Tensor};
 use clap::Parser;
+use serde::Serialize;
 use tts_rs_qwen_burn::{
     CodePredictorGenerateInput, CustomVoiceBatch, CustomVoiceRequest, KeyValueCache,
     Qwen3TtsTextTokenizer, SamplingConfig, StoppingRules, TalkerGenerateInput,
@@ -12,6 +13,45 @@ use tts_rs_qwen_burn::{
 };
 
 type Backend = Flex;
+
+#[derive(Debug, Serialize)]
+struct OutputManifest {
+    sample_rate: u32,
+    files: Vec<String>,
+    text: String,
+    language: Option<String>,
+    speaker: Option<String>,
+    max_new_tokens: usize,
+    talker_token_count: usize,
+    talker_token_ids: Vec<i32>,
+    codec_time_steps: usize,
+    codec_first_frame: Vec<i32>,
+    codec_preview_frames: Vec<Vec<i32>>,
+    waveform: WaveformStats,
+    audio_status: AudioStatus,
+}
+
+#[derive(Debug, Serialize)]
+struct WaveformStats {
+    shape: [usize; 3],
+    sample_count: usize,
+    duration_sec: f32,
+    min: f32,
+    max: f32,
+    peak: f32,
+    rms: f32,
+    mean: f32,
+    clip_fraction: f32,
+}
+
+#[derive(Debug, Serialize)]
+struct AudioStatus {
+    valid_container_written: bool,
+    non_empty: bool,
+    has_signal: bool,
+    likely_clipped: bool,
+    verdict: String,
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "qwen3-tts")]
@@ -45,9 +85,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("failed to load generation config: {e}"))?;
 
     let request = CustomVoiceRequest {
-        text: args.text,
-        language: args.language,
-        speaker: args.speaker,
+        text: args.text.clone(),
+        language: args.language.clone(),
+        speaker: args.speaker.clone(),
     };
     let frontend = build_custom_voice_prefill_batch(
         &tokenizer,
@@ -98,6 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("talker emitted EOS before any audio codec token".into());
     }
     let mut codec_steps = Vec::with_capacity(time_steps);
+    let mut codec_frames = Vec::with_capacity(time_steps);
     for t in 0..time_steps {
         let base_token = generated
             .generated_token_ids
@@ -126,6 +167,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut predictor_cache,
         )
         .map_err(|e| format!("code predictor generation failed at step {t}: {e}"))?;
+        let frame = groups
+            .codec_ids
+            .clone()
+            .into_data()
+            .convert::<i32>()
+            .into_vec::<i32>()
+            .map_err(|e| format!("failed to read codec frame {t}: {e}"))?;
+        codec_frames.push(frame);
         codec_steps.push(groups.codec_ids.reshape([1, cfg.num_code_groups, 1]));
     }
     let codec_tokens: Tensor<Backend, 3, Int> = Tensor::cat(codec_steps, 2);
@@ -135,6 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &audio_codec.config.decoder_config,
     )
     .map_err(|e| format!("audio codec decoding failed: {e}"))?;
+    let waveform_stats = waveform_stats(&waveform, audio_codec.config.output_sample_rate as u32)?;
 
     let wav_path = args.output_dir.join("0000.wav");
     save_wav(
@@ -142,12 +192,102 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &wav_path,
         audio_codec.config.output_sample_rate as u32,
     )?;
+    let audio_status = classify_audio(&waveform_stats);
+    let manifest = OutputManifest {
+        sample_rate: audio_codec.config.output_sample_rate as u32,
+        files: vec!["0000.wav".to_string()],
+        text: args.text,
+        language: args.language,
+        speaker: args.speaker,
+        max_new_tokens: args.max_new_tokens,
+        talker_token_count: time_steps,
+        talker_token_ids: generated_token_ids[..time_steps].to_vec(),
+        codec_time_steps: time_steps,
+        codec_first_frame: codec_frames.first().cloned().unwrap_or_default(),
+        codec_preview_frames: codec_frames.iter().take(4).cloned().collect(),
+        waveform: waveform_stats,
+        audio_status,
+    };
     std::fs::write(
         args.output_dir.join("manifest.json"),
-        format!(
-            "{{\n  \"sample_rate\": {},\n  \"files\": [\"0000.wav\"]\n}}\n",
-            audio_codec.config.output_sample_rate
-        ),
+        serde_json::to_string_pretty(&manifest)?,
     )?;
     Ok(())
+}
+
+fn waveform_stats<B: burn::tensor::backend::Backend>(
+    waveform: &Tensor<B, 3>,
+    sample_rate: u32,
+) -> Result<WaveformStats, Box<dyn std::error::Error>> {
+    let shape = waveform.dims();
+    let samples = waveform
+        .clone()
+        .flatten::<1>(0, 2)
+        .into_data()
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .map_err(|e| format!("failed to read waveform samples: {e}"))?;
+    let sample_count = samples.len();
+    if sample_count == 0 {
+        return Ok(WaveformStats {
+            shape,
+            sample_count,
+            duration_sec: 0.0,
+            min: 0.0,
+            max: 0.0,
+            peak: 0.0,
+            rms: 0.0,
+            mean: 0.0,
+            clip_fraction: 0.0,
+        });
+    }
+
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut clipped = 0usize;
+    for sample in &samples {
+        min = min.min(*sample);
+        max = max.max(*sample);
+        sum += *sample as f64;
+        sum_sq += (*sample as f64) * (*sample as f64);
+        if sample.abs() >= 0.999 {
+            clipped += 1;
+        }
+    }
+    let peak = min.abs().max(max.abs());
+    Ok(WaveformStats {
+        shape,
+        sample_count,
+        duration_sec: sample_count as f32 / sample_rate as f32,
+        min,
+        max,
+        peak,
+        rms: (sum_sq / sample_count as f64).sqrt() as f32,
+        mean: (sum / sample_count as f64) as f32,
+        clip_fraction: clipped as f32 / sample_count as f32,
+    })
+}
+
+fn classify_audio(stats: &WaveformStats) -> AudioStatus {
+    let non_empty = stats.sample_count > 0 && stats.duration_sec > 0.0;
+    let has_signal = stats.rms > 1.0e-4 && stats.peak > 1.0e-3;
+    let likely_clipped = stats.clip_fraction > 0.01 || stats.peak > 1.5;
+    let verdict = if !non_empty {
+        "invalid_empty"
+    } else if !has_signal {
+        "invalid_silent"
+    } else if likely_clipped {
+        "invalid_clipped"
+    } else {
+        "plausible"
+    };
+    AudioStatus {
+        valid_container_written: true,
+        non_empty,
+        has_signal,
+        likely_clipped,
+        verdict: verdict.to_string(),
+    }
 }

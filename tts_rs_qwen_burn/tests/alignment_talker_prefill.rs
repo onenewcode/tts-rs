@@ -11,7 +11,7 @@ use tts_rs_qwen_burn::{
 };
 
 type Backend = Flex;
-const REPORT_TOLERANCE: f32 = 5e-2;
+const REPORT_TOLERANCE: f32 = 1e-3;
 
 #[derive(Debug, Deserialize)]
 struct TensorReference {
@@ -108,6 +108,30 @@ fn v9_talker_prefill_activations_match_python_oracle() {
             .unwrap_or_else(|| panic!("missing Rust activation {name}"));
         summaries.push(compare_tensor(name, actual.clone(), expected));
     }
+    if let (Some(mlp_input), Some(gate_expected)) = (
+        reference
+            .activations
+            .get("layers.0.post_attention_norm.output"),
+        reference.activations.get("layers.0.mlp.gate"),
+    ) {
+        let gate_from_python_input = loaded.model.talker.model.layers[0]
+            .mlp
+            .gate_proj
+            .forward(tensor3_from_reference(mlp_input, &device).cast(DType::BF16));
+        let gate_summary = compare_tensor(
+            "probe.layers.0.mlp.gate_from_python_input",
+            gate_from_python_input,
+            gate_expected,
+        );
+        println!("{}", gate_summary.to_report_line());
+    }
+    let ordered_summaries = summaries
+        .iter()
+        .filter(|summary| summary.exceed_count > 0)
+        .map(ActivationSummary::to_report_line)
+        .take(24)
+        .collect::<Vec<_>>()
+        .join("\n");
     summaries.sort_by(|left, right| right.max_abs.total_cmp(&left.max_abs));
     let report = summaries
         .iter()
@@ -120,6 +144,14 @@ fn v9_talker_prefill_activations_match_python_oracle() {
         println!("V9 talker prefill activations match within {REPORT_TOLERANCE}");
     } else {
         println!("V9 talker prefill top mismatches:\n{report}");
+        println!("V9 talker prefill first mismatches by oracle order:\n{ordered_summaries}");
+        let layer0_report = summaries
+            .iter()
+            .filter(|summary| summary.name.starts_with("layers.0."))
+            .map(ActivationSummary::to_report_line)
+            .collect::<Vec<_>>()
+            .join("\n");
+        println!("V9 talker prefill layer0 summary:\n{layer0_report}");
     }
     if std::env::var_os("QWEN_TTS_STRICT_TALKER_PREFILL_ALIGNMENT").is_some() {
         assert!(
