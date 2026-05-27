@@ -1,83 +1,25 @@
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::path::Path;
 
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor};
-use thiserror::Error;
 
-use crate::audio_codec::{
-    LoadedQwen3TtsAudioCodec, Qwen3TtsAudioCodecConfig, infer as infer_audio_codec,
-    load_qwen3_tts_audio_codec,
+use crate::adapter::{
+    Qwen3TtsInferOutput, Qwen3TtsPipelineError, Qwen3TtsPipelineLoadReport, QwenTtsAdapter,
 };
+use crate::core::{LocalInferenceCore, LocalInferenceOptions, LocalInferenceRun};
 use crate::frontend::{
-    CustomVoiceBatch, CustomVoiceGenerationConfig, CustomVoiceRequest, FrontendOutput,
-    Qwen3TtsTextTokenizer, build_custom_voice_prefill_batch, load_custom_voice_generation_config,
+    CustomVoiceBatch, CustomVoiceRequest, FrontendOutput, Qwen3TtsTextTokenizer,
 };
-use crate::shared::io::{LoadReport, LoadedQwen3TtsTalker, save_wav};
-use crate::shared::runtime::cache::KeyValueCache;
-use crate::talker::{
-    Qwen3TtsTalkerConfig, TalkerInferInput, TalkerInferOutput, infer as infer_talker,
-    load_qwen3_tts_talker_for_inference,
-};
-use crate::{Qwen3TtsInferenceError, Qwen3TtsLoadError, SamplingConfig};
+use crate::{CustomVoiceGenerationConfig, Qwen3TtsAudioCodecConfig, Qwen3TtsTalkerConfig};
 
-#[derive(Debug, Error)]
-pub enum Qwen3TtsPipelineError {
-    #[error(transparent)]
-    Load(#[from] Qwen3TtsLoadError),
-    #[error(transparent)]
-    Inference(#[from] Qwen3TtsInferenceError),
-}
-
-impl From<tokenizers::Error> for Qwen3TtsPipelineError {
-    fn from(source: tokenizers::Error) -> Self {
-        Self::Inference(Qwen3TtsInferenceError::from(source))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Qwen3TtsInferOptions {
-    pub max_new_tokens: usize,
-    pub sampling: SamplingConfig,
-}
-
-impl Default for Qwen3TtsInferOptions {
-    fn default() -> Self {
-        Self {
-            max_new_tokens: 256,
-            sampling: SamplingConfig::greedy(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Qwen3TtsPipelineLoadReport {
-    pub talker: LoadReport,
-    pub audio_codec: LoadReport,
-}
+pub type Qwen3TtsInferOptions = LocalInferenceOptions;
 
 #[derive(Debug)]
-pub struct Qwen3TtsCodecGenerationOutput<B: Backend> {
-    pub talker_token_ids: Tensor<B, 2, Int>,
-    pub codec_token_ids: Tensor<B, 3, Int>,
-    pub generated_audio_steps: usize,
-}
-
-#[derive(Debug)]
-pub struct Qwen3TtsInferOutput<B: Backend> {
-    pub codec_generation: Qwen3TtsCodecGenerationOutput<B>,
-    pub waveform: Tensor<B, 3>,
-    pub sample_rate: u32,
-}
-
-#[derive(Debug)]
-pub struct Qwen3TtsPipeline<B: Backend> {
-    talker: LoadedQwen3TtsTalker<B>,
-    audio_codec: LoadedQwen3TtsAudioCodec<B>,
-    tokenizer: Qwen3TtsTextTokenizer,
-    generation_config: CustomVoiceGenerationConfig,
-    device: B::Device,
-    model_dir: PathBuf,
+pub struct Qwen3TtsPipeline<B>
+where
+    B: Backend,
+    B::Device: Clone,
+{
+    core: LocalInferenceCore<B, QwenTtsAdapter<B>>,
 }
 
 impl<B> Qwen3TtsPipeline<B>
@@ -89,92 +31,50 @@ where
         model_dir: impl AsRef<Path>,
         device: &B::Device,
     ) -> Result<Self, Qwen3TtsPipelineError> {
-        let model_dir = model_dir.as_ref().to_path_buf();
+        let core = LocalInferenceCore::<B, QwenTtsAdapter<B>>::load(model_dir, device)?;
+        Ok(Self { core })
+    }
 
-        let started = Instant::now();
-        let talker = load_qwen3_tts_talker_for_inference::<B>(&model_dir, device)?;
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_millis(),
-            "loaded talker for pipeline"
-        );
-
-        let started = Instant::now();
-        let audio_codec = load_qwen3_tts_audio_codec::<B>(&model_dir, device)?;
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_millis(),
-            "loaded audio codec for pipeline"
-        );
-
-        let started = Instant::now();
-        let tokenizer = Qwen3TtsTextTokenizer::from_model_dir(&model_dir)?;
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_millis(),
-            "loaded text tokenizer for pipeline"
-        );
-
-        let generation_config = load_custom_voice_generation_config(&model_dir)?;
-        tracing::debug!(
-            codec_eos_token_id = generation_config.codec_eos_token_id,
-            suppress_token_count = generation_config.suppress_token_ids.len(),
-            "loaded custom voice generation config"
-        );
-
-        Ok(Self {
-            talker,
-            audio_codec,
-            tokenizer,
-            generation_config,
-            device: device.clone(),
-            model_dir,
-        })
+    pub fn core(&self) -> &LocalInferenceCore<B, QwenTtsAdapter<B>> {
+        &self.core
     }
 
     pub fn model_dir(&self) -> &Path {
-        &self.model_dir
+        self.core.adapter().model_dir()
     }
 
     pub fn text_tokenizer(&self) -> &Qwen3TtsTextTokenizer {
-        &self.tokenizer
+        self.core.adapter().text_tokenizer()
     }
 
     pub fn talker_config(&self) -> &Qwen3TtsTalkerConfig {
-        &self.talker.config.talker_config
+        self.core.adapter().talker_config()
     }
 
     pub fn audio_codec_config(&self) -> &Qwen3TtsAudioCodecConfig {
-        &self.audio_codec.config
+        self.core.adapter().audio_codec_config()
     }
 
     pub fn generation_config(&self) -> &CustomVoiceGenerationConfig {
-        &self.generation_config
+        self.core.adapter().generation_config()
     }
 
     pub fn load_report(&self) -> Qwen3TtsPipelineLoadReport {
-        Qwen3TtsPipelineLoadReport {
-            talker: self.talker.load_report.clone(),
-            audio_codec: self.audio_codec.load_report.clone(),
-        }
+        self.core.load_report()
     }
 
     pub fn build_frontend(
         &self,
         request: &CustomVoiceRequest,
     ) -> Result<FrontendOutput<B>, Qwen3TtsPipelineError> {
-        self.build_frontend_batch(&CustomVoiceBatch::single(request.clone()))
+        self.core.adapter().build_frontend(request)
     }
 
     pub fn build_frontend_batch(
         &self,
         batch: &CustomVoiceBatch,
     ) -> Result<FrontendOutput<B>, Qwen3TtsPipelineError> {
-        build_custom_voice_prefill_batch(
-            &self.tokenizer,
-            &self.talker.config.talker_config,
-            &self.talker,
-            batch,
-            &self.device,
-        )
-        .map_err(Into::into)
+        self.core.adapter().build_frontend_batch(batch)
     }
 
     pub fn infer(
@@ -182,34 +82,15 @@ where
         request: &CustomVoiceRequest,
         options: &Qwen3TtsInferOptions,
     ) -> Result<Qwen3TtsInferOutput<B>, Qwen3TtsPipelineError> {
-        let started = Instant::now();
-        tracing::info!(
-            text_chars = request.text.chars().count(),
-            has_language = request.language.is_some(),
-            has_speaker = request.speaker.is_some(),
-            max_new_tokens = options.max_new_tokens,
-            do_sample = options.sampling.do_sample,
-            temperature = options.sampling.temperature,
-            top_k = ?options.sampling.top_k,
-            top_p = ?options.sampling.top_p,
-            "starting pipeline inference"
-        );
-        let frontend = self.build_frontend(request)?;
-        let codec_generation = self.infer_codec_tokens(frontend, options)?;
-        let waveform = self.infer_waveform(codec_generation.codec_token_ids.clone())?;
+        Ok(self.infer_with_profile(request, options)?.output)
+    }
 
-        tracing::info!(
-            generated_audio_steps = codec_generation.generated_audio_steps,
-            waveform_shape = ?waveform.dims(),
-            sample_rate = self.audio_codec.config.output_sample_rate as u32,
-            elapsed_ms = started.elapsed().as_millis(),
-            "finished pipeline inference"
-        );
-        Ok(Qwen3TtsInferOutput {
-            codec_generation,
-            waveform,
-            sample_rate: self.audio_codec.config.output_sample_rate as u32,
-        })
+    pub fn infer_with_profile(
+        &self,
+        request: &CustomVoiceRequest,
+        options: &Qwen3TtsInferOptions,
+    ) -> Result<LocalInferenceRun<Qwen3TtsInferOutput<B>>, Qwen3TtsPipelineError> {
+        self.core.infer(request, options)
     }
 
     pub fn infer_to_wav(
@@ -218,78 +99,18 @@ where
         options: &Qwen3TtsInferOptions,
         path: impl AsRef<Path>,
     ) -> Result<Qwen3TtsInferOutput<B>, Qwen3TtsPipelineError> {
-        let output = self.infer(request, options)?;
-        save_wav(&output.waveform, path.as_ref(), output.sample_rate)?;
-        Ok(output)
+        Ok(self
+            .infer_to_wav_with_profile(request, options, path)?
+            .output)
     }
 
-    fn infer_codec_tokens(
+    pub fn infer_to_wav_with_profile(
         &self,
-        frontend: FrontendOutput<B>,
+        request: &CustomVoiceRequest,
         options: &Qwen3TtsInferOptions,
-    ) -> Result<Qwen3TtsCodecGenerationOutput<B>, Qwen3TtsPipelineError> {
-        let started = Instant::now();
-        let [batch_size, _, _] = frontend.inputs_embeds.dims();
-        if batch_size != 1 {
-            return Err(Qwen3TtsInferenceError::InvalidInput {
-                message: format!(
-                    "pipeline inference currently supports batch size 1, got {batch_size}"
-                ),
-            }
-            .into());
-        }
-
-        let cfg = &self.talker.config.talker_config;
-        let mut talker_cache = (0..cfg.num_hidden_layers)
-            .map(|_| KeyValueCache::new(1, cfg.num_key_value_heads, 4096, cfg.head_dim))
-            .collect::<Vec<_>>();
-        let output: TalkerInferOutput<B> = infer_talker(
-            cfg,
-            &self.talker,
-            TalkerInferInput {
-                prefill_inputs_embeds: frontend.inputs_embeds,
-                prefill_position_ids: frontend.position_ids,
-                prefill_attention_mask: Some(frontend.attention_mask),
-                trailing_text_hidden: Some(frontend.trailing_text_hidden),
-                tts_pad_embed: Some(frontend.tts_pad_embed),
-                sampling: options.sampling.clone(),
-                max_new_tokens: options.max_new_tokens,
-                eos_token_id: Some(self.generation_config.codec_eos_token_id),
-                suppress_token_ids: self.generation_config.suppress_token_ids.clone(),
-            },
-            &mut talker_cache,
-        )?;
-        tracing::info!(
-            talker_token_shape = ?output.talker_token_ids.dims(),
-            codec_token_shape = ?output.codec_token_ids.dims(),
-            generated_audio_steps = output.generated_audio_steps,
-            elapsed_ms = started.elapsed().as_millis(),
-            "generated codec tokens"
-        );
-
-        Ok(Qwen3TtsCodecGenerationOutput {
-            talker_token_ids: output.talker_token_ids,
-            codec_token_ids: output.codec_token_ids,
-            generated_audio_steps: output.generated_audio_steps,
-        })
-    }
-
-    fn infer_waveform(
-        &self,
-        codec_token_ids: Tensor<B, 3, Int>,
-    ) -> Result<Tensor<B, 3>, Qwen3TtsPipelineError> {
-        let started = Instant::now();
-        let waveform = infer_audio_codec::<B>(
-            &self.audio_codec,
-            codec_token_ids,
-            &self.audio_codec.config.decoder_config,
-        )?;
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_millis(),
-            waveform_shape = ?waveform.dims(),
-            "decoded waveform"
-        );
-        Ok(waveform)
+        path: impl AsRef<Path>,
+    ) -> Result<LocalInferenceRun<Qwen3TtsInferOutput<B>>, Qwen3TtsPipelineError> {
+        self.core.infer_to_file(request, options, path)
     }
 }
 

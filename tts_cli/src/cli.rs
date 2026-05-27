@@ -4,7 +4,7 @@ use std::time::Instant;
 use burn::tensor::backend::Backend;
 use clap::{Parser, ValueEnum};
 use tracing::info;
-use tts_qwen::{CustomVoiceRequest, Qwen3TtsInferOptions, Qwen3TtsPipeline};
+use tts_qwen::{CustomVoiceRequest, LocalInferenceCore, LocalInferenceOptions, QwenTtsAdapter};
 
 #[derive(Debug, Parser)]
 #[command(name = "tts_cli")]
@@ -17,6 +17,8 @@ pub struct Args {
     pub language: Option<String>,
     #[arg(long)]
     pub speaker: Option<String>,
+    #[arg(long, value_enum, default_value_t = ModelKind::QwenTts)]
+    pub model_kind: ModelKind,
     #[arg(long, value_enum)]
     pub backend: Option<BackendKind>,
     #[arg(long, default_value = "output")]
@@ -56,6 +58,11 @@ pub enum BackendKind {
     Ndarray,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum ModelKind {
+    QwenTts,
+}
+
 pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
     run(Args::parse())
 }
@@ -68,6 +75,7 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         model_dir = %args.model_dir.display(),
         output_dir = %args.output_dir.display(),
+        model_kind = %args.model_kind.label(),
         backend = %backend.label(),
         max_new_tokens = args.max_new_tokens,
         language = args.language.as_deref().unwrap_or("Auto"),
@@ -108,18 +116,22 @@ where
     B::Device: Clone + Default,
 {
     let device = Default::default();
-    let pipeline = Qwen3TtsPipeline::<B>::load(&args.model_dir, &device)
-        .map_err(|e| format!("failed to load pipeline: {e}"))?;
-    pipeline
-        .infer_to_wav(
-            request,
-            &Qwen3TtsInferOptions {
-                max_new_tokens: args.max_new_tokens,
-                ..Qwen3TtsInferOptions::default()
-            },
-            wav_path,
-        )
-        .map_err(|e| format!("tts inference failed: {e}").into())
+    let core = match args.model_kind {
+        ModelKind::QwenTts => {
+            LocalInferenceCore::<B, QwenTtsAdapter<B>>::load(&args.model_dir, &device)
+                .map_err(|e| format!("failed to load inference core: {e}"))?
+        }
+    };
+    core.infer_to_file(
+        request,
+        &LocalInferenceOptions {
+            max_new_tokens: args.max_new_tokens,
+            ..LocalInferenceOptions::default()
+        },
+        wav_path,
+    )
+    .map(|run| run.output)
+    .map_err(|e| format!("tts inference failed: {e}").into())
 }
 
 fn resolve_backend(
@@ -161,6 +173,14 @@ impl BackendKind {
     }
 }
 
+impl ModelKind {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::QwenTts => "qwen-tts",
+        }
+    }
+}
+
 fn init_logging(level: LogLevel) {
     let _ = tracing_subscriber::fmt()
         .with_max_level(level.as_tracing_level())
@@ -190,6 +210,7 @@ mod tests {
         assert_eq!(args.text, "hello");
         assert_eq!(args.language, None);
         assert_eq!(args.speaker, None);
+        assert_eq!(args.model_kind, ModelKind::QwenTts);
         assert_eq!(args.backend, None);
         assert_eq!(args.output_dir, PathBuf::from("output"));
         assert_eq!(args.max_new_tokens, 256);
@@ -208,6 +229,8 @@ mod tests {
             "Chinese",
             "--speaker",
             "Vivian",
+            "--model-kind",
+            "qwen-tts",
             "--backend",
             available_backends()[0].label(),
             "--output-dir",
@@ -221,6 +244,7 @@ mod tests {
 
         assert_eq!(args.language.as_deref(), Some("Chinese"));
         assert_eq!(args.speaker.as_deref(), Some("Vivian"));
+        assert_eq!(args.model_kind, ModelKind::QwenTts);
         assert_eq!(args.output_dir, PathBuf::from("."));
         assert_eq!(args.max_new_tokens, 64);
         assert_eq!(args.log_level, LogLevel::Debug);
