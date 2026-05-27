@@ -16,7 +16,7 @@ Keep `tts_cli/` thin: parse args, choose backend, call the `tts_qwen` facade, an
 
 ## Build, Test, and Development Commands
 
-Use the workspace-standard Cargo commands for build, formatting, lint, and test workflows. Keep detailed test and smoke-run procedures in `docs/testing_tts_qwen.md`, including any model-backed setup such as `QWEN_TTS_MODEL_DIR` or local `Qwen/*` paths.
+Use the workspace-standard Cargo commands for build, formatting, lint, and test workflows. Keep detailed test and smoke-run procedures in `docs/testing_tts_qwen.md`, including required model-backed setup such as `QWEN_TTS_MODEL_DIR`.
 
 ## Coding Style & Naming Conventions
 

@@ -1,8 +1,10 @@
+use std::path::Path;
+
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
+use tokenizers::Tokenizer;
 
 use crate::error::QwenTtsInferenceError;
-use crate::io::tokenizer::Qwen3TtsTextTokenizer;
 use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
 use crate::profiling::record_operator;
@@ -12,19 +14,27 @@ use crate::session::{
 };
 
 pub fn compile_request<B: Backend>(
-    tokenizer: &Qwen3TtsTextTokenizer,
+    tokenizer: &Tokenizer,
+    model_dir: &Path,
     talker_config: &Qwen3TtsTalkerConfig,
     talker: &LoadedQwen3TtsTalker<B>,
     request: &CustomVoiceRequest,
     device: &B::Device,
 ) -> Result<CompiledRequest<B>, QwenTtsInferenceError> {
     let prompt = build_custom_voice_prompt(request);
-    let text_ids =
-        record_operator("frontend.tokenize", || tokenizer.encode(&prompt)).map_err(|source| {
-            QwenTtsInferenceError::InvalidInput {
-                message: format!("failed to tokenize custom voice prompt: {source}"),
-            }
-        })?;
+    let text_ids = record_operator("frontend.tokenize", || {
+        tokenizer.encode(prompt.as_str(), false)
+    })
+    .map(|encoding| {
+        encoding
+            .get_ids()
+            .iter()
+            .map(|id| i64::from(*id))
+            .collect::<Vec<_>>()
+    })
+    .map_err(|source| QwenTtsInferenceError::InvalidInput {
+        message: format!("failed to tokenize custom voice prompt: {source}"),
+    })?;
     if text_ids.len() < 8 {
         return Err(QwenTtsInferenceError::InvalidInput {
             message: format!(
@@ -34,7 +44,7 @@ pub fn compile_request<B: Backend>(
         });
     }
 
-    let controls = resolve_custom_voice_control_ids(tokenizer.model_dir(), request)?;
+    let controls = resolve_custom_voice_control_ids(model_dir, request)?;
     let sample = record_operator("frontend.sample_embed", || {
         build_non_streaming_custom_voice_sample(
             talker,

@@ -1,6 +1,7 @@
 mod common;
 
-use tts_qwen::{CustomVoiceRequest, Qwen3TtsTextTokenizer, build_custom_voice_prompt};
+use tokenizers::Tokenizer;
+use tts_qwen::{CustomVoiceRequest, build_custom_voice_prompt, load_qwen3_tts_tokenizer};
 
 const SAMPLE_TEXT: &str = "其实我真的有发现，我是一个特别善于观察别人情绪的人。";
 const SAMPLE_PROMPT: &str = "<|im_start|>assistant\n其实我真的有发现，我是一个特别善于观察别人情绪的人。<|im_end|>\n<|im_start|>assistant\n";
@@ -18,19 +19,29 @@ fn custom_voice_prompt_has_stable_chat_template() {
 #[test]
 fn tokenizer_encodes_custom_voice_prompt_with_rust_golden_ids() {
     let model_dir = common::resolve_model_dir();
-    let tokenizer = Qwen3TtsTextTokenizer::from_model_dir(&model_dir).unwrap();
+    let tokenizer = load_qwen3_tts_tokenizer(&model_dir).unwrap();
 
-    assert_eq!(tokenizer.encode(SAMPLE_PROMPT).unwrap(), SAMPLE_TOKEN_IDS);
+    assert_eq!(encode_ids(&tokenizer, SAMPLE_PROMPT), SAMPLE_TOKEN_IDS);
 }
 
 #[test]
 fn tokenizer_registers_required_special_tokens() {
     let model_dir = common::resolve_model_dir();
-    let tokenizer = Qwen3TtsTextTokenizer::from_model_dir(&model_dir).unwrap();
+    let tokenizer = load_qwen3_tts_tokenizer(&model_dir).unwrap();
 
-    assert_eq!(tokenizer.encode("<|im_start|>").unwrap(), vec![151644]);
-    assert_eq!(tokenizer.encode("<|im_end|>").unwrap(), vec![151645]);
-    assert_eq!(tokenizer.encode("<tts_text_bos>").unwrap(), vec![151672]);
-    assert_eq!(tokenizer.encode("<tts_text_eod>").unwrap(), vec![151673]);
-    assert_eq!(tokenizer.encode("<tts_pad>").unwrap(), vec![151671]);
+    assert_eq!(encode_ids(&tokenizer, "<|im_start|>"), vec![151644]);
+    assert_eq!(encode_ids(&tokenizer, "<|im_end|>"), vec![151645]);
+    assert_eq!(encode_ids(&tokenizer, "<tts_text_bos>"), vec![151672]);
+    assert_eq!(encode_ids(&tokenizer, "<tts_text_eod>"), vec![151673]);
+    assert_eq!(encode_ids(&tokenizer, "<tts_pad>"), vec![151671]);
+}
+
+fn encode_ids(tokenizer: &Tokenizer, text: &str) -> Vec<i64> {
+    tokenizer
+        .encode(text, false)
+        .unwrap()
+        .get_ids()
+        .iter()
+        .map(|id| i64::from(*id))
+        .collect()
 }

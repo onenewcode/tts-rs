@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use burn::tensor::backend::Backend;
+use tokenizers::Tokenizer;
 
 use crate::engine::config::EngineConfig;
 use crate::error::{QwenTtsError, QwenTtsInferenceError};
-use crate::io::tokenizer::Qwen3TtsTextTokenizer;
+use crate::io::tokenizer::load_qwen3_tts_tokenizer;
 use crate::model::load::audio_codec::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
 use crate::model::load::talker::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
 use crate::profiling::{configure, with_session_context};
@@ -42,7 +43,7 @@ where
     model_dir: PathBuf,
     talker: LoadedQwen3TtsTalker<B>,
     audio_codec: LoadedQwen3TtsAudioCodec<B>,
-    tokenizer: Qwen3TtsTextTokenizer,
+    tokenizer: Tokenizer,
     generation_config: CustomVoiceGenerationConfig,
     device: B::Device,
     sessions: Vec<Option<TtsSession<B>>>,
@@ -63,8 +64,8 @@ where
         let model_dir = model_dir.as_ref().to_path_buf();
         let talker = load_qwen3_tts_talker_for_inference::<B>(&model_dir, device)?;
         let audio_codec = load_qwen3_tts_audio_codec::<B>(&model_dir, device)?;
-        let tokenizer = Qwen3TtsTextTokenizer::from_model_dir(&model_dir)
-            .map_err(QwenTtsInferenceError::from)?;
+        let tokenizer =
+            load_qwen3_tts_tokenizer(&model_dir).map_err(QwenTtsInferenceError::from)?;
         let generation_config = load_custom_voice_generation_config(&model_dir)?;
         Ok(Self {
             config,
@@ -105,6 +106,7 @@ where
         }
         let compiled = compile_request(
             &self.tokenizer,
+            &self.model_dir,
             &self.talker.config.talker_config,
             &self.talker,
             &request,

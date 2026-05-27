@@ -41,10 +41,10 @@ fn engine_loads_and_runs_a_session_to_completion() {
 }
 
 #[test]
-#[ignore = "loads real Qwen weights and writes target/tmp/e2e/0000.wav"]
+#[ignore = "loads real Qwen weights and writes a temp-dir wav artifact"]
 fn engine_generates_valid_wav_with_real_model() {
     let model_dir = common::resolve_model_dir();
-    let output_dir = common::workspace_root().join("target/tmp/e2e");
+    let output_dir = common::unique_output_dir("pipeline-e2e");
     std::fs::create_dir_all(&output_dir).expect("e2e output dir should exist");
     let wav_path = output_dir.join("0000.wav");
 

@@ -26,12 +26,10 @@ pub use error::{
     Qwen3TtsInferenceError, Qwen3TtsLoadError, QwenTtsError, QwenTtsInferenceError,
     QwenTtsLoadError,
 };
-pub use io::paths::{default_workspace_root, find_local_qwen_tts_model_dir};
-pub use io::tokenizer::Qwen3TtsTextTokenizer;
+pub use io::tokenizer::load_qwen3_tts_tokenizer;
 pub use io::wav::{save_pcm_wav, save_wav, write_pcm_wav, write_wav};
 pub use model::config::audio_codec::Qwen3TtsAudioCodecConfig;
 pub use model::config::talker::Qwen3TtsTalkerConfig;
-pub use model::load_report::LoadReport;
 pub use profiling::ProfilingConfig;
 pub use runtime::sampling::SamplingConfig;
 pub use session::{

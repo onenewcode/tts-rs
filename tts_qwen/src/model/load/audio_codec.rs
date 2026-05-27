@@ -7,13 +7,11 @@ use crate::Qwen3TtsLoadError;
 use crate::model::audio_codec::decoder::Qwen3TtsAudioCodecCheckpoint;
 use crate::model::config::audio_codec::Qwen3TtsAudioCodecConfig;
 use crate::model::load::audio_codec_remap::audio_codec_load_key_remapper;
-use crate::model::load_report::LoadReport;
 
 #[derive(Debug)]
 pub struct LoadedQwen3TtsAudioCodec<B: Backend> {
     pub config: Qwen3TtsAudioCodecConfig,
     pub model: Qwen3TtsAudioCodecCheckpoint<B>,
-    pub load_report: LoadReport,
 }
 
 pub fn load_qwen3_tts_audio_codec<B: Backend>(
@@ -48,23 +46,17 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
             source,
         })?;
 
-    let load_report = LoadReport {
-        applied: apply_result.applied.len(),
-        skipped: apply_result.skipped.len(),
-        missing: apply_result.missing.len(),
-        unused: apply_result.unused.len(),
-    };
+    let applied = apply_result.applied.len();
+    let skipped = apply_result.skipped.len();
+    let missing = apply_result.missing.len();
+    let unused = apply_result.unused.len();
     tracing::info!(
-        applied = load_report.applied,
-        skipped = load_report.skipped,
-        missing = load_report.missing,
-        unused = load_report.unused,
+        applied,
+        skipped,
+        missing,
+        unused,
         "loaded qwen3 tts audio codec weights"
     );
 
-    Ok(LoadedQwen3TtsAudioCodec {
-        config,
-        model,
-        load_report,
-    })
+    Ok(LoadedQwen3TtsAudioCodec { config, model })
 }

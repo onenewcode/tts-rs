@@ -21,7 +21,7 @@ binary compilation without requiring local model weights.
 ## Model-Backed Integration Tests
 
 The integration tests under `tts_qwen/tests/` still require
-`QWEN_TTS_MODEL_DIR` or a local `Qwen/*` directory. These tests are useful for
+`QWEN_TTS_MODEL_DIR`. These tests are useful for
 API-level debugging, but the most representative synthesis check is the CLI
 smoke run shown below.
 

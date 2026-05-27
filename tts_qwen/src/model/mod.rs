@@ -8,5 +8,4 @@ mod audio_codec_build_encoder;
 mod build;
 pub mod config;
 pub mod load;
-pub mod load_report;
 pub mod qwen_tts;
