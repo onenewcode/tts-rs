@@ -1,0 +1,63 @@
+use std::path::PathBuf;
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum QwenTtsLoadError {
+    #[error("failed to load qwen3 tts config from {path}: {source}")]
+    Config {
+        path: PathBuf,
+        #[source]
+        source: burn::config::ConfigError,
+    },
+    #[error("failed to read checkpoint from {path}: {source}")]
+    Store {
+        path: PathBuf,
+        #[source]
+        source: burn_store::SafetensorsStoreError,
+    },
+    #[error("checkpoint loaded but {unused} tensors were left unused")]
+    UnusedTensors { unused: usize },
+    #[error("unable to find a Qwen model directory under {root}")]
+    ModelDirNotFound { root: PathBuf },
+    #[error("filesystem error while scanning {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum QwenTtsInferenceError {
+    #[error("invalid inference input: {message}")]
+    InvalidInput { message: String },
+    #[error("unsupported activation function: {name}")]
+    UnsupportedActivation { name: String },
+    #[error("unsupported rope configuration: {message}")]
+    UnsupportedRope { message: String },
+    #[error("tokenizer error: {source}")]
+    Tokenizer {
+        #[from]
+        source: tokenizers::Error,
+    },
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to read tensor data: {message}")]
+    TensorRead { message: String },
+}
+
+#[derive(Debug, Error)]
+pub enum QwenTtsError {
+    #[error(transparent)]
+    Load(#[from] QwenTtsLoadError),
+    #[error(transparent)]
+    Inference(#[from] QwenTtsInferenceError),
+}
+
+pub type Qwen3TtsLoadError = QwenTtsLoadError;
+pub type Qwen3TtsInferenceError = QwenTtsInferenceError;
