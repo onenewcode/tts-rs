@@ -1,5 +1,6 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
+use std::time::Instant;
 
 use crate::shared::io::LoadedQwen3TtsTalker;
 use crate::{Qwen3TtsInferenceError, Qwen3TtsTalkerConfig};
@@ -15,6 +16,7 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
     batch: &CustomVoiceBatch,
     device: &B::Device,
 ) -> Result<FrontendOutput<B>, Qwen3TtsInferenceError> {
+    let started = Instant::now();
     if batch.requests.is_empty() {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: "custom voice batch must contain at least one request".to_string(),
@@ -136,6 +138,11 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         max_len,
         max_trailing_len,
         dtype = ?inputs_embeds.dtype(),
+        inputs_embeds_shape = ?inputs_embeds.dims(),
+        position_ids_shape = ?position_ids.dims(),
+        attention_mask_shape = ?attention_mask.dims(),
+        trailing_text_hidden_shape = ?trailing_text_hidden.dims(),
+        elapsed_ms = started.elapsed().as_millis(),
         "built custom voice frontend prefill"
     );
 

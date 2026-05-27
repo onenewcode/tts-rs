@@ -588,19 +588,16 @@ fn decoder_transformer_full_shape() {
     let (decoder, _) = make_decoder();
     let rope = make_rope(config);
     let x = Tensor::<TestBackend, 3>::ones([1, 10, config.latent_dim], &device);
-    let (y, _activations) = decoder.pre_transformer.forward(
+    let y = decoder.pre_transformer.forward(
         x,
         config.num_attention_heads,
         config.num_key_value_heads,
         config.head_dim,
         &rope,
         None,
-        true,
     );
     // output_proj maps hidden_size → latent_dim
     assert_eq!(y.dims(), [1, 10, config.latent_dim]);
-    // 2 layers → 2 activation entries
-    assert_eq!(_activations.len(), 2);
 }
 
 #[test]
@@ -730,14 +727,13 @@ fn decoder_full_pipeline_shape_single_step() {
     let rope = make_rope(&dconfig);
     // time=8 avoids short-sequence Conv1d padding overflow (dilated kernels need room)
     let codec_ids = Tensor::<TestBackend, 3, Int>::zeros([1, 4, 8], &device);
-    let (waveform, _) = decoder.forward(
+    let waveform = decoder.forward(
         codec_ids,
         1,
         dconfig.num_attention_heads,
         dconfig.num_key_value_heads,
         dconfig.head_dim,
         &rope,
-        false,
     );
     assert_eq!(waveform.dims()[0], 1, "batch size");
     assert_eq!(waveform.dims()[1], 1, "mono audio");
@@ -752,14 +748,13 @@ fn decoder_single_step_api_validates_output_shape() {
     let rope = make_rope(&dconfig);
 
     let codec_2d = Tensor::<TestBackend, 2, Int>::zeros([1, 4], &device);
-    let (w1, _) = decoder.forward_single_step(
+    let w1 = decoder.forward_single_step(
         codec_2d.clone(),
         1,
         dconfig.num_attention_heads,
         dconfig.num_key_value_heads,
         dconfig.head_dim,
         &rope,
-        false,
     );
     assert_eq!(w1.dims()[0], 1, "batch");
     assert_eq!(w1.dims()[1], 1, "mono audio");

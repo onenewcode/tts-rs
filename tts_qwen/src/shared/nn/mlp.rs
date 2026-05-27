@@ -5,14 +5,6 @@ use burn::tensor::Tensor;
 use burn::tensor::activation::silu;
 use burn::tensor::backend::Backend;
 
-pub struct Qwen3TtsTextMlpOutput<B: Backend> {
-    pub output: Tensor<B, 3>,
-    pub gate: Tensor<B, 3>,
-    pub up: Tensor<B, 3>,
-    pub activated_gate: Tensor<B, 3>,
-    pub product: Tensor<B, 3>,
-}
-
 #[derive(Module, Debug)]
 pub struct Qwen3TtsTextMlp<B: Backend> {
     pub gate_proj: Linear<B>,
@@ -30,22 +22,6 @@ where
         let up = self.up_proj.forward(x);
         self.down_proj
             .forward(silu(gate.cast(DType::F32)).cast(dtype) * up)
-    }
-
-    pub fn forward_with_activations(&self, x: Tensor<B, 3>) -> Qwen3TtsTextMlpOutput<B> {
-        let dtype = x.dtype();
-        let gate = self.gate_proj.forward(x.clone());
-        let up = self.up_proj.forward(x.clone());
-        let activated_gate = silu(gate.clone().cast(DType::F32)).cast(dtype);
-        let product = activated_gate.clone() * up.clone();
-        let output = self.down_proj.forward(product.clone());
-        Qwen3TtsTextMlpOutput {
-            output,
-            gate,
-            up,
-            activated_gate,
-            product,
-        }
     }
 }
 // TODO 考虑使用burn的模块

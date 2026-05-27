@@ -260,11 +260,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         head_dim: usize,
         rope: &RotaryEncoding<B>,
         mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
-        collect_activations: bool,
-    ) -> (
-        Tensor<B, 3>,
-        std::collections::BTreeMap<String, Tensor<B, 3>>,
-    ) {
+    ) -> Tensor<B, 3> {
         let [batch, seq, latent] = x.dims();
 
         // Project input to transformer hidden size
@@ -273,12 +269,8 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         let [_, hidden_size] = proj_in.dims();
         let mut h = proj_in.reshape([batch, seq, hidden_size]); // [batch, seq, hidden]
 
-        let mut activations = std::collections::BTreeMap::new();
-        for (idx, layer) in self.layers.iter().enumerate() {
+        for layer in &self.layers {
             h = layer.forward(h, num_heads, num_kv_heads, head_dim, rope, mask.clone());
-            if collect_activations {
-                activations.insert(format!("layers.{idx}"), h.clone());
-            }
         }
 
         // Final RMS norm
@@ -287,7 +279,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         let h2d = h_normed.reshape([b * s, hs]);
         let out = self.output_proj.forward(h2d); // [b*s, latent]
         let [_, out_dim] = out.dims();
-        (out.reshape([b, s, out_dim]), activations)
+        out.reshape([b, s, out_dim])
     }
 }
 
@@ -391,11 +383,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        collect_activations: bool,
-    ) -> (
-        Tensor<B, 3>,
-        std::collections::BTreeMap<String, Tensor<B, 3>>,
-    ) {
+    ) -> Tensor<B, 3> {
         // 1. Quantizer: codec IDs → embedding [batch, codebook_dim, time_steps]
         let q_out = self.quantizer.forward(codec_ids, num_semantic_quantizers);
 
@@ -405,15 +393,9 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         // 3. Pre-transformer: process time sequence
         // Swap [batch, channels, time] → [batch, time, channels]
         let h_tr: Tensor<B, 3> = h.swap_dims(1, 2).clone();
-        let (mut h, _activations) = self.pre_transformer.forward(
-            h_tr,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            rope,
-            None,
-            collect_activations,
-        );
+        let mut h =
+            self.pre_transformer
+                .forward(h_tr, num_heads, num_kv_heads, head_dim, rope, None);
         // Back to [batch, channels, time]
         h = h.swap_dims(1, 2).clone();
 
@@ -424,16 +406,10 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         }
 
         // 5. Wave decoder: sequence of conv/upsample entries
-        let mut activations = std::collections::BTreeMap::new();
-        for (idx, entry) in self.decoder.iter().enumerate() {
+        for entry in &self.decoder {
             h = entry.forward(h);
-            if collect_activations {
-                activations.insert(format!("wave_decoder.{idx}"), h.clone());
-            }
         }
-        let h = h.clamp_min(-1.0).clamp_max(1.0);
-
-        (h, activations)
+        h.clamp_min(-1.0).clamp_max(1.0)
     }
 
     /// Convenience: single-time-step decoder forward.
@@ -446,11 +422,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        collect_activations: bool,
-    ) -> (
-        Tensor<B, 3>,
-        std::collections::BTreeMap<String, Tensor<B, 3>>,
-    ) {
+    ) -> Tensor<B, 3> {
         let [batch, num_q] = codec_ids.dims();
         let codec_3d = codec_ids.reshape([batch, num_q, 1]);
         self.forward(
@@ -460,7 +432,6 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
             num_kv_heads,
             head_dim,
             rope,
-            collect_activations,
         )
     }
 }

@@ -5,6 +5,7 @@
 
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
+use std::time::Instant;
 
 use super::model::build_attention_mask;
 use super::nn::mlp::native_linear_3d;
@@ -49,6 +50,7 @@ pub(crate) fn infer<B>(
 where
     B: Backend,
 {
+    let started = Instant::now();
     validate_cache_layer_count(config, cache)?;
     if input.max_new_tokens == 0 {
         return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -78,6 +80,7 @@ where
         input.tts_pad_embed.as_ref().map(Tensor::dims),
     )?;
 
+    let prefill_started = Instant::now();
     let prefill = prefill(
         config,
         loaded,
@@ -86,6 +89,13 @@ where
         input.prefill_attention_mask,
         cache,
     )?;
+    tracing::info!(
+        elapsed_ms = prefill_started.elapsed().as_millis(),
+        cache_len = validate_cache_lengths(cache)?,
+        last_hidden_shape = ?prefill.last_hidden_state.dims(),
+        logits_shape = ?prefill.logits.dims(),
+        "finished talker prefill"
+    );
 
     let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
     let prefill_logits = apply_repetition_penalty(
@@ -106,9 +116,15 @@ where
 
     for step_idx in 0..input.max_new_tokens {
         if input.eos_token_id.is_some() && batch_finished(&eos_mask) {
+            tracing::info!(step_idx, "stopping talker infer after EOS");
             break;
         }
 
+        tracing::debug!(
+            step_idx,
+            talker_cache_len = validate_cache_lengths(cache)?,
+            "starting talker decode step"
+        );
         let mut predictor_cache = (0..config.code_predictor_config.num_hidden_layers)
             .map(|_| {
                 KeyValueCache::new(
@@ -119,6 +135,7 @@ where
                 )
             })
             .collect::<Vec<_>>();
+        let predictor_started = Instant::now();
         let codec_ids = infer_code_predictor_groups(
             config,
             loaded,
@@ -127,6 +144,13 @@ where
             &input.sampling,
             &mut predictor_cache,
         )?;
+        tracing::debug!(
+            step_idx,
+            codec_group_shape = ?codec_ids.dims(),
+            predictor_cache_len = validate_cache_lengths(&predictor_cache)?,
+            elapsed_ms = predictor_started.elapsed().as_millis(),
+            "finished code predictor expansion"
+        );
         codec_steps.push(
             codec_ids
                 .clone()
@@ -134,6 +158,10 @@ where
         );
 
         if step_idx + 1 == input.max_new_tokens {
+            tracing::info!(
+                generated_steps = codec_steps.len(),
+                "reached max_new_tokens in talker infer"
+            );
             break;
         }
 
@@ -145,7 +173,15 @@ where
             step_idx,
         );
         let position_ids = Tensor::<B, 3, Int>::full([3, batch_size, 1], cache_len as i32, &device);
+        let decode_started = Instant::now();
         let decoded = decode_step(config, loaded, inputs_embeds, position_ids, cache)?;
+        tracing::debug!(
+            step_idx,
+            elapsed_ms = decode_started.elapsed().as_millis(),
+            cache_len_after = validate_cache_lengths(cache)?,
+            logits_shape = ?decoded.logits.dims(),
+            "finished talker decode step"
+        );
         let past_ids = Tensor::cat(talker_tokens.clone(), 1);
         let penalized_logits =
             apply_repetition_penalty(decoded.logits, &past_ids, input.sampling.repetition_penalty);
@@ -172,8 +208,10 @@ where
     let talker_token_ids = Tensor::cat(talker_tokens, 1);
     let codec_token_ids = Tensor::cat(codec_steps, 2);
     tracing::info!(
-        generated_tokens = talker_token_ids.dims()[1],
+        talker_token_shape = ?talker_token_ids.dims(),
+        codec_token_shape = ?codec_token_ids.dims(),
         generated_audio_steps,
+        elapsed_ms = started.elapsed().as_millis(),
         "finished talker infer"
     );
 
@@ -196,6 +234,12 @@ where
     B: Backend,
 {
     validate_cache_layer_count(config, cache)?;
+    tracing::debug!(
+        input_shape = ?inputs_embeds.dims(),
+        position_shape = ?position_ids.dims(),
+        attention_mask_shape = ?attention_mask.as_ref().map(Tensor::dims),
+        "running talker prefill"
+    );
     validate_talker_input(
         "talker infer prefill",
         inputs_embeds.dims(),
@@ -232,6 +276,12 @@ where
 {
     validate_cache_layer_count(config, cache)?;
     let cache_len = validate_cache_lengths(cache)?;
+    tracing::debug!(
+        input_shape = ?inputs_embeds.dims(),
+        position_shape = ?position_ids.dims(),
+        cache_len,
+        "running talker decode"
+    );
     validate_talker_input(
         "talker infer decode",
         inputs_embeds.dims(),
@@ -280,6 +330,12 @@ where
     }
 
     let [batch_size, hidden_size] = talker_hidden_state.dims();
+    tracing::debug!(
+        batch_size,
+        hidden_size,
+        base_codec_shape = ?base_codec_token_id.dims(),
+        "starting code predictor expansion"
+    );
     let base_token_dims = base_codec_token_id.dims();
     if base_token_dims != [batch_size, 1] {
         return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -334,6 +390,11 @@ where
         let logits = apply_repetition_penalty(logits, &past_ids, sampling.repetition_penalty);
         selected_token = sample_token::<B>(logits, sampling, None, &[], &device).0;
         predictor_tokens.push(selected_token.clone());
+        tracing::debug!(
+            head_idx,
+            generated_tokens = predictor_tokens.len(),
+            "sampled code predictor group"
+        );
     }
 
     let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
@@ -351,6 +412,11 @@ where
     debug_assert_eq!(
         predictor_config.num_code_groups, config.num_code_groups,
         "talker and code predictor code group counts should match"
+    );
+    tracing::debug!(
+        final_cache_len,
+        output_shape = ?codec_ids.dims(),
+        "finished code predictor expansion"
     );
     Ok(codec_ids)
 }
@@ -386,7 +452,16 @@ where
     let [batch_size, seq_len, _] = projected_inputs.dims();
     let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
     let device = projected_inputs.device();
+    let attention_mask_shape = attention_mask.as_ref().map(Tensor::dims);
     let mask = build_attention_mask(batch_size, seq_len, key_len, attention_mask, &device);
+    tracing::debug!(
+        batch_size,
+        seq_len,
+        key_len,
+        attention_mask_shape = ?attention_mask_shape,
+        projected_dtype = ?projected_inputs.dtype(),
+        "running code predictor layers"
+    );
 
     predictor.model.run_layers(
         projected_inputs,

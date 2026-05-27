@@ -9,23 +9,6 @@ use super::mlp::native_linear_3d;
 use super::rms_norm::qwen_rms_norm;
 use crate::shared::runtime::cache::KeyValueCache;
 
-pub struct AttentionOutput<B: Backend> {
-    pub output: Tensor<B, 3>,
-    pub attn_weights: Tensor<B, 4>,
-    pub q_proj: Tensor<B, 3>,
-    pub k_proj: Tensor<B, 3>,
-    pub v_proj: Tensor<B, 3>,
-    pub q_norm: Tensor<B, 3>,
-    pub k_norm: Tensor<B, 3>,
-    pub q_rot: Tensor<B, 3>,
-    pub k_rot: Tensor<B, 3>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AttentionValueMode {
-    CastSoftmaxToModelDTypeBeforeValueMatmul,
-}
-
 pub enum AttentionPosition<B: Backend> {
     Standard {
         cos: Tensor<B, 4>,
@@ -57,63 +40,12 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         position: AttentionPosition<B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
-        value_mode: AttentionValueMode,
     ) -> Tensor<B, 3> {
-        self.forward_debug(
-            x,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            position,
-            mask,
-            cache,
-            value_mode,
-        )
-        .output
-    }
-
-    pub fn forward_debug(
-        &self,
-        x: Tensor<B, 3>,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        position: AttentionPosition<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
-        cache: &mut KeyValueCache<B>,
-        value_mode: AttentionValueMode,
-    ) -> AttentionOutput<B> {
-        self.forward_debug_with_value_mode(
-            x,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            position,
-            mask,
-            cache,
-            value_mode,
-        )
-    }
-
-    fn forward_debug_with_value_mode(
-        &self,
-        x: Tensor<B, 3>,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        position: AttentionPosition<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
-        cache: &mut KeyValueCache<B>,
-        value_mode: AttentionValueMode,
-    ) -> AttentionOutput<B> {
         let [batch_size, seq_len, _] = x.dims();
 
         let q = native_linear_3d(&self.q_proj, x.clone());
         let k = native_linear_3d(&self.k_proj, x.clone());
         let v = native_linear_3d(&self.v_proj, x);
-        let q_proj_out = q.clone();
-        let k_proj_out = k.clone();
-        let v_proj_out = v.clone();
 
         // Apply norm PER HEAD (last dimension after reshape)
         let q = qwen_rms_norm(
@@ -132,14 +64,6 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2)
             .clone();
-        let q_norm_out =
-            q.clone()
-                .swap_dims(1, 2)
-                .reshape([batch_size, seq_len, num_heads * head_dim]);
-        let k_norm_out =
-            k.clone()
-                .swap_dims(1, 2)
-                .reshape([batch_size, seq_len, num_kv_heads * head_dim]);
 
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } => {
@@ -153,18 +77,10 @@ impl<B: Backend> Qwen3TtsAttention<B> {
                 (q, k)
             }
         };
-        let q_rot_out =
-            q.clone()
-                .swap_dims(1, 2)
-                .reshape([batch_size, seq_len, num_heads * head_dim]);
-        let k_rot_out =
-            k.clone()
-                .swap_dims(1, 2)
-                .reshape([batch_size, seq_len, num_kv_heads * head_dim]);
 
         let (k, v) = cache.forward(k, v);
 
-        let (output, attn_weights) = self.execute_attention(
+        self.execute_attention(
             batch_size,
             seq_len,
             num_heads,
@@ -174,20 +90,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             k,
             v,
             mask,
-            value_mode,
-        );
-
-        AttentionOutput {
-            output,
-            attn_weights,
-            q_proj: q_proj_out,
-            k_proj: k_proj_out,
-            v_proj: v_proj_out,
-            q_norm: q_norm_out,
-            k_norm: k_norm_out,
-            q_rot: q_rot_out,
-            k_rot: k_rot_out,
-        }
+        )
     }
 
     fn execute_attention(
@@ -201,8 +104,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         k: Tensor<B, 4>,
         v: Tensor<B, 4>,
         mask: Option<Tensor<B, 4, Bool>>,
-        _value_mode: AttentionValueMode,
-    ) -> (Tensor<B, 3>, Tensor<B, 4>) {
+    ) -> Tensor<B, 3> {
         let n_rep = num_heads / num_kv_heads;
         let k = repeat_kv(k, n_rep);
         let v = repeat_kv(v, n_rep);
@@ -230,7 +132,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         // clone after swap_dims to ensure contiguous layout (matching PyTorch's .contiguous())
         let attn_output = attn_output.swap_dims(1, 2).clone();
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);
-        (native_linear_3d(&self.o_proj, attn_output), attn_weights)
+        native_linear_3d(&self.o_proj, attn_output)
     }
 }
 

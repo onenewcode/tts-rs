@@ -4,7 +4,7 @@ use burn::nn::{Embedding, Linear, RmsNorm};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
-use super::nn::attention::{AttentionPosition, AttentionValueMode};
+use super::nn::attention::AttentionPosition;
 use super::nn::mlp::native_linear_3d;
 use super::nn::rms_norm::qwen_rms_norm;
 use super::nn::{
@@ -87,22 +87,18 @@ where
 
         let mut x = inputs_embeds;
         for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
-            x = layer
-                .forward(
-                    x,
-                    num_heads,
-                    num_kv_heads,
-                    head_dim,
-                    AttentionPosition::Mrope {
-                        cos: cos.clone(),
-                        sin: sin.clone(),
-                    },
-                    mask.clone(),
-                    c,
-                    AttentionValueMode::CastSoftmaxToModelDTypeBeforeValueMatmul,
-                    false,
-                )
-                .hidden;
+            x = layer.forward(
+                x,
+                num_heads,
+                num_kv_heads,
+                head_dim,
+                AttentionPosition::Mrope {
+                    cos: cos.clone(),
+                    sin: sin.clone(),
+                },
+                mask.clone(),
+                c,
+            );
         }
 
         qwen_rms_norm(&self.norm, x)
@@ -195,7 +191,6 @@ where
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = inputs_embeds.dims();
         let start = cache.first().map_or(0, KeyValueCache::len);
-        let key_len = start + seq_len;
         let (cos, sin) = rope.get_cos_sin(
             batch_size,
             seq_len,
@@ -204,30 +199,22 @@ where
             &inputs_embeds.device(),
         );
         let mut x = inputs_embeds;
-        for (layer_idx, (layer, c)) in self.layers.iter().zip(cache.iter_mut()).enumerate() {
-            x = layer
-                .forward(
-                    x,
-                    num_heads,
-                    num_kv_heads,
-                    head_dim,
-                    AttentionPosition::Standard {
-                        cos: cos.clone(),
-                        sin: sin.clone(),
-                    },
-                    mask.clone(),
-                    c,
-                    code_predictor_attention_value_mode(key_len, layer_idx),
-                    false,
-                )
-                .hidden;
+        for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
+            x = layer.forward(
+                x,
+                num_heads,
+                num_kv_heads,
+                head_dim,
+                AttentionPosition::Standard {
+                    cos: cos.clone(),
+                    sin: sin.clone(),
+                },
+                mask.clone(),
+                c,
+            );
         }
         qwen_rms_norm(&self.norm, x)
     }
-}
-
-fn code_predictor_attention_value_mode(_key_len: usize, _layer_idx: usize) -> AttentionValueMode {
-    AttentionValueMode::CastSoftmaxToModelDTypeBeforeValueMatmul
 }
 
 pub(crate) fn build_attention_mask<B: Backend>(
@@ -237,6 +224,14 @@ pub(crate) fn build_attention_mask<B: Backend>(
     padding_mask: Option<Tensor<B, 2, Int>>,
     device: &B::Device,
 ) -> Option<Tensor<B, 4, Bool>> {
+    tracing::debug!(
+        batch_size,
+        query_len,
+        key_len,
+        has_padding_mask = padding_mask.is_some(),
+        has_causal_mask = query_len == key_len,
+        "building attention mask"
+    );
     let causal_mask = (query_len == key_len).then(|| {
         generate_autoregressive_mask::<B>(batch_size, query_len, device).unsqueeze_dim::<4>(1)
     });

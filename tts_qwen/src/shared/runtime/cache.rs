@@ -32,6 +32,11 @@ impl<B: Backend> AutoregressiveCache<B> {
 
     /// Reset the cache state.
     pub fn reset(&mut self) {
+        tracing::debug!(
+            previous_seq_len = self.cur_seq_len,
+            max_seq_len = self.max_seq_len,
+            "reset autoregressive cache"
+        );
         self.cache = None;
         self.cur_seq_len = 0;
     }
@@ -48,6 +53,15 @@ impl<B: Backend> AutoregressiveCache<B> {
         assert_eq!(num_heads, self.num_heads, "cache head count mismatch");
         assert_eq!(head_dim, self.head_dim, "cache head dim mismatch");
         let mut new_seq_len = self.cur_seq_len + seq_len;
+        tracing::debug!(
+            batch_size,
+            num_heads,
+            seq_len,
+            head_dim,
+            previous_seq_len = old_seq_len,
+            max_seq_len = self.max_seq_len,
+            "updating autoregressive cache"
+        );
 
         // Lazy initialization to match input tensor DType
         if self.cache.is_none() {
@@ -65,6 +79,11 @@ impl<B: Backend> AutoregressiveCache<B> {
 
         if new_seq_len > self.max_seq_len {
             // Sliding window: discard oldest tokens
+            tracing::debug!(
+                requested_seq_len = new_seq_len,
+                max_seq_len = self.max_seq_len,
+                "sliding autoregressive cache window"
+            );
             self.cur_seq_len = self.max_seq_len - seq_len;
             let prev_slice = cache_tensor.clone().slice([
                 0..batch_size,
@@ -95,6 +114,10 @@ impl<B: Backend> AutoregressiveCache<B> {
         );
 
         self.cur_seq_len = new_seq_len;
+        tracing::debug!(
+            current_seq_len = self.cur_seq_len,
+            "updated autoregressive cache"
+        );
 
         if old_seq_len == 0 && seq_len == new_seq_len {
             return original_tensor;
@@ -115,18 +138,6 @@ impl<B: Backend> AutoregressiveCache<B> {
 
     pub fn is_empty(&self) -> bool {
         self.cur_seq_len == 0
-    }
-
-    /// Returns the currently valid cached slice.
-    pub fn snapshot(&self) -> Option<Tensor<B, 4>> {
-        let cache = self.cache.as_ref()?;
-        let [batch_size, _num_heads, _seq_len, _head_dim] = cache.dims();
-        Some(cache.clone().slice([
-            0..batch_size,
-            0..self.num_heads,
-            0..self.cur_seq_len,
-            0..self.head_dim,
-        ]))
     }
 }
 
@@ -168,13 +179,5 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn is_empty(&self) -> bool {
         self.key.is_empty()
-    }
-
-    pub fn key_snapshot(&self) -> Option<Tensor<B, 4>> {
-        self.key.snapshot()
-    }
-
-    pub fn value_snapshot(&self) -> Option<Tensor<B, 4>> {
-        self.value.snapshot()
     }
 }

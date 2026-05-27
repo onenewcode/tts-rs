@@ -182,10 +182,29 @@ where
         request: &CustomVoiceRequest,
         options: &Qwen3TtsInferOptions,
     ) -> Result<Qwen3TtsInferOutput<B>, Qwen3TtsPipelineError> {
+        let started = Instant::now();
+        tracing::info!(
+            text_chars = request.text.chars().count(),
+            has_language = request.language.is_some(),
+            has_speaker = request.speaker.is_some(),
+            max_new_tokens = options.max_new_tokens,
+            do_sample = options.sampling.do_sample,
+            temperature = options.sampling.temperature,
+            top_k = ?options.sampling.top_k,
+            top_p = ?options.sampling.top_p,
+            "starting pipeline inference"
+        );
         let frontend = self.build_frontend(request)?;
         let codec_generation = self.infer_codec_tokens(frontend, options)?;
         let waveform = self.infer_waveform(codec_generation.codec_token_ids.clone())?;
 
+        tracing::info!(
+            generated_audio_steps = codec_generation.generated_audio_steps,
+            waveform_shape = ?waveform.dims(),
+            sample_rate = self.audio_codec.config.output_sample_rate as u32,
+            elapsed_ms = started.elapsed().as_millis(),
+            "finished pipeline inference"
+        );
         Ok(Qwen3TtsInferOutput {
             codec_generation,
             waveform,
@@ -209,6 +228,7 @@ where
         frontend: FrontendOutput<B>,
         options: &Qwen3TtsInferOptions,
     ) -> Result<Qwen3TtsCodecGenerationOutput<B>, Qwen3TtsPipelineError> {
+        let started = Instant::now();
         let [batch_size, _, _] = frontend.inputs_embeds.dims();
         if batch_size != 1 {
             return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -239,6 +259,13 @@ where
             },
             &mut talker_cache,
         )?;
+        tracing::info!(
+            talker_token_shape = ?output.talker_token_ids.dims(),
+            codec_token_shape = ?output.codec_token_ids.dims(),
+            generated_audio_steps = output.generated_audio_steps,
+            elapsed_ms = started.elapsed().as_millis(),
+            "generated codec tokens"
+        );
 
         Ok(Qwen3TtsCodecGenerationOutput {
             talker_token_ids: output.talker_token_ids,

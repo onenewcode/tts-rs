@@ -13,6 +13,7 @@ pub(crate) fn infer<B: Backend>(
     config: &Qwen3TtsAudioCodecDecoderConfig,
 ) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
     validate_codec_input_3d(&codec_ids, config)?;
+    let started = std::time::Instant::now();
     tracing::info!(
         codec_shape = ?codec_ids.dims(),
         num_quantizers = config.num_quantizers,
@@ -26,16 +27,19 @@ pub(crate) fn infer<B: Backend>(
     .with_theta(config.rope_theta as f32);
     let rope = rope_cfg.init(&codec_ids.device());
 
-    let (waveform, _) = loaded.model.decoder.forward(
+    let waveform = loaded.model.decoder.forward(
         codec_ids,
         config.num_semantic_quantizers,
         config.num_attention_heads,
         config.num_key_value_heads,
         config.head_dim,
         &rope,
-        false,
     );
-    tracing::info!(waveform_shape = ?waveform.dims(), "decoded codec tokens");
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        waveform_shape = ?waveform.dims(),
+        "decoded codec tokens"
+    );
 
     Ok(waveform)
 }
