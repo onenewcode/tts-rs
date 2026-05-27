@@ -6,7 +6,7 @@ use burn::tensor::{Bool, Tensor};
 use super::attention::{AttentionPosition, AttentionValueMode, Qwen3TtsAttention};
 use super::mlp::Qwen3TtsTextMlp;
 use super::rms_norm::qwen_rms_norm;
-use crate::talker::KeyValueCache;
+use crate::shared::runtime::cache::KeyValueCache;
 
 pub struct DecoderLayerOutput<B: Backend> {
     pub hidden: Tensor<B, 3>,

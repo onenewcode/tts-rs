@@ -7,12 +7,6 @@ use crate::Qwen3TtsInferenceError;
 use crate::shared::config::audio_codec::Qwen3TtsAudioCodecDecoderConfig;
 use crate::shared::io::audio_codec_load::LoadedQwen3TtsAudioCodec;
 
-/// Decode codec token IDs to audio waveform.
-///
-/// `codec_ids`: [batch, num_quantizers, time_steps] — one token per quantizer layer
-///   for each time step. Each column along dim 1 is a different VQ layer's token.
-///
-/// Returns audio waveform: [batch, 1, num_samples].
 pub fn decode_codec_tokens<B: Backend>(
     loaded: &LoadedQwen3TtsAudioCodec<B>,
     codec_ids: Tensor<B, 3, Int>,
@@ -44,17 +38,6 @@ pub fn decode_codec_tokens<B: Backend>(
     tracing::info!(waveform_shape = ?waveform.dims(), "decoded codec tokens");
 
     Ok(waveform)
-}
-
-/// Single-time-step convenience: `codec_ids` as `[batch, num_quantizers]`.
-pub fn decode_codec_tokens_single_step<B: Backend>(
-    loaded: &LoadedQwen3TtsAudioCodec<B>,
-    codec_ids: Tensor<B, 2, Int>,
-    config: &Qwen3TtsAudioCodecDecoderConfig,
-) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
-    let [batch, num_q] = codec_ids.dims();
-    let codec_3d = codec_ids.reshape([batch, num_q, 1]);
-    decode_codec_tokens(loaded, codec_3d, config)
 }
 
 fn validate_codec_input_3d<B: Backend>(

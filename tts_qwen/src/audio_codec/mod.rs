@@ -13,14 +13,13 @@
 //! | Function | Purpose |
 //! |---|---|
 //! | `decode_codec_tokens` | Full decoder pipeline: tokens → waveform |
-//! | `decode_codec_tokens_single_step` | Convenience for `[batch, num_quantizers]` input |
 
 mod inference;
 mod factory {
     pub mod decoder;
     pub mod encoder;
 }
-mod model {
+pub(crate) mod model {
     pub mod decoder;
     pub mod encoder;
     pub mod wave_decoder;
@@ -28,35 +27,8 @@ mod model {
 #[cfg(test)]
 mod tests;
 
-pub use crate::shared::config::audio_codec::{
-    Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecDecoderConfig, Qwen3TtsAudioCodecEncoderConfig,
-};
+pub use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
 pub use crate::shared::io::audio_codec_load::{
     LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec,
 };
-pub use crate::shared::nn::activation::{
-    AudioCodecLayerScale, AudioCodecSnakeBeta, Qwen3TtsAudioCodecEmptyModule,
-};
-pub use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
-pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
-pub use model::decoder::{
-    Qwen3TtsAudioCodecCheckpoint, Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder,
-    Qwen3TtsAudioCodecDecoderAttention, Qwen3TtsAudioCodecDecoderCodebook,
-    Qwen3TtsAudioCodecDecoderMlp, Qwen3TtsAudioCodecDecoderQuantizer,
-    Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
-    Qwen3TtsAudioCodecDecoderResidualVectorQuantizer, Qwen3TtsAudioCodecDecoderTransformer,
-    Qwen3TtsAudioCodecDecoderTransformerLayer, Qwen3TtsAudioCodecDecoderVectorQuantization,
-};
-pub use model::encoder::{
-    Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
-    Qwen3TtsAudioCodecEncoderBackbone, Qwen3TtsAudioCodecEncoderBackboneLayer,
-    Qwen3TtsAudioCodecEncoderCodebook, Qwen3TtsAudioCodecEncoderConvLayer,
-    Qwen3TtsAudioCodecEncoderMlp, Qwen3TtsAudioCodecEncoderQuantizer,
-    Qwen3TtsAudioCodecEncoderResidualVectorQuantizer, Qwen3TtsAudioCodecEncoderResnetLayer,
-    Qwen3TtsAudioCodecEncoderTransformer, Qwen3TtsAudioCodecEncoderTransformerLayer,
-    Qwen3TtsAudioCodecEncoderVectorQuantization,
-};
-pub use model::wave_decoder::{
-    Qwen3TtsAudioCodecWaveDecoderConvEntry, Qwen3TtsAudioCodecWaveDecoderEntry,
-    Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
-};
+pub use inference::decode_codec_tokens;

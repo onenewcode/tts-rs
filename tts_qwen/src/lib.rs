@@ -1,71 +1,50 @@
-//! # TTS Inference Engine for Qwen3-TTS
+//! High-level Rust inference APIs for local Qwen3-TTS models.
 #![allow(
     clippy::large_enum_variant,
     clippy::too_many_arguments,
     clippy::type_complexity
 )]
 //!
-//! A Rust inference pipeline for Qwen3-TTS models built on the [Burn](https://burn.dev)
-//! deep learning framework.
-//!
-//! ## Pipeline
+//! The public surface intentionally centers on the end-to-end pipeline:
 //!
 //! ```text
-//! config.json → load weights → generate codec tokens → decode waveform → save WAV
+//! model dir -> frontend -> talker -> codec tokens -> waveform -> wav file
 //! ```
 //!
-//! ## Quick Start
-//!
 //! ```no_run
-//! use tts_qwen::*;
 //! use burn::backend::Flex;
+//! use tts_qwen::{CustomVoiceRequest, Qwen3TtsPipeline, Qwen3TtsSynthesisOptions};
 //!
 //! type Backend = Flex;
 //! let device = Default::default();
+//! let pipeline = Qwen3TtsPipeline::<Backend>::load(
+//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+//!     &device,
+//! )?;
 //!
-//! // Load models (auto-detects variant from config.json)
-//! let talker = load_qwen3_tts_talker_for_inference::<Backend>(
-//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/talker", &device)?;
-//! let tokenizer = load_qwen3_tts_audio_codec::<Backend>(
-//!     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/audio_codec", &device)?;
-//!
-//! // Run the pipeline...
+//! let request = CustomVoiceRequest::new("你好，欢迎使用语音合成。");
+//! let output = pipeline.synthesize(&request, &Qwen3TtsSynthesisOptions::default())?;
+//! assert!(output.sample_rate > 0);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-//!
-//! ## Module Map
-//!
-//! | Module | Domain | Purpose |
-//! |---|---|---|
-//! | `talker` | Codec generation | TalkerModel + autoregressive loop + code predictor |
-//! | `audio_codec` | Waveform decoding | Decoder + quantizer + upsampling pipeline |
-//! | `paths` | Shared | Model directory discovery |
 
-pub mod audio_codec;
-pub mod frontend;
-pub mod shared;
-pub mod talker;
+mod audio_codec;
+mod frontend;
+mod pipeline;
+mod shared;
+mod talker;
 
-pub use audio_codec::{
-    LoadedQwen3TtsAudioCodec, Qwen3TtsAudioCodecCheckpoint, decode_codec_tokens,
-    decode_codec_tokens_single_step, load_qwen3_tts_audio_codec,
-};
+pub use audio_codec::Qwen3TtsAudioCodecConfig;
 pub use frontend::{
-    CustomVoiceBatch, CustomVoiceRequest, FrontendOutput, Qwen3TtsTextTokenizer,
-    build_custom_voice_prefill_batch, build_custom_voice_prompt,
-    load_custom_voice_generation_config,
+    CustomVoiceBatch, CustomVoiceGenerationConfig, CustomVoiceRequest, FrontendOutput,
+    Qwen3TtsTextTokenizer, build_custom_voice_prompt, load_custom_voice_generation_config,
+};
+pub use pipeline::{
+    Qwen3TtsCodecGenerationOutput, Qwen3TtsPipeline, Qwen3TtsPipelineError,
+    Qwen3TtsPipelineLoadReport, Qwen3TtsSynthesisOptions, Qwen3TtsSynthesisOutput,
 };
 pub use shared::error::{Qwen3TtsInferenceError, Qwen3TtsLoadError};
 pub use shared::io::{LoadReport, save_wav, write_wav};
 pub use shared::paths::{default_workspace_root, find_local_qwen_tts_model_dir};
-pub use talker::{
-    CodePredictorGenerateInput, CodePredictorGenerateOutput, CodePredictorGenerateStepDiagnostic,
-    CodePredictorTeacherForcedInput, CodePredictorTeacherForcedOutput, KeyValueCache,
-    LoadedQwen3TtsTalker, Qwen3TtsCheckpoint, Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig,
-    Qwen3TtsTalkerConfig, SamplingConfig, StoppingRules, TalkerDecodeInput, TalkerDecodeOutput,
-    TalkerForwardInput, TalkerForwardOutput, TalkerGenerateInput, TalkerGenerateOutput,
-    TalkerGenerateStepDiagnostic, forward_code_predictor_teacher_forced,
-    forward_talker_decode_step, forward_talker_prefill, generate_code_predictor_groups,
-    generate_talker_tokens, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference,
-    sample_token,
-};
+pub use shared::runtime::sampling::SamplingConfig;
+pub use talker::Qwen3TtsTalkerConfig;

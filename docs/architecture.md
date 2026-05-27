@@ -12,25 +12,27 @@ text -> frontend -> talker -> code predictor -> audio_codec -> WAV
 
 | Stage | Module | Key API |
 |---|---|---|
-| Text tokenizer / prompt / prefill | `frontend` | `build_custom_voice_prefill_batch()` |
+| Public facade | `tts_qwen` | `Qwen3TtsPipeline::load()`, `synthesize()`, `synthesize_to_wav()` |
+| Text tokenizer / prompt / prefill | `frontend` | `Qwen3TtsPipeline::build_frontend()` |
 | Codec generation | `talker` | `generate_talker_tokens()`, `generate_code_predictor_groups()` |
-| Waveform decoding | `audio_codec` | `load_qwen3_tts_audio_codec()`, `decode_codec_tokens()` |
+| Waveform decoding | `audio_codec` | `decode_codec_tokens()` |
 | Output | `shared::io` | `save_wav()`, `write_wav()` |
 
 ## Module Rules
 
-`frontend`, `talker`, and `audio_codec` are domain modules and depend only on
-`shared`. The standalone `tts_cli` crate composes those domains into the
-single-sample command-line workflow.
+`frontend`, `talker`, and `audio_codec` remain domain modules and depend only on
+`shared`. The public crate surface now centers on `Qwen3TtsPipeline`, and the
+standalone `tts_cli` crate is a thin wrapper around that facade.
 
-The public API intentionally stays as narrow free functions rather than a session
-facade. Old `speech_tokenizer` public paths and migration-only verification
-helpers are not re-exported.
+Low-level model structs, remappers, and orchestration helpers stay internal to
+the crate unless the facade needs to surface them as part of a high-level
+contract.
 
 ## Source Layout
 
 ```text
 tts_qwen/src/
+  pipeline.rs       high-level facade and end-to-end orchestration
   frontend/        text tokenizer, CustomVoice prompt, prefill tensors
   talker/          autoregressive talker and code predictor generation
   audio_codec/     codec token to waveform decoder
@@ -41,7 +43,7 @@ tts_qwen/src/
     runtime/       sampling and KV cache
 tts_cli/
   src/
-    cli.rs          command args, logging, and end-to-end orchestration
+    cli.rs          command args, logging, and facade invocation
     main.rs         thin binary entrypoint
 ```
 
@@ -51,7 +53,6 @@ Integration tests live in `tests/` by domain:
 
 - `frontend.rs`
 - `tokenizer.rs`
-- `prefill.rs`
 - `pipeline.rs`
 
 Default tests are Rust-only. The real model end-to-end WAV smoke is ignored by

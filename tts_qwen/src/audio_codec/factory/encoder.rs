@@ -6,16 +6,16 @@ use crate::audio_codec::model::decoder::Qwen3TtsAudioCodecCheckpoint;
 use crate::audio_codec::model::encoder::{
     Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
     Qwen3TtsAudioCodecEncoderBackbone, Qwen3TtsAudioCodecEncoderBackboneLayer,
-    Qwen3TtsAudioCodecEncoderConvLayer, Qwen3TtsAudioCodecEncoderMlp,
-    Qwen3TtsAudioCodecEncoderQuantizer, Qwen3TtsAudioCodecEncoderResidualVectorQuantizer,
-    Qwen3TtsAudioCodecEncoderResnetLayer, Qwen3TtsAudioCodecEncoderTransformer,
-    Qwen3TtsAudioCodecEncoderTransformerLayer, Qwen3TtsAudioCodecEncoderVectorQuantization,
+    Qwen3TtsAudioCodecEncoderCodebook, Qwen3TtsAudioCodecEncoderConvLayer,
+    Qwen3TtsAudioCodecEncoderMlp, Qwen3TtsAudioCodecEncoderQuantizer,
+    Qwen3TtsAudioCodecEncoderResidualVectorQuantizer, Qwen3TtsAudioCodecEncoderResnetLayer,
+    Qwen3TtsAudioCodecEncoderTransformer, Qwen3TtsAudioCodecEncoderTransformerLayer,
+    Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
-use crate::audio_codec::{AudioCodecLayerScale, Qwen3TtsAudioCodecEncoderCodebook};
 use crate::shared::config::audio_codec::{
     Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
-use crate::shared::nn::activation::Qwen3TtsAudioCodecEmptyModule;
+use crate::shared::nn::activation::{AudioCodecLayerScale, Qwen3TtsAudioCodecEmptyModule};
 use crate::shared::nn::conv::AudioCodecCausalConv1d;
 
 const ENCODER_BACKBONE_LEN: usize = 15;

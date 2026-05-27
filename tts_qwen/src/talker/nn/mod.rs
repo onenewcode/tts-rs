@@ -2,7 +2,6 @@ pub mod rope;
 
 // Shared NN modules — re-exported from shared/nn/
 pub use crate::shared::nn::attention;
-pub use crate::shared::nn::layer;
 pub use crate::shared::nn::mlp;
 pub use crate::shared::nn::rms_norm;
 

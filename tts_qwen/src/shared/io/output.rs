@@ -4,12 +4,19 @@ use std::path::Path;
 use burn::tensor::Tensor;
 use burn::tensor::backend::Backend;
 
+use crate::Qwen3TtsInferenceError;
+
 pub fn save_wav<B: Backend>(
     waveform: &Tensor<B, 3>,
     path: impl AsRef<Path>,
     sample_rate: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut writer = std::io::BufWriter::new(std::fs::File::create(path)?);
+) -> Result<(), Qwen3TtsInferenceError> {
+    let path = path.as_ref();
+    let file = std::fs::File::create(path).map_err(|source| Qwen3TtsInferenceError::Io {
+        context: format!("failed to create {}", path.display()),
+        source,
+    })?;
+    let mut writer = std::io::BufWriter::new(file);
     write_wav(waveform, &mut writer, sample_rate)
 }
 
@@ -17,33 +24,85 @@ pub fn write_wav<B: Backend, W: Write>(
     waveform: &Tensor<B, 3>,
     writer: &mut W,
     sample_rate: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Qwen3TtsInferenceError> {
     let samples: Vec<f32> = waveform
         .clone()
         .flatten::<1>(0, 2)
         .into_data()
         .convert::<f32>()
         .into_vec::<f32>()
-        .map_err(|e| format!("failed to read waveform: {e}"))?;
+        .map_err(|e| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read waveform: {e}"),
+        })?;
 
     let data_size = (samples.len() * 2) as u32;
-    writer.write_all(b"RIFF")?;
-    writer.write_all(&(36 + data_size).to_le_bytes())?;
-    writer.write_all(b"WAVE")?;
-    writer.write_all(b"fmt ")?;
-    writer.write_all(&16u32.to_le_bytes())?;
-    writer.write_all(&1u16.to_le_bytes())?;
-    writer.write_all(&1u16.to_le_bytes())?;
-    writer.write_all(&sample_rate.to_le_bytes())?;
-    writer.write_all(&(sample_rate * 2).to_le_bytes())?;
-    writer.write_all(&2u16.to_le_bytes())?;
-    writer.write_all(&16u16.to_le_bytes())?;
-    writer.write_all(b"data")?;
-    writer.write_all(&data_size.to_le_bytes())?;
+    write_all(writer, b"RIFF", "failed to write wav RIFF header")?;
+    write_all(
+        writer,
+        &(36 + data_size).to_le_bytes(),
+        "failed to write wav chunk size",
+    )?;
+    write_all(writer, b"WAVE", "failed to write wav format")?;
+    write_all(writer, b"fmt ", "failed to write wav fmt header")?;
+    write_all(writer, &16u32.to_le_bytes(), "failed to write wav fmt size")?;
+    write_all(writer, &1u16.to_le_bytes(), "failed to write wav encoding")?;
+    write_all(
+        writer,
+        &1u16.to_le_bytes(),
+        "failed to write wav channel count",
+    )?;
+    write_all(
+        writer,
+        &sample_rate.to_le_bytes(),
+        "failed to write wav sample rate",
+    )?;
+    write_all(
+        writer,
+        &(sample_rate * 2).to_le_bytes(),
+        "failed to write wav byte rate",
+    )?;
+    write_all(
+        writer,
+        &2u16.to_le_bytes(),
+        "failed to write wav block align",
+    )?;
+    write_all(
+        writer,
+        &16u16.to_le_bytes(),
+        "failed to write wav bit depth",
+    )?;
+    write_all(writer, b"data", "failed to write wav data header")?;
+    write_all(
+        writer,
+        &data_size.to_le_bytes(),
+        "failed to write wav data size",
+    )?;
     for &sample in &samples {
         let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-        writer.write_all(&pcm.to_le_bytes())?;
+        write_all(
+            writer,
+            &pcm.to_le_bytes(),
+            "failed to write wav sample data",
+        )?;
     }
-    writer.flush()?;
+    writer
+        .flush()
+        .map_err(|source| Qwen3TtsInferenceError::Io {
+            context: "failed to flush wav output".to_string(),
+            source,
+        })?;
     Ok(())
+}
+
+fn write_all<W: Write>(
+    writer: &mut W,
+    bytes: &[u8],
+    context: &str,
+) -> Result<(), Qwen3TtsInferenceError> {
+    writer
+        .write_all(bytes)
+        .map_err(|source| Qwen3TtsInferenceError::Io {
+            context: context.to_string(),
+            source,
+        })
 }

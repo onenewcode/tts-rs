@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use burn::tensor::backend::Backend;
 use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use crate::Qwen3TtsLoadError;
-use crate::audio_codec::Qwen3TtsAudioCodecCheckpoint;
+use crate::audio_codec::model::decoder::Qwen3TtsAudioCodecCheckpoint;
 use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
 use crate::shared::io::LoadReport;
 use crate::shared::io::audio_codec_remap::audio_codec_load_key_remapper;
@@ -14,8 +14,6 @@ pub struct LoadedQwen3TtsAudioCodec<B: Backend> {
     pub config: Qwen3TtsAudioCodecConfig,
     pub model: Qwen3TtsAudioCodecCheckpoint<B>,
     pub load_report: LoadReport,
-    pub model_dir: PathBuf,
-    pub weights_path: PathBuf,
 }
 
 pub fn load_qwen3_tts_audio_codec<B: Backend>(
@@ -68,7 +66,5 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
         config,
         model,
         load_report,
-        model_dir,
-        weights_path,
     })
 }

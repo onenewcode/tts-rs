@@ -3,8 +3,8 @@
 ## Test Layers
 
 The workspace keeps a compact release-mode Rust-only test surface for the
-current V9 path: unit tests, tokenizer/prefill behavior tests, and an ignored
-real-model pipeline smoke.
+current path: unit tests for the internal domains, integration tests around the
+public facade and frontend contract, and one ignored real-model pipeline smoke.
 
 ## Fast Tests
 
@@ -20,7 +20,8 @@ Useful focused runs:
 cargo test --release -p tts_qwen talker::
 cargo test --release -p tts_qwen audio_codec::
 cargo test --release -p tts_qwen --test tokenizer
-cargo test --release -p tts_qwen --test prefill
+cargo test --release -p tts_qwen --test frontend
+cargo test --release -p tts_qwen --test pipeline
 ```
 
 The model-dependent Rust tests require `QWEN_TTS_MODEL_DIR` or a local
@@ -45,8 +46,9 @@ This writes `0000.wav` in the requested output directory.
 
 ## Real E2E Smoke
 
-The full Rust pipeline smoke loads real weights, generates audio, and validates
-WAV metadata plus non-zero PCM data:
+The ignored Rust E2E smoke goes through `Qwen3TtsPipeline::synthesize_to_wav`,
+loads real weights, generates audio, and validates WAV metadata plus non-zero
+PCM data:
 
 ```bash
 cargo test --release -p tts_qwen --test pipeline -- --ignored --nocapture

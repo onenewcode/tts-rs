@@ -7,7 +7,7 @@ use burn::tensor::{Bool, Tensor};
 
 use super::mlp::native_linear_3d;
 use super::rms_norm::qwen_rms_norm;
-use crate::talker::KeyValueCache;
+use crate::shared::runtime::cache::KeyValueCache;
 
 pub struct AttentionOutput<B: Backend> {
     pub output: Tensor<B, 3>,

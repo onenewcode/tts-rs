@@ -61,14 +61,12 @@ fn apply_remapper(remapper: &burn_store::KeyRemapper, key: &str) -> String {
 
 fn sample_loaded_talker(
     config: &Qwen3TtsConfig,
-) -> crate::talker::LoadedQwen3TtsTalker<TestBackend> {
+) -> crate::shared::io::talker_load::LoadedQwen3TtsTalker<TestBackend> {
     let device = Default::default();
-    crate::talker::LoadedQwen3TtsTalker {
+    crate::shared::io::talker_load::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: config.init_checkpoint::<TestBackend>(&device),
         load_report: crate::LoadReport::default(),
-        model_dir: std::path::PathBuf::new(),
-        weights_path: std::path::PathBuf::new(),
     }
 }
 
@@ -149,12 +147,10 @@ fn forward_talker_prefill_collects_layer_outputs_and_logits() {
     let config = sample_talker_config(12, 4);
     let device = Default::default();
     let checkpoint = config.init_checkpoint::<TestBackend>(&device);
-    let loaded = crate::talker::LoadedQwen3TtsTalker {
+    let loaded = crate::shared::io::talker_load::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
         load_report: crate::LoadReport::default(),
-        model_dir: std::path::PathBuf::new(),
-        weights_path: std::path::PathBuf::new(),
     };
 
     let inputs_embeds = Tensor::<TestBackend, 3>::zeros([1, 3, 16], &device);
@@ -194,12 +190,10 @@ fn forward_talker_prefill_rejects_invalid_position_shape() {
     let config = sample_talker_config(12, 4);
     let device = Default::default();
     let checkpoint = config.init_checkpoint::<TestBackend>(&device);
-    let loaded = crate::talker::LoadedQwen3TtsTalker {
+    let loaded = crate::shared::io::talker_load::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
         load_report: crate::LoadReport::default(),
-        model_dir: std::path::PathBuf::new(),
-        weights_path: std::path::PathBuf::new(),
     };
 
     let position_ids = Tensor::from_data([[[0i32, 1, 2]], [[0i32, 1, 2]], [[0i32, 1, 2]]], &device);
@@ -233,12 +227,10 @@ fn forward_talker_decode_step_appends_one_token_to_prefill_cache() {
     let config = sample_talker_config(12, 4);
     let device = Default::default();
     let checkpoint = config.init_checkpoint::<TestBackend>(&device);
-    let loaded = crate::talker::LoadedQwen3TtsTalker {
+    let loaded = crate::shared::io::talker_load::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
         load_report: crate::LoadReport::default(),
-        model_dir: std::path::PathBuf::new(),
-        weights_path: std::path::PathBuf::new(),
     };
 
     let mut cache = (0..config.talker_config.num_hidden_layers)
@@ -294,12 +286,10 @@ fn forward_talker_decode_step_rejects_multi_token_input() {
     let config = sample_talker_config(12, 4);
     let device = Default::default();
     let checkpoint = config.init_checkpoint::<TestBackend>(&device);
-    let loaded = crate::talker::LoadedQwen3TtsTalker {
+    let loaded = crate::shared::io::talker_load::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
         load_report: crate::LoadReport::default(),
-        model_dir: std::path::PathBuf::new(),
-        weights_path: std::path::PathBuf::new(),
     };
 
     let mut cache = (0..config.talker_config.num_hidden_layers)
@@ -504,12 +494,10 @@ fn forward_code_predictor_teacher_forced_collects_expected_outputs() {
     let config = sample_talker_config(12, 4);
     let device = Default::default();
     let checkpoint = config.init_checkpoint::<TestBackend>(&device);
-    let loaded = crate::talker::LoadedQwen3TtsTalker {
+    let loaded = crate::shared::io::talker_load::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
         load_report: crate::LoadReport::default(),
-        model_dir: std::path::PathBuf::new(),
-        weights_path: std::path::PathBuf::new(),
     };
 
     let mut cache = (0..config.talker_config.code_predictor_config.num_hidden_layers)

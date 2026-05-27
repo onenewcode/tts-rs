@@ -36,4 +36,17 @@ pub enum Qwen3TtsInferenceError {
     UnsupportedActivation { name: String },
     #[error("unsupported rope configuration: {message}")]
     UnsupportedRope { message: String },
+    #[error("tokenizer error: {source}")]
+    Tokenizer {
+        #[from]
+        source: tokenizers::Error,
+    },
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to read tensor data: {message}")]
+    TensorRead { message: String },
 }

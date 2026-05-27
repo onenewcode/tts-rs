@@ -4,6 +4,7 @@ const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(
     r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.weight$",
     "${1}.gamma",
 )];
+#[cfg(test)]
 const SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS: [(&str, &str); 1] = [(
     r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.gamma$",
     "${1}.weight",
@@ -14,6 +15,7 @@ pub fn audio_codec_load_key_remapper() -> KeyRemapper {
         .expect("static regex remapping must compile")
 }
 
+#[cfg(test)]
 pub fn audio_codec_export_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS.to_vec())
         .expect("static regex remapping must compile")

@@ -6,8 +6,8 @@ use burn::tensor::backend::Backend;
 
 use crate::audio_codec::model::decoder::{
     Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder, Qwen3TtsAudioCodecDecoderAttention,
-    Qwen3TtsAudioCodecDecoderMlp, Qwen3TtsAudioCodecDecoderQuantizer,
-    Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
+    Qwen3TtsAudioCodecDecoderCodebook, Qwen3TtsAudioCodecDecoderMlp,
+    Qwen3TtsAudioCodecDecoderQuantizer, Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
     Qwen3TtsAudioCodecDecoderResidualVectorQuantizer, Qwen3TtsAudioCodecDecoderTransformer,
     Qwen3TtsAudioCodecDecoderTransformerLayer, Qwen3TtsAudioCodecDecoderVectorQuantization,
 };
@@ -15,9 +15,8 @@ use crate::audio_codec::model::wave_decoder::{
     Qwen3TtsAudioCodecWaveDecoderConvEntry, Qwen3TtsAudioCodecWaveDecoderEntry,
     Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
-use crate::audio_codec::{AudioCodecLayerScale, Qwen3TtsAudioCodecDecoderCodebook};
 use crate::shared::config::audio_codec::Qwen3TtsAudioCodecDecoderConfig;
-use crate::shared::nn::activation::AudioCodecSnakeBeta;
+use crate::shared::nn::activation::{AudioCodecLayerScale, AudioCodecSnakeBeta};
 use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 
 impl Qwen3TtsAudioCodecDecoderConfig {

@@ -196,7 +196,6 @@ mod tests {
         let out = rope.forward(x, pos);
         let data = out.into_data();
 
-
         // We check the output shape and a few key values to ensure interleaving logic is intact.
         assert_eq!(data.shape.as_slice(), &[1, 1, 1, 4]);
 
