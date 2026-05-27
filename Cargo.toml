@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "tts_rs_qwen_burn",
+    "tts_cli",
+    "tts_qwen",
 ]
 
 resolver = "2"
@@ -10,5 +11,6 @@ burn = "0.21.0"
 burn-store = "0.21.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-sha2 = "0.10.9"
 thiserror = "2.0.18"
+clap = { version = "4.5.51", features = ["derive"] }
+tokenizers = "0.23.1"

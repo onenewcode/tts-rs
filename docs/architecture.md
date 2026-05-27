@@ -1,7 +1,8 @@
 # TTS Inference Engine Architecture
 
-`tts_rs_qwen_burn` is a Rust inference engine for the local Qwen3-TTS 12Hz
-0.6B CustomVoice path.
+`tts_qwen` is a Rust inference engine for the local Qwen3-TTS 12Hz
+0.6B CustomVoice path. `tts_cli` is the workspace CLI wrapper around that
+library.
 
 ## Pipeline
 
@@ -19,8 +20,8 @@ text -> frontend -> talker -> code predictor -> audio_codec -> WAV
 ## Module Rules
 
 `frontend`, `talker`, and `audio_codec` are domain modules and depend only on
-`shared`. `pipeline` or binaries are responsible for composing those domains into
-an end-to-end workflow.
+`shared`. The standalone `tts_cli` crate composes those domains into the
+single-sample command-line workflow.
 
 The public API intentionally stays as narrow free functions rather than a session
 facade. Old `speech_tokenizer` public paths are not re-exported.
@@ -28,7 +29,7 @@ facade. Old `speech_tokenizer` public paths are not re-exported.
 ## Source Layout
 
 ```
-tts_rs_qwen_burn/src/
+tts_qwen/src/
   frontend/        text tokenizer, CustomVoice prompt, prefill tensors
   talker/          autoregressive talker and code predictor generation
   audio_codec/     codec token to waveform decoder
@@ -38,8 +39,10 @@ tts_rs_qwen_burn/src/
     nn/            shared layers and tensor helpers
     runtime/       sampling and KV cache
     verify/        checkpoint verification
-  bin/
-    qwen3-tts.rs
+tts_cli/
+  src/
+    cli.rs          command args and end-to-end orchestration
+    main.rs         thin binary entrypoint
 ```
 
 ## Test Layout
@@ -49,5 +52,7 @@ Integration tests live in `tests/` by domain:
 - `frontend.rs`
 - `alignment_tokenizer.rs`
 - `alignment_prefill.rs`
-- `alignment_e2e.rs` (`#[ignore]` for full checkpoint comparison)
-- legacy talker/audio codec alignment and roundtrip tests while V9 converges
+- `pipeline.rs`
+
+Python is retained only for tokenizer and prefill oracle generation in the
+default release test path.

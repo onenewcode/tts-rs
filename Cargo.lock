@@ -6889,15 +6889,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tts_rs_qwen_burn"
+name = "tts_cli"
+version = "0.1.0"
+dependencies = [
+ "burn",
+ "clap",
+ "tts_qwen",
+]
+
+[[package]]
+name = "tts_qwen"
 version = "0.1.0"
 dependencies = [
  "burn",
  "burn-store",
- "clap",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokenizers 0.23.1",
 ]

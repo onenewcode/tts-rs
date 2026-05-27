@@ -1,0 +1,13 @@
+[package]
+name = "tts_cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+burn = { workspace = true, features = ["std", "flex"] }
+clap = { workspace = true }
+tts_qwen = { path = "../tts_qwen" }
+
+[[bin]]
+name = "tts_cli"
+path = "src/main.rs"
