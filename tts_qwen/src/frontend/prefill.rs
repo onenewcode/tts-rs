@@ -20,6 +20,11 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
             message: "custom voice batch must contain at least one request".to_string(),
         });
     }
+    tracing::info!(
+        batch_size = batch.requests.len(),
+        hidden_size = talker_config.hidden_size,
+        "building custom voice frontend prefill"
+    );
 
     let mut text_token_ids = Vec::with_capacity(batch.requests.len());
     let mut codec_prefix_ids = Vec::with_capacity(batch.requests.len());
@@ -47,6 +52,13 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         }
         let controls = resolve_custom_voice_control_ids(tokenizer.model_dir(), request)?;
         let prefix_ids = controls.codec_prefix_ids.clone();
+        tracing::debug!(
+            text_token_count = text_ids.len(),
+            codec_prefix_count = prefix_ids.len(),
+            language = request.language.as_deref().unwrap_or("Auto"),
+            speaker = request.speaker.as_deref().unwrap_or(""),
+            "resolved custom voice sample controls"
+        );
         let sample = build_non_streaming_custom_voice_sample(
             talker,
             &text_ids,
@@ -81,15 +93,15 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         } else {
             padded_embeddings.push(sample);
         }
-        attention_data.extend(std::iter::repeat(0).take(pad_len));
-        attention_data.extend(std::iter::repeat(1).take(seq_len));
+        attention_data.extend(std::iter::repeat_n(0, pad_len));
+        attention_data.extend(std::iter::repeat_n(1, seq_len));
     }
 
     for axis in 0..3 {
         let _ = axis;
         for seq_len in seq_lens.iter().copied() {
             let pad_len = max_len - seq_len;
-            position_data.extend(std::iter::repeat(0).take(pad_len));
+            position_data.extend(std::iter::repeat_n(0, pad_len));
             position_data.extend((0..seq_len).map(|pos| pos as i32));
         }
     }
@@ -118,6 +130,13 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         }
     }
     let trailing_text_hidden = Tensor::cat(padded_trailing_hiddens, 0).cast(DType::BF16);
+    tracing::info!(
+        batch_size,
+        max_len,
+        max_trailing_len,
+        dtype = ?inputs_embeds.dtype(),
+        "built custom voice frontend prefill"
+    );
 
     Ok(FrontendOutput {
         text_token_ids,
@@ -181,9 +200,7 @@ fn build_non_streaming_custom_voice_sample<B: Backend>(
     let text_with_codec_pad = body_embeds
         + embed_codec_ids(
             talker,
-            &std::iter::repeat(controls.codec_pad_id)
-                .take(body_len)
-                .collect::<Vec<_>>(),
+            &std::iter::repeat_n(controls.codec_pad_id, body_len).collect::<Vec<_>>(),
             device,
         );
     let eos_with_codec_pad =

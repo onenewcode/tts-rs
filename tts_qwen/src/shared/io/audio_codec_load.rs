@@ -4,10 +4,9 @@ use burn::tensor::backend::Backend;
 use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use crate::Qwen3TtsLoadError;
-use crate::shared::manifest::LoadReport;
-
 use crate::audio_codec::Qwen3TtsAudioCodecCheckpoint;
 use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
+use crate::shared::io::LoadReport;
 use crate::shared::io::audio_codec_remap::audio_codec_load_key_remapper;
 
 #[derive(Debug)]
@@ -31,6 +30,11 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
     } else {
         speech_tokenizer_weights
     };
+    tracing::info!(
+        model_dir = %model_dir.display(),
+        weights_path = %weights_path.display(),
+        "loading qwen3 tts audio codec"
+    );
     let config = Qwen3TtsAudioCodecConfig::load_from_model_dir(&model_dir)?;
     let mut model = config.init_checkpoint(device);
 
@@ -52,6 +56,13 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
         missing: apply_result.missing.len(),
         unused: apply_result.unused.len(),
     };
+    tracing::info!(
+        applied = load_report.applied,
+        skipped = load_report.skipped,
+        missing = load_report.missing,
+        unused = load_report.unused,
+        "loaded qwen3 tts audio codec weights"
+    );
 
     Ok(LoadedQwen3TtsAudioCodec {
         config,

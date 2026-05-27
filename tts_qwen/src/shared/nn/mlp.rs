@@ -48,7 +48,7 @@ where
         }
     }
 }
-
+// TODO 考虑使用burn的模块
 #[derive(Module, Debug)]
 pub struct Qwen3TtsTalkerResizeMlp<B: Backend> {
     pub linear_fc1: Linear<B>,

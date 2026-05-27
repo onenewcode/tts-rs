@@ -66,7 +66,7 @@ fn sample_loaded_talker(
     crate::talker::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: config.init_checkpoint::<TestBackend>(&device),
-        load_report: crate::manifest::LoadReport::default(),
+        load_report: crate::LoadReport::default(),
         model_dir: std::path::PathBuf::new(),
         weights_path: std::path::PathBuf::new(),
     }
@@ -152,7 +152,7 @@ fn forward_talker_prefill_collects_layer_outputs_and_logits() {
     let loaded = crate::talker::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
-        load_report: crate::manifest::LoadReport::default(),
+        load_report: crate::LoadReport::default(),
         model_dir: std::path::PathBuf::new(),
         weights_path: std::path::PathBuf::new(),
     };
@@ -197,7 +197,7 @@ fn forward_talker_prefill_rejects_invalid_position_shape() {
     let loaded = crate::talker::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
-        load_report: crate::manifest::LoadReport::default(),
+        load_report: crate::LoadReport::default(),
         model_dir: std::path::PathBuf::new(),
         weights_path: std::path::PathBuf::new(),
     };
@@ -236,7 +236,7 @@ fn forward_talker_decode_step_appends_one_token_to_prefill_cache() {
     let loaded = crate::talker::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
-        load_report: crate::manifest::LoadReport::default(),
+        load_report: crate::LoadReport::default(),
         model_dir: std::path::PathBuf::new(),
         weights_path: std::path::PathBuf::new(),
     };
@@ -297,7 +297,7 @@ fn forward_talker_decode_step_rejects_multi_token_input() {
     let loaded = crate::talker::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
-        load_report: crate::manifest::LoadReport::default(),
+        load_report: crate::LoadReport::default(),
         model_dir: std::path::PathBuf::new(),
         weights_path: std::path::PathBuf::new(),
     };
@@ -507,7 +507,7 @@ fn forward_code_predictor_teacher_forced_collects_expected_outputs() {
     let loaded = crate::talker::LoadedQwen3TtsTalker {
         config: config.clone(),
         model: checkpoint,
-        load_report: crate::manifest::LoadReport::default(),
+        load_report: crate::LoadReport::default(),
         model_dir: std::path::PathBuf::new(),
         weights_path: std::path::PathBuf::new(),
     };

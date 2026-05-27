@@ -6894,6 +6894,8 @@ version = "0.1.0"
 dependencies = [
  "burn",
  "clap",
+ "tracing",
+ "tracing-subscriber",
  "tts_qwen",
 ]
 
@@ -6907,6 +6909,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokenizers 0.23.1",
+ "tracing",
 ]
 
 [[package]]

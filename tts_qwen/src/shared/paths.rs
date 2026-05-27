@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{Qwen3TtsLoadError, Qwen3TtsVerifyError};
+use crate::Qwen3TtsLoadError;
 
 pub fn default_workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -31,17 +31,6 @@ pub fn find_local_qwen_tts_model_dir(
     }
 
     Err(Qwen3TtsLoadError::ModelDirNotFound { root })
-}
-
-pub fn ensure_parent_dir(path: impl AsRef<Path>) -> Result<(), Qwen3TtsVerifyError> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| Qwen3TtsVerifyError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -80,16 +69,6 @@ mod tests {
             default_workspace_root(),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
         );
-    }
-
-    #[test]
-    fn ensure_parent_dir_creates_nested_directories() {
-        let temp_dir = TempDirGuard::new("ensure-parent-dir");
-        let target = temp_dir.path.join("a/b/c/report.json");
-
-        ensure_parent_dir(&target).expect("parent directories should be created");
-
-        assert!(temp_dir.path.join("a/b/c").is_dir());
     }
 
     #[test]

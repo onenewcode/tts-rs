@@ -196,11 +196,6 @@ mod tests {
         let out = rope.forward(x, pos);
         let data = out.into_data();
 
-        // Expected values verified against Qwen3 Python reference:
-        // For head_dim=4, half_dim=2. inv_freq = [1.0, 0.01]
-        // Modality 0 (pos 1): cos=[0.54, 0.99], sin=[0.84, 0.01] -> Interleaved section 0 (dim index 0)
-        // Modality 1 (pos 2): cos=[-0.41, 0.99], sin=[0.90, 0.02] -> Interleaved section 1 (dim index 1)
-        // Note: Qwen3 interleaves by modality index.
 
         // We check the output shape and a few key values to ensure interleaving logic is intact.
         assert_eq!(data.shape.as_slice(), &[1, 1, 1, 4]);

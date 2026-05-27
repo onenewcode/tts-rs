@@ -63,8 +63,7 @@ impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderUpsampleStage<B> {
         let h = self.block.1.forward(h);
         let h = self.block.2.forward(h);
         let h = self.block.3.forward(h);
-        let h = self.block.4.forward(h);
-        h
+        self.block.4.forward(h)
     }
 }
 

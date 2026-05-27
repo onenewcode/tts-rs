@@ -6,7 +6,7 @@ library.
 
 ## Pipeline
 
-```
+```text
 text -> frontend -> talker -> code predictor -> audio_codec -> WAV
 ```
 
@@ -24,11 +24,12 @@ text -> frontend -> talker -> code predictor -> audio_codec -> WAV
 single-sample command-line workflow.
 
 The public API intentionally stays as narrow free functions rather than a session
-facade. Old `speech_tokenizer` public paths are not re-exported.
+facade. Old `speech_tokenizer` public paths and migration-only verification
+helpers are not re-exported.
 
 ## Source Layout
 
-```
+```text
 tts_qwen/src/
   frontend/        text tokenizer, CustomVoice prompt, prefill tensors
   talker/          autoregressive talker and code predictor generation
@@ -38,10 +39,9 @@ tts_qwen/src/
     io/            checkpoint loading and WAV output
     nn/            shared layers and tensor helpers
     runtime/       sampling and KV cache
-    verify/        checkpoint verification
 tts_cli/
   src/
-    cli.rs          command args and end-to-end orchestration
+    cli.rs          command args, logging, and end-to-end orchestration
     main.rs         thin binary entrypoint
 ```
 
@@ -50,9 +50,9 @@ tts_cli/
 Integration tests live in `tests/` by domain:
 
 - `frontend.rs`
-- `alignment_tokenizer.rs`
-- `alignment_prefill.rs`
+- `tokenizer.rs`
+- `prefill.rs`
 - `pipeline.rs`
 
-Python is retained only for tokenizer and prefill oracle generation in the
-default release test path.
+Default tests are Rust-only. The real model end-to-end WAV smoke is ignored by
+default and can be run explicitly with `cargo test --release -p tts_qwen --test pipeline -- --ignored --nocapture`.

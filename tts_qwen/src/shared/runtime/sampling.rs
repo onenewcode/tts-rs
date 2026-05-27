@@ -92,15 +92,13 @@ pub fn sample_token<B: Backend>(
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
 
     // 3. Top-k
-    if let Some(k) = sampling.top_k {
-        if k > 0 && k < vocab_size {
-            let kth_value = logits_2d
-                .clone()
-                .topk(k, 1)
-                .slice([0..batch_size, k - 1..k]);
-            let mask = logits_2d.clone().lower(kth_value);
-            logits_2d = logits_2d.mask_fill(mask, f32::NEG_INFINITY);
-        }
+    if let Some(k) = sampling.top_k.filter(|k| *k > 0 && *k < vocab_size) {
+        let kth_value = logits_2d
+            .clone()
+            .topk(k, 1)
+            .slice([0..batch_size, k - 1..k]);
+        let mask = logits_2d.clone().lower(kth_value);
+        logits_2d = logits_2d.mask_fill(mask, f32::NEG_INFINITY);
     }
 
     // 4. Top-p

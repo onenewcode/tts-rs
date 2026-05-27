@@ -38,7 +38,6 @@ pub use crate::shared::nn::activation::{
     AudioCodecLayerScale, AudioCodecSnakeBeta, Qwen3TtsAudioCodecEmptyModule,
 };
 pub use crate::shared::nn::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
-pub use crate::shared::verify::audio_codec::verify_qwen3_tts_audio_codec_weights;
 pub use inference::{decode_codec_tokens, decode_codec_tokens_single_step};
 pub use model::decoder::{
     Qwen3TtsAudioCodecCheckpoint, Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder,

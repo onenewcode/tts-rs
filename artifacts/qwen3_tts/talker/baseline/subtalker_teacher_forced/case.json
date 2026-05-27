@@ -1,6 +1,0 @@
-{
-  "case_name": "subtalker_teacher_forced",
-  "kind": "subtalker_teacher_forced",
-  "atol": 0.001,
-  "rtol": 0.001
-}

@@ -113,6 +113,10 @@ impl<B: Backend> AutoregressiveCache<B> {
         self.cur_seq_len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.cur_seq_len == 0
+    }
+
     /// Returns the currently valid cached slice.
     pub fn snapshot(&self) -> Option<Tensor<B, 4>> {
         let cache = self.cache.as_ref()?;
@@ -160,6 +164,10 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn len(&self) -> usize {
         self.key.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.key.is_empty()
     }
 
     pub fn key_snapshot(&self) -> Option<Tensor<B, 4>> {

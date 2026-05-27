@@ -36,6 +36,7 @@ struct TalkerPromptConfig {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum DialectFlag {
+    #[allow(dead_code)]
     Bool(bool),
     Dialect(String),
 }
@@ -101,24 +102,22 @@ pub(crate) fn resolve_custom_voice_control_ids(
         })?)
     };
 
-    if matches!(language.as_str(), "chinese" | "auto") {
-        if let Some(speaker_name) = &speaker {
-            if let Some(dialect_flag) = talker.spk_is_dialect.get(speaker_name) {
-                match dialect_flag {
-                    DialectFlag::Dialect(dialect) => {
-                        language_id =
-                            Some(*talker.codec_language_id.get(dialect).ok_or_else(|| {
-                                Qwen3TtsInferenceError::InvalidInput {
-                                    message: format!(
-                                        "speaker {speaker_name} references unsupported dialect {dialect}"
-                                    ),
-                                }
-                            })?);
-                    }
-                    DialectFlag::Bool(_is_dialect) => {}
-                }
+    let dialect_speaker = matches!(language.as_str(), "chinese" | "auto")
+        .then(|| {
+            speaker.as_ref().and_then(|speaker_name| {
+                talker
+                    .spk_is_dialect
+                    .get(speaker_name)
+                    .map(|dialect_flag| (speaker_name, dialect_flag))
+            })
+        })
+        .flatten();
+    if let Some((speaker_name, DialectFlag::Dialect(dialect))) = dialect_speaker {
+        language_id = Some(*talker.codec_language_id.get(dialect).ok_or_else(|| {
+            Qwen3TtsInferenceError::InvalidInput {
+                message: format!("speaker {speaker_name} references unsupported dialect {dialect}"),
             }
-        }
+        })?);
     }
 
     let mut codec_prefix_ids = if let Some(language_id) = language_id {
@@ -136,14 +135,15 @@ pub(crate) fn resolve_custom_voice_control_ids(
         ]
     };
 
-    if let Some(speaker_name) = &speaker {
-        if !speaker_name.is_empty() {
-            codec_prefix_ids.push(*talker.spk_id.get(speaker_name).ok_or_else(|| {
-                Qwen3TtsInferenceError::InvalidInput {
-                    message: format!("unsupported speaker: {speaker_name}"),
-                }
-            })?);
-        }
+    if let Some(speaker_name) = speaker
+        .as_ref()
+        .filter(|speaker_name| !speaker_name.is_empty())
+    {
+        codec_prefix_ids.push(*talker.spk_id.get(speaker_name).ok_or_else(|| {
+            Qwen3TtsInferenceError::InvalidInput {
+                message: format!("unsupported speaker: {speaker_name}"),
+            }
+        })?);
     }
     codec_prefix_ids.extend([talker.codec_pad_id, talker.codec_bos_id]);
 

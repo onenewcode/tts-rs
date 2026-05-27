@@ -141,7 +141,16 @@ where
     }
 
     let device = input.prefill_inputs_embeds.device();
-    let [batch_size, _prefill_len, _hidden_size] = input.prefill_inputs_embeds.dims();
+    let [batch_size, prefill_len, hidden_size] = input.prefill_inputs_embeds.dims();
+    tracing::info!(
+        batch_size,
+        prefill_len,
+        hidden_size,
+        max_new_tokens,
+        eos_token_id = ?input.stopping.eos_token_id,
+        suppress_token_count = input.suppress_token_ids.len(),
+        "starting talker token generation"
+    );
     let collect_step_diagnostics = input.collect_step_diagnostics;
     let trailing_text_hidden = input.trailing_text_hidden;
     let tts_pad_embed = input.tts_pad_embed;
@@ -270,6 +279,11 @@ where
     }
 
     let generated_token_ids = Tensor::cat(generated_tokens, 1);
+    tracing::info!(
+        generated_tokens = generated_token_ids.dims()[1],
+        hidden_steps = step_hidden_states.len(),
+        "finished talker token generation"
+    );
 
     Ok(TalkerGenerateOutput {
         generated_token_ids,
@@ -350,6 +364,12 @@ where
     }
 
     let [batch_size, hidden_size] = input.talker_hidden_state.dims();
+    tracing::debug!(
+        batch_size,
+        hidden_size,
+        code_groups = config.num_code_groups,
+        "generating code predictor groups"
+    );
     let base_token_dims = input.base_codec_token_id.dims();
     if base_token_dims != [batch_size, 1] {
         return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -472,6 +492,11 @@ where
     debug_assert_eq!(
         predictor_config.num_code_groups, config.num_code_groups,
         "talker and code predictor code group counts should match"
+    );
+    tracing::debug!(
+        cache_len = final_cache_len,
+        codec_shape = ?codec_ids.dims(),
+        "generated code predictor groups"
     );
 
     Ok(CodePredictorGenerateOutput {

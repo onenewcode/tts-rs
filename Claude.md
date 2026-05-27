@@ -1,5 +1,8 @@
 # 概述
 
-## py脚本运行
+## 常用验证
 
-python ./py/*.py
+```bash
+cargo test --release --workspace
+cargo test --release -p tts_qwen --test pipeline -- --ignored --nocapture
+```

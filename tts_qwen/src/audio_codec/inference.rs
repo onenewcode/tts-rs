@@ -19,6 +19,11 @@ pub fn decode_codec_tokens<B: Backend>(
     config: &Qwen3TtsAudioCodecDecoderConfig,
 ) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
     validate_codec_input_3d(&codec_ids, config)?;
+    tracing::info!(
+        codec_shape = ?codec_ids.dims(),
+        num_quantizers = config.num_quantizers,
+        "decoding codec tokens"
+    );
 
     let rope_cfg = RotaryEncodingConfig::new(
         config.max_position_embeddings,
@@ -36,6 +41,7 @@ pub fn decode_codec_tokens<B: Backend>(
         &rope,
         false,
     );
+    tracing::info!(waveform_shape = ?waveform.dims(), "decoded codec tokens");
 
     Ok(waveform)
 }

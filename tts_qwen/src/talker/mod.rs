@@ -36,7 +36,6 @@ pub use crate::shared::io::talker_load::{
     LoadedQwen3TtsTalker, load_qwen3_tts_talker, load_qwen3_tts_talker_for_inference,
 };
 pub use crate::shared::runtime::cache::KeyValueCache;
-pub use crate::shared::verify::talker::verify_qwen3_tts_talker_weights;
 
 pub use crate::shared::runtime::sampling::{SamplingConfig, StoppingRules};
 pub use inference::{

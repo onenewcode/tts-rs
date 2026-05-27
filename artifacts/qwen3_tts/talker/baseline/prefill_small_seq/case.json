@@ -1,6 +1,0 @@
-{
-  "case_name": "prefill_small_seq",
-  "kind": "prefill_small_seq",
-  "atol": 0.001,
-  "rtol": 0.001
-}

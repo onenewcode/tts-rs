@@ -2,16 +2,16 @@
 
 ## Test Layers
 
-The workspace keeps a compact release-mode test surface for the current V9
-path: Rust unit tests plus Python tokenizer/prefill oracles.
+The workspace keeps a compact release-mode Rust-only test surface for the
+current V9 path: unit tests, tokenizer/prefill behavior tests, and an ignored
+real-model pipeline smoke.
 
 ## Fast Tests
 
 Run the default suite:
 
 ```bash
-cargo test --release -p tts_qwen
-cargo test --release -p tts_cli
+cargo test --release --workspace
 ```
 
 Useful focused runs:
@@ -19,10 +19,12 @@ Useful focused runs:
 ```bash
 cargo test --release -p tts_qwen talker::
 cargo test --release -p tts_qwen audio_codec::
+cargo test --release -p tts_qwen --test tokenizer
+cargo test --release -p tts_qwen --test prefill
 ```
 
-The tokenizer/prefill integration tests require the local Qwen model directory
-and dynamically invoke the retained Python oracle scripts.
+The model-dependent Rust tests require `QWEN_TTS_MODEL_DIR` or a local
+`Qwen/*` model directory under the workspace root.
 
 ## CLI Smoke
 
@@ -35,16 +37,17 @@ cargo run --release -p tts_cli --bin tts_cli -- \
   --language Chinese \
   --speaker Vivian \
   --output-dir . \
-  --max-new-tokens 64
+  --max-new-tokens 64 \
+  --log-level info
 ```
 
 This writes `0000.wav` in the requested output directory.
 
-## V9 Alignment Tests
+## Real E2E Smoke
 
-The retained Python alignment checks are:
+The full Rust pipeline smoke loads real weights, generates audio, and validates
+WAV metadata plus non-zero PCM data:
 
 ```bash
-cargo test --release -p tts_qwen --test alignment_prefill -- --nocapture
-cargo test --release -p tts_qwen --test alignment_tokenizer -- --nocapture
+cargo test --release -p tts_qwen --test pipeline -- --ignored --nocapture
 ```

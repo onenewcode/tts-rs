@@ -4,9 +4,8 @@ use burn::tensor::backend::Backend;
 use burn_store::{ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use crate::Qwen3TtsLoadError;
-use crate::shared::manifest::LoadReport;
-
 use crate::shared::config::talker::Qwen3TtsConfig;
+use crate::shared::io::LoadReport;
 use crate::shared::io::talker_remap::talker_load_key_remapper;
 use crate::talker::Qwen3TtsCheckpoint;
 
@@ -40,6 +39,11 @@ fn load_qwen3_tts_talker_with_adapter<B: Backend, A: ModuleAdapter + 'static>(
 ) -> Result<LoadedQwen3TtsTalker<B>, Qwen3TtsLoadError> {
     let model_dir = model_dir.as_ref().to_path_buf();
     let weights_path = model_dir.join("model.safetensors");
+    tracing::info!(
+        model_dir = %model_dir.display(),
+        weights_path = %weights_path.display(),
+        "loading qwen3 tts talker"
+    );
     let config = Qwen3TtsConfig::load_from_model_dir(&model_dir)?;
     let mut model = config.init_checkpoint(device);
 
@@ -67,6 +71,13 @@ fn load_qwen3_tts_talker_with_adapter<B: Backend, A: ModuleAdapter + 'static>(
         missing: apply_result.missing.len(),
         unused: apply_result.unused.len(),
     };
+    tracing::info!(
+        applied = load_report.applied,
+        skipped = load_report.skipped,
+        missing = load_report.missing,
+        unused = load_report.unused,
+        "loaded qwen3 tts talker weights"
+    );
 
     Ok(LoadedQwen3TtsTalker {
         config,

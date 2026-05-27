@@ -1,9 +1,0 @@
-{
-  "exact_match": true,
-  "tensor_count": 402,
-  "source_tensor_count": 402,
-  "export_tensor_count": 402,
-  "missing_in_export": [],
-  "missing_in_source": [],
-  "mismatches": []
-}

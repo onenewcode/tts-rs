@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use burn::backend::Flex;
 use burn::tensor::{Int, Tensor};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+use tracing::{debug, info};
 use tts_qwen::{
     CodePredictorGenerateInput, CustomVoiceBatch, CustomVoiceRequest, KeyValueCache,
     Qwen3TtsTextTokenizer, SamplingConfig, StoppingRules, TalkerGenerateInput,
@@ -28,6 +30,29 @@ pub struct Args {
     pub output_dir: PathBuf,
     #[arg(long, default_value_t = 256)]
     pub max_new_tokens: usize,
+    #[arg(long, value_enum, default_value_t = LogLevel::Info)]
+    pub log_level: LogLevel,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    fn as_tracing_level(self) -> tracing::Level {
+        match self {
+            Self::Error => tracing::Level::ERROR,
+            Self::Warn => tracing::Level::WARN,
+            Self::Info => tracing::Level::INFO,
+            Self::Debug => tracing::Level::DEBUG,
+            Self::Trace => tracing::Level::TRACE,
+        }
+    }
 }
 
 pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,17 +60,44 @@ pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    init_logging(args.log_level);
+    let total_started = Instant::now();
     std::fs::create_dir_all(&args.output_dir)?;
+    info!(
+        model_dir = %args.model_dir.display(),
+        output_dir = %args.output_dir.display(),
+        max_new_tokens = args.max_new_tokens,
+        language = args.language.as_deref().unwrap_or("Auto"),
+        speaker = args.speaker.as_deref().unwrap_or(""),
+        "starting tts generation"
+    );
 
     let device = Default::default();
+    let started = Instant::now();
     let talker = load_qwen3_tts_talker_for_inference::<Backend>(&args.model_dir, &device)
         .map_err(|e| format!("failed to load talker: {e}"))?;
+    info!(elapsed_ms = started.elapsed().as_millis(), "loaded talker");
+    let started = Instant::now();
     let audio_codec = load_qwen3_tts_audio_codec::<Backend>(&args.model_dir, &device)
         .map_err(|e| format!("failed to load audio codec: {e}"))?;
+    info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "loaded audio codec"
+    );
+    let started = Instant::now();
     let tokenizer = Qwen3TtsTextTokenizer::from_model_dir(&args.model_dir)
         .map_err(|e| format!("failed to load text tokenizer: {e}"))?;
+    info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "loaded text tokenizer"
+    );
     let generation_config = load_custom_voice_generation_config(&args.model_dir)
         .map_err(|e| format!("failed to load generation config: {e}"))?;
+    debug!(
+        codec_eos_token_id = generation_config.codec_eos_token_id,
+        suppress_token_count = generation_config.suppress_token_ids.len(),
+        "loaded generation config"
+    );
 
     let request = CustomVoiceRequest {
         text: args.text.clone(),
@@ -60,6 +112,11 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         &device,
     )
     .map_err(|e| format!("failed to build frontend prefill: {e}"))?;
+    info!(
+        inputs_embeds_shape = ?frontend.inputs_embeds.dims(),
+        attention_mask_shape = ?frontend.attention_mask.dims(),
+        "built frontend prefill"
+    );
 
     let cfg = &talker.config.talker_config;
     let mut talker_cache = (0..cfg.num_hidden_layers)
@@ -85,6 +142,11 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         &mut talker_cache,
     )
     .map_err(|e| format!("talker generation failed: {e}"))?;
+    info!(
+        generated_shape = ?generated.generated_token_ids.dims(),
+        hidden_steps = generated.step_hidden_states.len(),
+        "generated talker tokens"
+    );
 
     let generated_token_ids = generated
         .generated_token_ids
@@ -98,7 +160,9 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     if time_steps == 0 {
         return Err("talker emitted EOS before any audio codec token".into());
     }
+    info!(time_steps, "selected audio codec time steps");
 
+    let started = Instant::now();
     let mut codec_steps = Vec::with_capacity(time_steps);
     for t in 0..time_steps {
         let base_token = generated
@@ -130,14 +194,26 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("code predictor generation failed at step {t}: {e}"))?;
         codec_steps.push(groups.codec_ids.reshape([1, cfg.num_code_groups, 1]));
     }
+    info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        time_steps,
+        code_groups = cfg.num_code_groups,
+        "generated code predictor groups"
+    );
 
     let codec_tokens: Tensor<Backend, 3, Int> = Tensor::cat(codec_steps, 2);
+    let started = Instant::now();
     let waveform = decode_codec_tokens::<Backend>(
         &audio_codec,
         codec_tokens,
         &audio_codec.config.decoder_config,
     )
     .map_err(|e| format!("audio codec decoding failed: {e}"))?;
+    info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        waveform_shape = ?waveform.dims(),
+        "decoded waveform"
+    );
 
     let wav_path = args.output_dir.join("0000.wav");
     save_wav(
@@ -145,7 +221,20 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         &wav_path,
         audio_codec.config.output_sample_rate as u32,
     )?;
+    info!(
+        wav_path = %wav_path.display(),
+        sample_rate = audio_codec.config.output_sample_rate,
+        total_elapsed_ms = total_started.elapsed().as_millis(),
+        "saved wav"
+    );
     Ok(())
+}
+
+fn init_logging(level: LogLevel) {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(level.as_tracing_level())
+        .with_target(false)
+        .try_init();
 }
 
 fn generated_audio_steps(token_ids: &[i32], eos_token_id: usize) -> usize {
@@ -179,6 +268,7 @@ mod tests {
         assert_eq!(args.speaker, None);
         assert_eq!(args.output_dir, PathBuf::from("output"));
         assert_eq!(args.max_new_tokens, 256);
+        assert_eq!(args.log_level, LogLevel::Info);
     }
 
     #[test]
@@ -197,6 +287,8 @@ mod tests {
             ".",
             "--max-new-tokens",
             "64",
+            "--log-level",
+            "debug",
         ])
         .expect("full args should parse");
 
@@ -204,6 +296,7 @@ mod tests {
         assert_eq!(args.speaker.as_deref(), Some("Vivian"));
         assert_eq!(args.output_dir, PathBuf::from("."));
         assert_eq!(args.max_new_tokens, 64);
+        assert_eq!(args.log_level, LogLevel::Debug);
     }
 
     #[test]

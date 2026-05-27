@@ -397,7 +397,7 @@ fn residual_vq_multi_layer_accumulates() {
         .collect();
     let rvq = Qwen3TtsAudioCodecDecoderResidualVectorQuantization { layers };
     let tokens: Vec<_> = (0..3)
-        .map(|i| Tensor::<TestBackend, 2, Int>::from_data([[i as i32]], &device))
+        .map(|i| Tensor::<TestBackend, 2, Int>::from_data([[i]], &device))
         .collect();
     let out = rvq.forward(&tokens);
     assert_eq!(out.dims(), [1, 4, 1], "sum of 3 codebook embeddings");
@@ -560,12 +560,12 @@ fn decoder_transformer_layer_shape() {
             .init(&device),
         self_attn_layer_scale: AudioCodecLayerScale::new(
             config.hidden_size,
-            config.layer_scale_initial_scale as f64,
+            config.layer_scale_initial_scale,
             &device,
         ),
         mlp_layer_scale: AudioCodecLayerScale::new(
             config.hidden_size,
-            config.layer_scale_initial_scale as f64,
+            config.layer_scale_initial_scale,
             &device,
         ),
     };
