@@ -32,7 +32,9 @@ where
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let residual = x.clone();
-        let x = record_operator("layer.input_rms_norm", || qwen_rms_norm(&self.input_layernorm, x));
+        let x = record_operator("layer.input_rms_norm", || {
+            qwen_rms_norm(&self.input_layernorm, x)
+        });
         let attn_out = record_operator("layer.self_attn", || {
             self.self_attn
                 .forward(x, num_heads, num_kv_heads, head_dim, position, mask, cache)
@@ -40,7 +42,9 @@ where
         let x = residual + attn_out;
 
         let residual = x.clone();
-        let x = record_operator("layer.post_attn_rms_norm", || qwen_rms_norm(&self.post_attention_layernorm, x));
+        let x = record_operator("layer.post_attn_rms_norm", || {
+            qwen_rms_norm(&self.post_attention_layernorm, x)
+        });
         residual + record_operator("layer.mlp", || self.mlp.forward(x))
     }
 }

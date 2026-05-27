@@ -1,7 +1,7 @@
 use burn::tensor::backend::Backend;
 
-use crate::runtime::sampling::SamplingConfig;
 use crate::runners::talker::TalkerGenerator;
+use crate::runtime::sampling::SamplingConfig;
 use crate::session::output::{PendingAudio, StreamEvent};
 use crate::session::types::CompiledRequest;
 
@@ -51,4 +51,3 @@ pub struct TtsSession<B: Backend> {
     pub pending_audio: PendingAudio,
     pub queued_events: Vec<StreamEvent>,
 }
-

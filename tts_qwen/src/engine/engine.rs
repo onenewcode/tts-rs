@@ -170,7 +170,9 @@ where
             } else {
                 TtsSessionState::Generating
             };
-            session.queued_events.push(StreamEvent::CodecChunk { steps: 1 });
+            session
+                .queued_events
+                .push(StreamEvent::CodecChunk { steps: 1 });
             self.maybe_emit_audio(&mut session, step.finished)?;
             if step.finished {
                 session.queued_events.push(StreamEvent::Finished);
@@ -191,7 +193,10 @@ where
         Ok(outcome)
     }
 
-    pub fn drain_events(&mut self, handle: SessionHandle) -> Result<Vec<StreamEvent>, QwenTtsError> {
+    pub fn drain_events(
+        &mut self,
+        handle: SessionHandle,
+    ) -> Result<Vec<StreamEvent>, QwenTtsError> {
         let mut session = self.take_session(handle)?;
         let events = std::mem::take(&mut session.queued_events);
         self.put_session(handle, session);
@@ -208,7 +213,10 @@ where
         self.finish_session(handle)
     }
 
-    pub fn finish_session(&mut self, handle: SessionHandle) -> Result<FinishedInference, QwenTtsError> {
+    pub fn finish_session(
+        &mut self,
+        handle: SessionHandle,
+    ) -> Result<FinishedInference, QwenTtsError> {
         let mut session = self.take_session(handle)?;
         let finished = self.decode_finished_session(&mut session)?;
         Ok(FinishedInference {
@@ -227,7 +235,10 @@ where
         if session.config.streaming == StreamingMode::Full {
             return Ok(());
         }
-        let talker = session.talker.as_ref().expect("talker session should exist");
+        let talker = session
+            .talker
+            .as_ref()
+            .expect("talker session should exist");
         let generated_steps = talker.generated_audio_steps();
         let pending_steps = generated_steps.saturating_sub(session.pending_audio.emitted_steps);
         if !self.scheduler.should_emit_audio_chunk(
@@ -243,11 +254,13 @@ where
         let delta = pcm[session.pending_audio.emitted_samples..].to_vec();
         session.pending_audio.emitted_steps = generated_steps;
         session.pending_audio.emitted_samples = pcm.len();
-        session.queued_events.push(StreamEvent::AudioChunk(AudioChunk {
-            pcm: delta,
-            sample_rate: self.audio_codec.config.output_sample_rate as u32,
-            is_final: finished,
-        }));
+        session
+            .queued_events
+            .push(StreamEvent::AudioChunk(AudioChunk {
+                pcm: delta,
+                sample_rate: self.audio_codec.config.output_sample_rate as u32,
+                is_final: finished,
+            }));
         Ok(())
     }
 
@@ -274,10 +287,12 @@ where
         self.sessions
             .get_mut(handle.0)
             .and_then(Option::take)
-            .ok_or_else(|| QwenTtsInferenceError::InvalidInput {
-                message: format!("unknown session handle {}", handle.0),
-            }
-            .into())
+            .ok_or_else(|| {
+                QwenTtsInferenceError::InvalidInput {
+                    message: format!("unknown session handle {}", handle.0),
+                }
+                .into()
+            })
     }
 
     fn put_session(&mut self, handle: SessionHandle, session: TtsSession<B>) {

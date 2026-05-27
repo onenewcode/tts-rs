@@ -110,7 +110,11 @@ pub fn write_pcm_wav<W: Write>(
         "failed to write wav data size",
     )?;
     for &sample in pcm {
-        write_all(writer, &sample.to_le_bytes(), "failed to write wav sample data")?;
+        write_all(
+            writer,
+            &sample.to_le_bytes(),
+            "failed to write wav sample data",
+        )?;
     }
     writer
         .flush()

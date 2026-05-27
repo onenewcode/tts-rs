@@ -1,3 +1,5 @@
+#![cfg(feature = "flex")]
+
 mod common;
 
 use burn::backend::Flex;
@@ -11,8 +13,8 @@ type Backend = Flex;
 fn engine_loads_and_runs_a_session_to_completion() {
     let model_dir = common::resolve_model_dir();
     let device = Default::default();
-    let mut engine = QwenTtsEngine::<Backend>::load(&model_dir, &device, EngineConfig::default())
-        .unwrap();
+    let mut engine =
+        QwenTtsEngine::<Backend>::load(&model_dir, &device, EngineConfig::default()).unwrap();
     let handle = engine
         .start_session(
             CustomVoiceRequest::new("你好，欢迎使用语音合成。"),
@@ -47,8 +49,8 @@ fn engine_generates_valid_wav_with_real_model() {
     let wav_path = output_dir.join("0000.wav");
 
     let device = Default::default();
-    let mut engine = QwenTtsEngine::<Backend>::load(&model_dir, &device, EngineConfig::default())
-        .unwrap();
+    let mut engine =
+        QwenTtsEngine::<Backend>::load(&model_dir, &device, EngineConfig::default()).unwrap();
     let handle = engine
         .start_session(
             CustomVoiceRequest {
@@ -83,8 +85,15 @@ fn assert_valid_nonempty_wav(bytes: &[u8], expected_sample_rate: u32) {
     assert_eq!(&bytes[8..12], b"WAVE");
     assert_eq!(&bytes[12..16], b"fmt ");
     assert_eq!(u16::from_le_bytes([bytes[20], bytes[21]]), 1, "PCM format");
-    assert_eq!(u16::from_le_bytes([bytes[22], bytes[23]]), 1, "mono channel");
-    assert_eq!(u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]), expected_sample_rate);
+    assert_eq!(
+        u16::from_le_bytes([bytes[22], bytes[23]]),
+        1,
+        "mono channel"
+    );
+    assert_eq!(
+        u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]),
+        expected_sample_rate
+    );
     assert_eq!(u16::from_le_bytes([bytes[34], bytes[35]]), 16, "16-bit PCM");
     assert_eq!(&bytes[36..40], b"data");
     let data_size = u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]) as usize;

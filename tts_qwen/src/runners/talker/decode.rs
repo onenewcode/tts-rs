@@ -6,7 +6,9 @@ use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
 use crate::runtime::kv::KeyValueCache;
 
-use super::{TalkerStepOutput, validate_cache_layer_count, validate_cache_lengths, validate_talker_input};
+use super::{
+    TalkerStepOutput, validate_cache_layer_count, validate_cache_lengths, validate_talker_input,
+};
 
 pub(super) fn decode_step<B>(
     config: &Qwen3TtsTalkerConfig,

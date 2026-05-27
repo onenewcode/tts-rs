@@ -14,7 +14,9 @@ pub fn decode_waveform<B: Backend>(
     infer(loaded, codec_ids, &loaded.config.decoder_config)
 }
 
-pub fn waveform_to_pcm<B: Backend>(waveform: &Tensor<B, 3>) -> Result<Vec<i16>, QwenTtsInferenceError> {
+pub fn waveform_to_pcm<B: Backend>(
+    waveform: &Tensor<B, 3>,
+) -> Result<Vec<i16>, QwenTtsInferenceError> {
     let samples: Vec<f32> = waveform
         .clone()
         .flatten::<1>(0, 2)

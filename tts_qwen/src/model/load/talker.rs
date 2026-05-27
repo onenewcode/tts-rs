@@ -5,8 +5,8 @@ use burn_store::{ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, Safetensor
 
 use crate::Qwen3TtsLoadError;
 use crate::model::config::talker::Qwen3TtsConfig;
-use crate::model::load_report::LoadReport;
 use crate::model::load::talker_remap::talker_load_key_remapper;
+use crate::model::load_report::LoadReport;
 use crate::model::qwen_tts::Qwen3TtsCheckpoint;
 
 #[derive(Debug)]

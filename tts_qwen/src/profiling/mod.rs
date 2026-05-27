@@ -38,7 +38,10 @@ pub fn with_session_context<T>(session_id: usize, step_idx: usize, f: impl FnOnc
     #[cfg(feature = "operator-profiling")]
     {
         CONTEXT.with(|slot| {
-            let previous = slot.replace(Some(ProfilingContext { session_id, step_idx }));
+            let previous = slot.replace(Some(ProfilingContext {
+                session_id,
+                step_idx,
+            }));
             let output = f();
             slot.replace(previous);
             output

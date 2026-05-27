@@ -2,6 +2,8 @@ use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig};
 use burn::tensor::backend::Backend;
 
+use crate::kernels::activation::{AudioCodecLayerScale, Qwen3TtsAudioCodecEmptyModule};
+use crate::kernels::conv::AudioCodecCausalConv1d;
 use crate::model::audio_codec::decoder::Qwen3TtsAudioCodecCheckpoint;
 use crate::model::audio_codec::encoder::{
     Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
@@ -15,8 +17,6 @@ use crate::model::audio_codec::encoder::{
 use crate::model::config::audio_codec::{
     Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
-use crate::kernels::activation::{AudioCodecLayerScale, Qwen3TtsAudioCodecEmptyModule};
-use crate::kernels::conv::AudioCodecCausalConv1d;
 
 const ENCODER_BACKBONE_LEN: usize = 15;
 const ENCODER_RESIDUAL_POSITIONS: [usize; 4] = [1, 4, 7, 10];

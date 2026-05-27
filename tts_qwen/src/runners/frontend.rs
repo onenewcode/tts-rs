@@ -19,9 +19,11 @@ pub fn compile_request<B: Backend>(
     device: &B::Device,
 ) -> Result<CompiledRequest<B>, QwenTtsInferenceError> {
     let prompt = build_custom_voice_prompt(request);
-    let text_ids = record_operator("frontend.tokenize", || tokenizer.encode(&prompt))
-        .map_err(|source| QwenTtsInferenceError::InvalidInput {
-            message: format!("failed to tokenize custom voice prompt: {source}"),
+    let text_ids =
+        record_operator("frontend.tokenize", || tokenizer.encode(&prompt)).map_err(|source| {
+            QwenTtsInferenceError::InvalidInput {
+                message: format!("failed to tokenize custom voice prompt: {source}"),
+            }
         })?;
     if text_ids.len() < 8 {
         return Err(QwenTtsInferenceError::InvalidInput {
@@ -50,17 +52,13 @@ pub fn compile_request<B: Backend>(
     let preferred_dtype = preferred_hidden_dtype::<B>(device);
     let seq_len = sample.dims()[1];
     let inputs_embeds = sample.cast(preferred_dtype);
-    let attention_mask = Tensor::<B, 2, Int>::from_data(
-        TensorData::new(vec![1; seq_len], [1, seq_len]),
-        device,
-    );
+    let attention_mask =
+        Tensor::<B, 2, Int>::from_data(TensorData::new(vec![1; seq_len], [1, seq_len]), device);
     let position_data = (0..3)
         .flat_map(|_| (0..seq_len).map(|pos| pos as i32))
         .collect::<Vec<_>>();
-    let position_ids = Tensor::<B, 3, Int>::from_data(
-        TensorData::new(position_data, [3, 1, seq_len]),
-        device,
-    );
+    let position_ids =
+        Tensor::<B, 3, Int>::from_data(TensorData::new(position_data, [3, 1, seq_len]), device);
 
     Ok(CompiledRequest {
         text_token_ids: text_ids,

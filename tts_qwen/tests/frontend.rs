@@ -1,6 +1,8 @@
 mod common;
 
-use tts_qwen::{CustomVoiceRequest, build_custom_voice_prompt, load_custom_voice_generation_config};
+use tts_qwen::{
+    CustomVoiceRequest, build_custom_voice_prompt, load_custom_voice_generation_config,
+};
 
 #[test]
 fn custom_voice_prompt_matches_qwen_tts_template() {

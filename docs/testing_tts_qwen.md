@@ -2,8 +2,8 @@
 
 ## Test Layers
 
-The crate now separates fast Rust-only tests from model-backed integration
-checks around the new engine API.
+The workspace separates fast Rust-only validation from model-backed synthesis
+checks around the engine/session API and the CLI wrapper.
 
 ## Fast Validation
 
@@ -11,6 +11,7 @@ checks around the new engine API.
 cargo check --workspace
 cargo test -p tts_qwen --lib
 cargo test -p tts_cli --lib
+cargo test -p tts_qwen --test backend_api
 cargo test -p tts_qwen --tests --no-run
 ```
 
@@ -20,7 +21,9 @@ binary compilation without requiring local model weights.
 ## Model-Backed Integration Tests
 
 The integration tests under `tts_qwen/tests/` still require
-`QWEN_TTS_MODEL_DIR` or a local `Qwen/*` directory.
+`QWEN_TTS_MODEL_DIR` or a local `Qwen/*` directory. These tests are useful for
+API-level debugging, but the most representative synthesis check is the CLI
+smoke run shown below.
 
 Useful runs:
 
@@ -30,7 +33,11 @@ cargo test -p tts_qwen --test tokenizer -- --nocapture
 cargo test -p tts_qwen --test pipeline -- --nocapture
 ```
 
-## CLI Smoke
+## Preferred CLI End-to-End Smoke
+
+Use the CLI for end-to-end synthesis validation. This exercises backend
+selection, engine/session setup, token generation, codec decode, and WAV
+writing in the same path that end users call.
 
 ```bash
 cargo run --release -p tts_cli -- \
@@ -40,9 +47,36 @@ cargo run --release -p tts_cli -- \
   --speaker Vivian \
   --output-dir . \
   --max-new-tokens 64 \
-  --stream \
-  --chunk-steps 8 \
-  --profiling
+  --chunk-steps 8
 ```
 
-This exercises the new `QwenTtsEngine` session loop and writes `0000.wav`.
+This writes `0000.wav` in the current directory.
+
+Why these arguments matter:
+
+- `--language Chinese` and `--speaker Vivian` produce a stable reference path
+  for the current local model.
+- `--max-new-tokens 64` avoids extremely long generations and trailing silence
+  on short prompts.
+- `--output-dir .` makes it obvious where the artifact landed when doing manual
+  listening checks.
+
+After generation, validate the artifact itself:
+
+```bash
+python3 - <<'PY'
+import wave
+with wave.open("0000.wav", "rb") as wav:
+    print("channels=", wav.getnchannels())
+    print("rate=", wav.getframerate())
+    print("width=", wav.getsampwidth())
+    print("frames=", wav.getnframes())
+PY
+```
+
+Expected shape for the current model path:
+
+- mono channel
+- 24000 Hz sample rate
+- 16-bit PCM
+- non-zero frame count

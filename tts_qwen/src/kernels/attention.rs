@@ -11,8 +11,14 @@ use crate::profiling::record_operator;
 use crate::runtime::kv::KeyValueCache;
 
 pub enum AttentionPosition<B: Backend> {
-    Standard { cos: Tensor<B, 4>, sin: Tensor<B, 4> },
-    Mrope { cos: Tensor<B, 4>, sin: Tensor<B, 4> },
+    Standard {
+        cos: Tensor<B, 4>,
+        sin: Tensor<B, 4>,
+    },
+    Mrope {
+        cos: Tensor<B, 4>,
+        sin: Tensor<B, 4>,
+    },
 }
 
 #[derive(Module, Debug)]
@@ -38,14 +44,21 @@ impl<B: Backend> Qwen3TtsAttention<B> {
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
 
-        let q = record_operator("attention.q_proj", || native_linear_3d(&self.q_proj, x.clone()));
-        let k = record_operator("attention.k_proj", || native_linear_3d(&self.k_proj, x.clone()));
+        let q = record_operator("attention.q_proj", || {
+            native_linear_3d(&self.q_proj, x.clone())
+        });
+        let k = record_operator("attention.k_proj", || {
+            native_linear_3d(&self.k_proj, x.clone())
+        });
         let v = record_operator("attention.v_proj", || native_linear_3d(&self.v_proj, x));
 
         let q = record_operator("attention.q_norm", || {
-            qwen_rms_norm(&self.q_norm, q.reshape([batch_size, seq_len, num_heads, head_dim]))
-                .swap_dims(1, 2)
-                .clone()
+            qwen_rms_norm(
+                &self.q_norm,
+                q.reshape([batch_size, seq_len, num_heads, head_dim]),
+            )
+            .swap_dims(1, 2)
+            .clone()
         });
         let k = record_operator("attention.k_norm", || {
             qwen_rms_norm(
@@ -112,15 +125,23 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         } else {
             attn_scores
         };
-        let attn_weights_f32 = record_operator("attention.softmax", || softmax(attn_scores.cast(DType::F32), 3));
+        let attn_weights_f32 = record_operator("attention.softmax", || {
+            softmax(attn_scores.cast(DType::F32), 3)
+        });
         let attn_weights = attn_weights_f32.clone().cast(dtype);
         let attn_output = record_operator("attention.av_matmul", || {
-            attn_weights.clone().cast(DType::F32).matmul(v.cast(DType::F32)).cast(dtype)
+            attn_weights
+                .clone()
+                .cast(DType::F32)
+                .matmul(v.cast(DType::F32))
+                .cast(dtype)
         });
 
         let attn_output = attn_output.swap_dims(1, 2).clone();
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);
-        record_operator("attention.o_proj", || native_linear_3d(&self.o_proj, attn_output))
+        record_operator("attention.o_proj", || {
+            native_linear_3d(&self.o_proj, attn_output)
+        })
     }
 }
 

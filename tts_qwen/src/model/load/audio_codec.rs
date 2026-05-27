@@ -6,8 +6,8 @@ use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 use crate::Qwen3TtsLoadError;
 use crate::model::audio_codec::decoder::Qwen3TtsAudioCodecCheckpoint;
 use crate::model::config::audio_codec::Qwen3TtsAudioCodecConfig;
-use crate::model::load_report::LoadReport;
 use crate::model::load::audio_codec_remap::audio_codec_load_key_remapper;
+use crate::model::load_report::LoadReport;
 
 #[derive(Debug)]
 pub struct LoadedQwen3TtsAudioCodec<B: Backend> {

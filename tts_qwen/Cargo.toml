@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["backend-flex"]
-backend-flex = ["burn/flex"]
-backend-ndarray = ["burn/ndarray"]
+default = ["flex", "fusion"]
+fusion = ["burn/fusion"]
+flex = ["burn/flex"]
+wgpu = ["burn/wgpu"]
+cuda = ["burn/cuda"]
+rocm = ["burn/rocm"]
+metal = ["burn/metal"]
+vulkan = ["burn/vulkan"]
+webgpu = ["burn/webgpu"]
 operator-profiling = []
 
 [dependencies]

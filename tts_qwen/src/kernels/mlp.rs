@@ -22,7 +22,8 @@ where
         let dtype = x.dtype();
         let gate = record_operator("mlp.gate_proj", || self.gate_proj.forward(x.clone()));
         let up = record_operator("mlp.up_proj", || self.up_proj.forward(x));
-        let activated = record_operator("mlp.activation", || silu(gate.cast(DType::F32)).cast(dtype));
+        let activated =
+            record_operator("mlp.activation", || silu(gate.cast(DType::F32)).cast(dtype));
         record_operator("mlp.down_proj", || self.down_proj.forward(activated * up))
     }
 }
@@ -40,7 +41,9 @@ where
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let x = record_operator("mlp.resize_fc1", || native_linear_3d(&self.linear_fc1, x));
         let dtype = x.dtype();
-        let x = record_operator("mlp.resize_activation", || silu(x.cast(DType::F32)).cast(dtype));
+        let x = record_operator("mlp.resize_activation", || {
+            silu(x.cast(DType::F32)).cast(dtype)
+        });
         record_operator("mlp.resize_fc2", || native_linear_3d(&self.linear_fc2, x))
     }
 }
@@ -60,6 +63,8 @@ pub(crate) fn native_linear_3d<B: Backend>(linear: &Linear<B>, x: Tensor<B, 3>) 
                 .matmul(w_aug)
                 .reshape([batch_size, seq_len, out_features])
         }
-        None => linear.forward(x_2d).reshape([batch_size, seq_len, out_features]),
+        None => linear
+            .forward(x_2d)
+            .reshape([batch_size, seq_len, out_features]),
     }
 }

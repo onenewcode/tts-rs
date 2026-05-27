@@ -59,12 +59,17 @@ where
         .model
         .codec_embedding
         .forward(base_codec_token_id.clone());
-    let prefill_inputs = Tensor::cat(vec![talker_hidden_state.unsqueeze::<3>(), base_embedding], 1);
+    let prefill_inputs = Tensor::cat(
+        vec![talker_hidden_state.unsqueeze::<3>(), base_embedding],
+        1,
+    );
     let prefill_hidden = run_code_predictor_hidden(config, loaded, prefill_inputs, None, cache);
     let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
     let prefill_logits = native_linear_3d(
         prefill_head,
-        prefill_hidden.clone().cast(prefill_head.weight.val().dtype()),
+        prefill_hidden
+            .clone()
+            .cast(prefill_head.weight.val().dtype()),
     );
     let device = prefill_logits.device();
     let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
@@ -86,7 +91,10 @@ where
     }
 
     let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
-    Ok(Tensor::cat(vec![base_codec_token_id, predictor_token_ids], 1))
+    Ok(Tensor::cat(
+        vec![base_codec_token_id, predictor_token_ids],
+        1,
+    ))
 }
 
 fn run_code_predictor_hidden<B>(
@@ -101,7 +109,10 @@ where
 {
     let predictor = &loaded.model.talker.code_predictor;
     let projected_inputs = if let Some(projection) = &predictor.small_to_mtp_projection {
-        native_linear_3d(projection, inputs_embeds.cast(projection.weight.val().dtype()))
+        native_linear_3d(
+            projection,
+            inputs_embeds.cast(projection.weight.val().dtype()),
+        )
     } else {
         inputs_embeds
     };

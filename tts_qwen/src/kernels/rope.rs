@@ -173,7 +173,7 @@ pub(crate) fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
     Tensor::cat(vec![-second, first], 3)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "flex"))]
 mod tests {
     use super::*;
     use burn::backend::Flex;

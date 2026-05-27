@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["backend-flex"]
-backend-flex = ["burn/flex", "tts_qwen/backend-flex"]
-backend-ndarray = ["burn/ndarray", "tts_qwen/backend-ndarray"]
+default = ["flex", "fusion"]
+fusion = ["tts_qwen/fusion"]
+flex = ["tts_qwen/flex"]
+wgpu = ["tts_qwen/wgpu"]
+cuda = ["tts_qwen/cuda"]
+rocm = ["tts_qwen/rocm"]
+metal = ["tts_qwen/metal"]
+vulkan = ["tts_qwen/vulkan"]
+webgpu = ["tts_qwen/webgpu"]
 
 [dependencies]
-burn = { workspace = true, default-features = false, features = ["std"] }
 clap = { workspace = true }
 tts_qwen = { path = "../tts_qwen", default-features = false }
 tracing = { workspace = true }

@@ -5,10 +5,10 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
 use crate::kernels::attention::AttentionPosition;
-use crate::kernels::mlp::native_linear_3d;
-use crate::kernels::norm::qwen_rms_norm;
 use crate::kernels::layer::Qwen3TtsDecoderLayer;
 use crate::kernels::mlp::Qwen3TtsTalkerResizeMlp;
+use crate::kernels::mlp::native_linear_3d;
+use crate::kernels::norm::qwen_rms_norm;
 use crate::kernels::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
 use crate::runtime::kv::KeyValueCache;
 

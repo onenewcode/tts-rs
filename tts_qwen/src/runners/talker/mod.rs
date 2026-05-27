@@ -214,11 +214,7 @@ where
         })?;
         let past_ids = Tensor::cat(self.talker_tokens.clone(), 1);
         let penalized_logits = record_operator("talker.decode_repetition_penalty", || {
-            apply_repetition_penalty(
-                decoded.logits,
-                &past_ids,
-                self.sampling.repetition_penalty,
-            )
+            apply_repetition_penalty(decoded.logits, &past_ids, self.sampling.repetition_penalty)
         });
         let (next_token, next_eos) = record_operator("talker.decode_sample", || {
             sample_token::<B>(
@@ -317,7 +313,14 @@ pub(crate) fn codec_group_context_embedding<B: Backend>(
         .clone()
         .slice([0..batch_size, 0..1])
         .reshape([batch_size, 1]);
-    group_embeds.push(loaded.model.talker.model.codec_embedding.forward(base_token));
+    group_embeds.push(
+        loaded
+            .model
+            .talker
+            .model
+            .codec_embedding
+            .forward(base_token),
+    );
     for group_idx in 1..config.num_code_groups {
         let token = codec_ids
             .clone()
