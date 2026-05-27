@@ -6,8 +6,8 @@
 //! codec_ids [B, num_quantizers, T]
 //!   → Quantizer (RVQ codebook lookup, 16 layers)
 //!   → pre_conv (CausalConv1d)
-//!   → Upsample stages (CausalTransConv + ConvNeXt, ×4 time)
 //!   → Decoder Transformer (8-layer, RoPE, SwiGLU)
+//!   → Upsample stages (CausalTransConv + ConvNeXt, ×4 time)
 //!   → Wave Decoder (4× UpsampleStage + SnakeBeta + output conv)
 //!   → waveform [B, 1, total_samples]
 //! ```
@@ -18,7 +18,7 @@
 use burn::module::{Module, Param};
 use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear, RmsNorm, RotaryEncoding};
-use burn::tensor::activation::{silu, softmax};
+use burn::tensor::activation::{gelu, silu, softmax};
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor};
 
@@ -131,7 +131,7 @@ impl<B: Backend> Qwen3TtsAudioCodecConvNeXtBlock<B> {
         // Pointwise expand: [B, C, T] → [B*T, C] → Linear → [B*T, out] → [B, out, T]
         let h = h.swap_dims(1, 2).reshape([batch * time, channels]);
         let h = self.pwconv1.forward(h); // [B*T, expand]
-        let h = silu(h);
+        let h = gelu(h);
         let [_, _expand] = h.dims();
         let h = self.pwconv2.forward(h); // [B*T, channels]
         let h = h.reshape([batch, time, channels]).swap_dims(1, 2); // [B, C, T]
@@ -402,14 +402,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         // 2. pre_conv: causal conv along time dimension
         let h = self.pre_conv.forward(q_out);
 
-        // 3. Upsample stages: CausalTransConv + ConvNeXt blocks
-        let mut h = h;
-        for (trans_conv, convnext) in &self.upsample {
-            h = trans_conv.forward(h);
-            h = convnext.forward(h);
-        }
-
-        // 4. Pre-transformer: process time sequence
+        // 3. Pre-transformer: process time sequence
         // Swap [batch, channels, time] → [batch, time, channels]
         let h_tr: Tensor<B, 3> = h.swap_dims(1, 2).clone();
         let (mut h, _activations) = self.pre_transformer.forward(
@@ -424,6 +417,12 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         // Back to [batch, channels, time]
         h = h.swap_dims(1, 2).clone();
 
+        // 4. Upsample stages: CausalTransConv + ConvNeXt blocks
+        for (trans_conv, convnext) in &self.upsample {
+            h = trans_conv.forward(h);
+            h = convnext.forward(h);
+        }
+
         // 5. Wave decoder: sequence of conv/upsample entries
         let mut activations = std::collections::BTreeMap::new();
         for (idx, entry) in self.decoder.iter().enumerate() {
@@ -432,6 +431,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
                 activations.insert(format!("wave_decoder.{idx}"), h.clone());
             }
         }
+        let h = h.clamp_min(-1.0).clamp_max(1.0);
 
         (h, activations)
     }

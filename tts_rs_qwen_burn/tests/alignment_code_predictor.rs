@@ -56,7 +56,8 @@ fn v9_code_predictor_matches_python_with_python_hidden() {
     let output = common::workspace_root().join("target/tmp/reference_v9_code_predictor.json");
     let steps = std::env::var("QWEN_TTS_CODE_PREDICTOR_STEPS")
         .unwrap_or_else(|_| "0,1,2,3,4,5".to_string());
-    let status = Command::new("uv")
+    let mut command = Command::new("uv");
+    command
         .args([
             "run",
             "python",
@@ -72,7 +73,11 @@ fn v9_code_predictor_matches_python_with_python_hidden() {
             "--attention-implementation",
             "eager",
         ])
-        .current_dir(common::workspace_root())
+        .current_dir(common::workspace_root());
+    if let Ok(text) = std::env::var("QWEN_TTS_TEXT") {
+        command.args(["--text", &text]);
+    }
+    let status = command
         .status()
         .expect("failed to invoke Python code predictor oracle");
     assert!(status.success(), "Python code predictor oracle failed");
@@ -84,6 +89,8 @@ fn v9_code_predictor_matches_python_with_python_hidden() {
     let talker = load_qwen3_tts_talker_for_inference::<Backend>(&model_dir, &device).unwrap();
     let cfg = &talker.config.talker_config;
     let mut mismatches = Vec::new();
+    let collect_step_diagnostics =
+        std::env::var("QWEN_TTS_CODE_PREDICTOR_FULL_RECOMPUTE").as_deref() != Ok("1");
 
     for step in &reference.steps {
         let hidden = Tensor::<Backend, 2>::from_data(
@@ -115,7 +122,7 @@ fn v9_code_predictor_matches_python_with_python_hidden() {
                 talker_hidden_state: hidden.clone(),
                 base_codec_token_id: base_token.clone(),
                 sampling: SamplingConfig::greedy(),
-                collect_step_diagnostics: true,
+                collect_step_diagnostics,
             },
             &mut predictor_cache,
         )
@@ -159,7 +166,8 @@ fn v9_code_predictor_matches_python_with_python_hidden() {
                 format_python_topk(&step.topk)
             ));
             mismatches.push(format!("  logit_diff={logit_summaries}"));
-            let activation_summaries = groups
+            let activation_summaries = if collect_step_diagnostics {
+                groups
                 .step_diagnostics
                 .iter()
                 .enumerate()
@@ -211,7 +219,10 @@ fn v9_code_predictor_matches_python_with_python_hidden() {
                     })
                 })
                 .collect::<Vec<_>>()
-                .join("\n");
+                .join("\n")
+            } else {
+                String::new()
+            };
             if !activation_summaries.is_empty() {
                 mismatches.push(activation_summaries);
             }

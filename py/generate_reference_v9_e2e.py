@@ -20,6 +20,21 @@ def tensor_preview(tensor, max_values=256):
     }
 
 
+def waveform_stats(tensor):
+    flat = tensor.detach().cpu().float().flatten()
+    clip_fraction = (flat.abs() >= 0.999).float().mean().item() if flat.numel() else 0.0
+    return {
+        "shape": list(tensor.shape),
+        "sample_count": int(flat.numel()),
+        "min": float(flat.min().item()) if flat.numel() else 0.0,
+        "max": float(flat.max().item()) if flat.numel() else 0.0,
+        "peak": float(flat.abs().max().item()) if flat.numel() else 0.0,
+        "rms": float(torch.sqrt(torch.mean(flat * flat)).item()) if flat.numel() else 0.0,
+        "mean": float(flat.mean().item()) if flat.numel() else 0.0,
+        "clip_fraction": float(clip_fraction),
+    }
+
+
 def score_topk(scores, k=5):
     topk = []
     for score in scores:
@@ -35,13 +50,33 @@ def score_topk(scores, k=5):
 
 def load_model(model_dir):
     try:
-        return Qwen3TTSModel.from_pretrained(
+        wrapper = Qwen3TTSModel.from_pretrained(
             str(model_dir), device_map="cpu", dtype=torch.bfloat16
         )
     except TypeError:
-        return Qwen3TTSModel.from_pretrained(
+        wrapper = Qwen3TTSModel.from_pretrained(
             str(model_dir), device_map="cpu", torch_dtype=torch.bfloat16
         )
+    force_eager_attention(wrapper)
+    return wrapper
+
+
+def force_eager_attention(wrapper):
+    """Keep V9 references on eager attention; never PyTorch SDPA."""
+    model = getattr(wrapper, "model", None)
+    talker = getattr(model, "talker", None)
+    code_predictor = getattr(talker, "code_predictor", None)
+    candidates = [
+        getattr(wrapper, "config", None),
+        getattr(model, "config", None),
+        getattr(talker, "config", None),
+        getattr(getattr(talker, "model", None), "config", None),
+        getattr(code_predictor, "config", None),
+        getattr(getattr(code_predictor, "model", None), "config", None),
+    ]
+    for config in candidates:
+        if config is not None:
+            config._attn_implementation = "eager"
 
 
 def main():
@@ -115,6 +150,7 @@ def main():
                 "codec_shape": list(codes.unsqueeze(0).transpose(1, 2).shape),
                 "talker_hidden": tensor_preview(hidden),
                 "waveform": tensor_preview(waveform),
+                "waveform_stats": waveform_stats(waveform),
             },
             f,
             ensure_ascii=False,

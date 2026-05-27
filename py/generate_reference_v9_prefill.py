@@ -56,13 +56,32 @@ def build_codec_prefix_ids(config, language, speaker):
 
 def load_model(model_dir):
     try:
-        return Qwen3TTSModel.from_pretrained(
+        wrapper = Qwen3TTSModel.from_pretrained(
             str(model_dir), device_map="cpu", dtype=torch.bfloat16
         )
     except TypeError:
-        return Qwen3TTSModel.from_pretrained(
+        wrapper = Qwen3TTSModel.from_pretrained(
             str(model_dir), device_map="cpu", torch_dtype=torch.bfloat16
         )
+    force_eager_attention(wrapper)
+    return wrapper
+
+
+def force_eager_attention(wrapper):
+    model = getattr(wrapper, "model", None)
+    talker = getattr(model, "talker", None)
+    code_predictor = getattr(talker, "code_predictor", None)
+    candidates = [
+        getattr(wrapper, "config", None),
+        getattr(model, "config", None),
+        getattr(talker, "config", None),
+        getattr(getattr(talker, "model", None), "config", None),
+        getattr(code_predictor, "config", None),
+        getattr(getattr(code_predictor, "model", None), "config", None),
+    ]
+    for config in candidates:
+        if config is not None:
+            config._attn_implementation = "eager"
 
 
 def main():

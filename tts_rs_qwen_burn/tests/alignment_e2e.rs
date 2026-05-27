@@ -30,6 +30,24 @@ struct E2eReference {
     codec_shape: Vec<usize>,
     talker_hidden: TensorPreview,
     waveform: TensorPreview,
+    waveform_stats: Option<ReferenceWaveStats>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct WaveStats {
+    min: f32,
+    max: f32,
+    peak: f32,
+    rms: f32,
+    clip_fraction: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReferenceWaveStats {
+    peak: f32,
+    rms: f32,
+    clip_fraction: f32,
 }
 
 fn top5(logits: Vec<f32>) -> Vec<(usize, f32)> {
@@ -222,6 +240,87 @@ fn e2e_matches_python_oracle() {
     assert!(max_abs <= 1e-1, "waveform preview max_abs={max_abs}");
 }
 
+#[test]
+#[ignore = "loads real audio codec weights and decodes Python eager codec groups"]
+fn rust_audio_codec_decodes_python_eager_codes_without_clipping() {
+    let model_dir = common::resolve_model_dir();
+    let output = common::workspace_root().join("target/tmp/reference_v9_e2e_audio_codec.json");
+    let status = Command::new("uv")
+        .args([
+            "run",
+            "python",
+            "py/generate_reference_v9_e2e.py",
+            "--model-dir",
+            model_dir.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--text",
+            "你好，欢迎使用语音合成。",
+            "--language",
+            "Chinese",
+            "--speaker",
+            "Vivian",
+            "--max-new-tokens",
+            "64",
+        ])
+        .current_dir(common::workspace_root())
+        .status()
+        .expect("failed to invoke Python E2E oracle");
+    assert!(status.success(), "Python E2E oracle failed");
+    let reference: E2eReference =
+        serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+
+    let device = Default::default();
+    let audio_codec = load_qwen3_tts_audio_codec::<Backend>(&model_dir, &device).unwrap();
+    let time_steps = reference.codec_groups.len();
+    let num_groups = reference
+        .codec_groups
+        .first()
+        .expect("reference should have codec groups")
+        .len();
+    let mut flat = Vec::with_capacity(time_steps * num_groups);
+    for group_idx in 0..num_groups {
+        for step in &reference.codec_groups {
+            flat.push(step[group_idx]);
+        }
+    }
+    let codec_tokens = Tensor::<Backend, 3, Int>::from_data(
+        burn::tensor::TensorData::new(flat, [1, num_groups, time_steps]),
+        &device,
+    );
+    let waveform = decode_codec_tokens::<Backend>(
+        &audio_codec,
+        codec_tokens,
+        &audio_codec.config.decoder_config,
+    )
+    .unwrap();
+    let actual_preview = waveform
+        .clone()
+        .flatten::<1>(0, 2)
+        .into_data()
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .unwrap();
+    let preview_max_abs = actual_preview
+        .iter()
+        .zip(reference.waveform.values.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    let stats = waveform_stats(waveform);
+    assert!(
+        stats.peak <= 1.1 && stats.clip_fraction < 0.001,
+        "Rust audio codec clips Python eager codec groups: {stats:?}"
+    );
+    if let Some(expected) = reference.waveform_stats {
+        assert!(
+            (stats.rms - expected.rms).abs() <= 0.02
+                && (stats.peak - expected.peak).abs() <= 0.2
+                && preview_max_abs <= 0.2,
+            "Rust audio codec differs from Python waveform: rust={stats:?}, python={expected:?}, preview_max_abs={preview_max_abs}"
+        );
+    }
+}
+
 fn first_mismatch_topk_report(
     actual: &[Vec<i32>],
     expected: &[Vec<i32>],
@@ -274,5 +373,34 @@ fn codec_group_mismatch_summary(actual: &[Vec<i32>], expected: &[Vec<i32>]) -> S
             "codec mismatches={mismatch_count}, first=step {step} group {group}: rust={actual_id}, python={expected_id}"
         ),
         None => "codec mismatches=0".to_string(),
+    }
+}
+
+fn waveform_stats(waveform: Tensor<Backend, 3>) -> WaveStats {
+    let values = waveform
+        .flatten::<1>(0, 2)
+        .into_data()
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .unwrap();
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    let mut sum_sq = 0.0_f64;
+    let mut clipped = 0_usize;
+    for value in &values {
+        min = min.min(*value);
+        max = max.max(*value);
+        sum_sq += (*value as f64) * (*value as f64);
+        if value.abs() >= 0.999 {
+            clipped += 1;
+        }
+    }
+    let peak = min.abs().max(max.abs());
+    WaveStats {
+        min,
+        max,
+        peak,
+        rms: (sum_sq / values.len() as f64).sqrt() as f32,
+        clip_fraction: clipped as f32 / values.len() as f32,
     }
 }

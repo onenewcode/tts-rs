@@ -21,7 +21,15 @@ impl<B: Backend> AudioCodecCausalConv1d<B> {
 
 impl<B: Backend> AudioCodecCausalTransConv1d<B> {
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
-        self.conv.forward(x)
+        let output = self.conv.forward(x);
+        let trim = self.conv.kernel_size.saturating_sub(self.conv.stride);
+        if trim == 0 {
+            return output;
+        }
+
+        let [batch, channels, time] = output.dims();
+        let end = time.saturating_sub(trim);
+        output.slice([0..batch, 0..channels, trim..end])
     }
 }
 

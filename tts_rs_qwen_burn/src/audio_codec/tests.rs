@@ -653,11 +653,12 @@ fn wave_decoder_upsample_stage_increases_time() {
     };
     let x = Tensor::<TestBackend, 3>::ones([1, 16, 2], &device);
     let y = stage.forward(x);
-    // TransposedConv: kernel=8, stride=4 → output = (input-1)*stride + kernel = 1*4+8 = 12
+    // Reference CausalConvTranspose trims kernel-stride samples on both sides:
+    // raw = (2-1)*4+8 = 12, trim = 4+4, final = 4.
     assert_eq!(
         y.dims(),
-        [1, 8, 12],
-        "upsample: channels halved (16→8), time = (2-1)*4+8 = 12"
+        [1, 8, 4],
+        "upsample: channels halved (16→8), raw time 12 trimmed to 4"
     );
 }
 

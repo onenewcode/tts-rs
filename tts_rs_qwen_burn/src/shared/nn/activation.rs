@@ -1,6 +1,6 @@
 // SnakeBeta activation and LayerScale — shared by talker and audio codec.
 use burn::module::{Module, Param};
-use burn::tensor::{Tensor, backend::Backend};
+use burn::tensor::{DType, Tensor, backend::Backend};
 
 #[derive(Module, Debug)]
 pub struct AudioCodecSnakeBeta<B: Backend> {
@@ -17,25 +17,27 @@ pub struct AudioCodecLayerScale<B: Backend> {
 pub struct Qwen3TtsAudioCodecEmptyModule;
 
 impl<B: Backend> AudioCodecSnakeBeta<B> {
-    /// SnakeBeta activation: `x + sin^2(alpha * x) / (beta + eps)`
+    /// SnakeBeta activation: `x + sin^2(exp(alpha) * x) / (exp(beta) + eps)`.
     /// Supports both `[B, C, T]` (CNN) and `[B, S, H]` (Transformer) formats.
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
-        let eps = 1e-8;
+        let dtype = x.dtype();
+        let x_f32 = x.cast(DType::F32);
+        let eps = 1e-9;
         let n_param = self.alpha.dims()[0];
-        let [_, d1, _] = x.dims();
+        let [_, d1, _] = x_f32.dims();
         let (alpha, beta) = if d1 == n_param {
             (
-                self.alpha.val().reshape([1, n_param, 1]),
-                self.beta.val().reshape([1, n_param, 1]),
+                self.alpha.val().cast(DType::F32).exp().reshape([1, n_param, 1]),
+                self.beta.val().cast(DType::F32).exp().reshape([1, n_param, 1]),
             )
         } else {
             (
-                self.alpha.val().reshape([1, 1, n_param]),
-                self.beta.val().reshape([1, 1, n_param]),
+                self.alpha.val().cast(DType::F32).exp().reshape([1, 1, n_param]),
+                self.beta.val().cast(DType::F32).exp().reshape([1, 1, n_param]),
             )
         };
-        let sin_sq = (x.clone().mul(alpha)).sin().powf_scalar(2.0);
-        x + sin_sq.div(beta.add_scalar(eps))
+        let sin_sq = (x_f32.clone().mul(alpha)).sin().powf_scalar(2.0);
+        (x_f32 + sin_sq.div(beta.add_scalar(eps))).cast(dtype)
     }
 }
 

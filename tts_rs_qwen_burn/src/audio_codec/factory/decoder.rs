@@ -1,4 +1,5 @@
 use burn::module::Initializer;
+use burn::nn::PaddingConfig1d;
 use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig, RmsNormConfig};
 use burn::tensor::backend::Backend;
@@ -27,6 +28,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
             Qwen3TtsAudioCodecWaveDecoderConvEntry {
                 conv: Conv1dConfig::new(self.latent_dim, self.decoder_dim, 7)
                     .with_bias(true)
+                    .with_padding(PaddingConfig1d::Explicit(6, 0))
                     .init(device),
             },
         ));
@@ -43,6 +45,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
             Qwen3TtsAudioCodecWaveDecoderConvEntry {
                 conv: Conv1dConfig::new(output_dim, 1, 7)
                     .with_bias(true)
+                    .with_padding(PaddingConfig1d::Explicit(6, 0))
                     .init(device),
             },
         ));

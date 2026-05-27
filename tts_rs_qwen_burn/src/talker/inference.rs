@@ -369,6 +369,13 @@ where
         });
     }
 
+    if std::env::var("QWEN_TTS_CODE_PREDICTOR_FULL_RECOMPUTE").as_deref() == Ok("1") {
+        return generate_code_predictor_groups_full_recompute(config, loaded, input);
+    }
+    if std::env::var("QWEN_TTS_CODE_PREDICTOR_HIDDEN_ONLY").as_deref() == Ok("1") {
+        return generate_code_predictor_groups_hidden_only(config, loaded, input, cache);
+    }
+
     let base_embedding = loaded
         .model
         .talker
@@ -473,6 +480,204 @@ where
         predictor_config.num_code_groups, config.num_code_groups,
         "talker and code predictor code group counts should match"
     );
+
+    Ok(CodePredictorGenerateOutput {
+        codec_ids,
+        predictor_token_ids,
+        step_logits,
+        step_diagnostics,
+    })
+}
+
+fn generate_code_predictor_groups_hidden_only<B>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    input: CodePredictorGenerateInput<B>,
+    cache: &mut [KeyValueCache<B>],
+) -> Result<CodePredictorGenerateOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
+    for layer_cache in cache.iter_mut() {
+        layer_cache.reset();
+    }
+
+    let [batch_size, _hidden_size] = input.talker_hidden_state.dims();
+    let prefill_inputs = input.talker_hidden_state.unsqueeze::<3>();
+    let (prefill_hidden, prefill_activations, prefill_attention_activations) =
+        forward_code_predictor_hidden(
+            config,
+            loaded,
+            prefill_inputs,
+            None,
+            cache,
+            input.collect_step_diagnostics,
+        );
+    let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
+    let prefill_logits = native_linear_3d(
+        prefill_head,
+        prefill_hidden
+            .clone()
+            .cast(prefill_head.weight.val().dtype()),
+    );
+    let device = prefill_logits.device();
+    let sampling = &input.sampling;
+    let eos_id: Option<usize> = None;
+    let suppress: &[usize] = &[];
+    let rep_penalty = sampling.repetition_penalty;
+    let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
+    let prefill_logits_pen =
+        apply_repetition_penalty(prefill_logits.clone(), &empty_history, rep_penalty);
+    let mut selected_token =
+        sample_token::<B>(prefill_logits_pen, sampling, eos_id, suppress, &device).0;
+    let mut predictor_tokens = vec![selected_token.clone()];
+    let mut step_logits = Vec::new();
+    let mut step_diagnostics = Vec::new();
+
+    if input.collect_step_diagnostics {
+        step_logits.push(prefill_logits);
+        step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
+            cache_len_before: 0,
+            cache_len_after: validate_cache_lengths(cache)?,
+            activations: prefill_activations,
+            attention_activations: prefill_attention_activations,
+            cache_activations: cache_snapshots(cache),
+        });
+    }
+
+    for head_idx in 1..config.num_code_groups - 1 {
+        let cache_len_before = validate_cache_lengths(cache)?;
+        let step_inputs = loaded.model.talker.code_predictor.model.codec_embedding[head_idx - 1]
+            .forward(selected_token);
+        let (step_hidden, step_activations, step_attention_activations) =
+            forward_code_predictor_hidden(
+                config,
+                loaded,
+                step_inputs,
+                None,
+                cache,
+                input.collect_step_diagnostics,
+            );
+        let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
+        let logits = native_linear_3d(head, step_hidden.clone().cast(head.weight.val().dtype()));
+        let cache_len_after = validate_cache_lengths(cache)?;
+        let past_ids = Tensor::cat(predictor_tokens.clone(), 1);
+        let logits_pen = apply_repetition_penalty(logits.clone(), &past_ids, rep_penalty);
+        let next_token = sample_token::<B>(logits_pen, sampling, eos_id, suppress, &device).0;
+        selected_token = next_token;
+        predictor_tokens.push(selected_token.clone());
+
+        if input.collect_step_diagnostics {
+            step_logits.push(logits);
+            step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
+                cache_len_before,
+                cache_len_after,
+                activations: step_activations,
+                attention_activations: step_attention_activations,
+                cache_activations: cache_snapshots(cache),
+            });
+        }
+    }
+
+    let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
+    let codec_ids = Tensor::cat(
+        vec![input.base_codec_token_id, predictor_token_ids.clone()],
+        1,
+    );
+
+    Ok(CodePredictorGenerateOutput {
+        codec_ids,
+        predictor_token_ids,
+        step_logits,
+        step_diagnostics,
+    })
+}
+
+fn generate_code_predictor_groups_full_recompute<B>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    input: CodePredictorGenerateInput<B>,
+) -> Result<CodePredictorGenerateOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
+    let [batch_size, _hidden_size] = input.talker_hidden_state.dims();
+    let device = input.base_codec_token_id.device();
+    let base_embedding = loaded
+        .model
+        .talker
+        .model
+        .codec_embedding
+        .forward(input.base_codec_token_id.clone());
+    let mut all_embeds = Tensor::cat(
+        vec![input.talker_hidden_state.unsqueeze::<3>(), base_embedding],
+        1,
+    );
+    let mut predictor_tokens = Vec::with_capacity(config.num_code_groups - 1);
+    let mut selected_token: Option<Tensor<B, 2, Int>> = None;
+    let mut step_logits = Vec::new();
+    let mut step_diagnostics = Vec::new();
+    let sampling = &input.sampling;
+    let rep_penalty = sampling.repetition_penalty;
+    let eos_id: Option<usize> = None;
+    let suppress: &[usize] = &[];
+
+    for head_idx in 0..config.num_code_groups - 1 {
+        let mut local_cache = (0..config.code_predictor_config.num_hidden_layers)
+            .map(|_| {
+                KeyValueCache::new(
+                    batch_size,
+                    config.code_predictor_config.num_key_value_heads,
+                    config.num_code_groups + 1,
+                    config.code_predictor_config.head_dim,
+                )
+            })
+            .collect::<Vec<_>>();
+        let (hidden, activations, attention_activations) = forward_code_predictor_hidden(
+            config,
+            loaded,
+            all_embeds.clone(),
+            None,
+            &mut local_cache,
+            input.collect_step_diagnostics,
+        );
+        let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
+        let logits = native_linear_3d(head, hidden.cast(head.weight.val().dtype()));
+        let past_ids = if predictor_tokens.is_empty() {
+            Tensor::<B, 2, Int>::zeros([batch_size, 0], &device)
+        } else {
+            Tensor::cat(predictor_tokens.clone(), 1)
+        };
+        let logits_pen = apply_repetition_penalty(logits.clone(), &past_ids, rep_penalty);
+        let next_token = sample_token::<B>(logits_pen, sampling, eos_id, suppress, &device).0;
+
+        if input.collect_step_diagnostics {
+            step_logits.push(logits);
+            step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
+                cache_len_before: 0,
+                cache_len_after: validate_cache_lengths(&local_cache)?,
+                activations,
+                attention_activations,
+                cache_activations: cache_snapshots(&local_cache),
+            });
+        }
+
+        selected_token = Some(next_token.clone());
+        predictor_tokens.push(next_token.clone());
+
+        if head_idx < config.num_code_groups - 2 {
+            let code_embed = loaded.model.talker.code_predictor.model.codec_embedding[head_idx]
+                .forward(next_token);
+            all_embeds = Tensor::cat(vec![all_embeds, code_embed], 1);
+        }
+    }
+
+    let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
+    let codec_ids = Tensor::cat(
+        vec![input.base_codec_token_id, predictor_token_ids.clone()],
+        1,
+    );
+    debug_assert!(selected_token.is_some());
 
     Ok(CodePredictorGenerateOutput {
         codec_ids,

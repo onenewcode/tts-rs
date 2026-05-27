@@ -18,9 +18,81 @@ alignment failures.
 
 ## Current Conclusion
 
+The current highest-priority failure is audio-codec parity, not only
+talker/code-predictor drift. With Python eager codec groups as input, Rust
+decoding no longer clips, but the waveform scale still differs materially from
+Python:
+
+- Command:
+  `cargo test --release -p tts_rs_qwen_burn --test alignment_e2e rust_audio_codec_decodes_python_eager_codes_without_clipping -- --ignored --nocapture`
+- Result on 2026-05-27:
+  Rust `peak=0.15012264`, `rms=0.05151318`, `clip_fraction=0.0`;
+  Python `peak=0.8203125`, `rms=0.09017588`, `clip_fraction=0.0`;
+  waveform preview `max_abs=0.110171795`.
+- Interpretation: the previous SnakeBeta/clamp fixes removed the 65x clipping
+  failure, but decoder parity is still not solved. Do not use CLI
+  `clip_fraction=0.0` or manifest `plausible` as proof of correct audio.
+- Root-cause candidate found by comparing `/tmp/qwen3-tts-rs`:
+  `TokenizerV2Decoder::forward` applies `pre_transformer` immediately after
+  `pre_conv`, then runs `upsample_blocks`. The local Burn implementation was
+  running `upsample` before `pre_transformer`. This is a structural decoder
+  mismatch, not a precision issue. The local order has been changed to
+  `quantizer -> pre_conv -> pre_transformer -> upsample -> wave decoder`; rerun
+  the audio-codec isolation test before returning to generation drift.
+- Rerun after the decoder order fix still failed, but with a different scale:
+  Rust `peak=1.0`, `rms=0.14575405`, `clip_fraction=2.4346005e-5`;
+  Python `peak=0.8203125`, `rms=0.09017588`, `clip_fraction=0.0`;
+  waveform preview `max_abs=0.1787872`. This confirms the order fix is
+  necessary but insufficient. Continue with per-stage audio-codec activation
+  alignment instead of relying on final waveform stats.
+- Additional `/tmp/qwen3-tts-rs` structural diffs found and fixed locally:
+  - `ConvNeXtBlock` uses GELU after `pwconv1`; local code used SiLU.
+  - Vocoder `decoder.0` and final output conv are `CausalConv1d`; local
+    `Conv1dConfig` had no left padding. Local initialization now applies
+    explicit left padding of 6 for those kernel-7 convs.
+  - Wave decoder `CausalConvTranspose1d` trims `kernel_size - stride` samples
+    from both left and right; local transposed conv returned the raw output.
+    Local wrapper now performs the trim.
+  These are all structural, not precision-only, and must be validated with the
+  audio-codec isolation test before touching talker generation again.
+- Validation after these decoder fixes:
+  `cargo test --release -p tts_rs_qwen_burn --test alignment_e2e rust_audio_codec_decodes_python_eager_codes_without_clipping -- --ignored --nocapture`
+  passed in 70.16s. This closes the isolated audio-codec white-noise/clipping
+  root cause for Python eager codec groups. Remaining bad audio should now be
+  investigated in generated codec groups/talker/code-predictor, not in the
+  decoder final waveform path unless new evidence appears.
+- Full E2E after decoder fixes still fails, but the failure moved back to
+  generation:
+  `cargo test --release -p tts_rs_qwen_burn --test alignment_e2e e2e_matches_python_oracle -- --ignored --nocapture`
+  failed with base talker ids matching Python for the checked prefix, first
+  codec mismatch at `step 1 group 6` (`rust=1579`, `python=1217`), and waveform
+  preview `max_abs=0.00087161025`. First frame matched Python exactly in this
+  diagnostic path. This confirms decoder parity is no longer the active E2E
+  blocker for short Python-code previews.
+- Default release test after adding transposed-conv trimming initially failed
+  only in `audio_codec::tests::wave_decoder_upsample_stage_increases_time`.
+  The test still expected raw ConvTranspose length `12` for input length 2,
+  kernel 8, stride 4. Reference `CausalConvTranspose1d` trims
+  `kernel_size - stride = 4` from both sides, so the correct length is `4`.
+  The test expectation was updated to document the reference trimming behavior.
+- `cargo test --release -p tts_rs_qwen_burn` then passed. Default test warnings
+  remain non-blocking (`SoX` missing, flash-attn missing, tokenizer regex
+  warning, and existing unused warnings). Ignored heavy alignment tests are
+  still skipped by default.
+- CLI regenerated `./0000.wav` after decoder fixes for text
+  `你好，欢迎使用语音合成。`: duration `3.496875s`, peak `0.7530093`,
+  rms `0.08653868`, `clip_fraction=0.0`.
+- Do not compare this CLI manifest's first frame against the default full E2E
+  oracle first frame: `py/generate_reference_v9_e2e.py` defaults to
+  `其实我真的有发现，我是一个特别善于观察别人情绪的人。`, so the two runs use
+  different text. The earlier collect-vs-noncollect suspicion from that
+  comparison is rejected as an invalid probe unless reproduced with identical
+  text and inputs.
+
 The remaining V9 drift is not proven harmless. It changes generated codec
 groups and waveform previews in the ignored E2E oracle test. Treat it as a real
-alignment bug until codec groups and waveform previews are stable.
+alignment bug until both audio-codec decoding and generated codec groups are
+stable.
 
 Diagnostic threshold policy:
 
@@ -2249,3 +2321,324 @@ Conclusion:
   decision on top of base schedule `4-8:0,3`.
 - This probe was intentionally stopped when the user requested prioritizing
   end-to-end audio output and audio correctness judgement.
+
+## 2026-05-27 Same-Text Code Predictor Step0 Recheck
+
+Context:
+
+- User requested continuing debug until alignment and keeping all tolerance
+  gates at `1e-3`.
+- Rechecked the CLI text that produced the clipped WAV:
+  `你好，欢迎使用语音合成。`
+- Python oracle is forced to eager attention by
+  `py/generate_reference_v9_code_predictor.py`.
+
+Command:
+
+```bash
+QWEN_TTS_TEXT="你好，欢迎使用语音合成。" \
+QWEN_TTS_CODE_PREDICTOR_STEPS=0 \
+cargo test --release -p tts_rs_qwen_burn --test alignment_code_predictor -- --ignored --nocapture
+```
+
+Result:
+
+- Failed.
+- Rust groups:
+  `[1995, 1642, 519, 22, 793, 1485, 422, 1902, 1728, 1446, 743, 1377, 914, 344, 1772, 125]`
+- Python groups:
+  `[1995, 1642, 519, 22, 793, 1485, 422, 1902, 1728, 1446, 743, 1377, 914, 2027, 1772, 125]`
+- First mismatch is head 12: Rust selects `344`, Python selects `2027`.
+- Head 12 top candidates are close:
+  - Rust: `344=23.0`, `2027=22.875`, `1484=22.625`
+  - Python: `2027=22.875`, `344=22.625`, `1860=22.125`
+
+Attention probe result for `step0.head12`:
+
+- With Python cache tensors injected, `pytorch_bf16_scores` matched Python
+  captured attention scores/weights exactly for layers 0-4.
+- The default Rust F32 score path does not match those captured eager tensors.
+
+Rejected experiment:
+
+```bash
+QWEN_TTS_TEXT="你好，欢迎使用语音合成。" \
+QWEN_TTS_CODE_PREDICTOR_STEPS=0 \
+QWEN_TTS_CODE_PREDICTOR_ATTENTION=pytorch_bf16 \
+cargo test --release -p tts_rs_qwen_burn --test alignment_code_predictor -- --ignored --nocapture
+```
+
+- Failed.
+- Rust groups changed to:
+  `[1995, 1642, 519, 22, 793, 1485, 422, 1902, 1728, 1446, 743, 1377, 914, 344, 1772, 901]`
+- Python groups remained:
+  `[1995, 1642, 519, 22, 793, 1485, 422, 1902, 1728, 1446, 743, 1377, 914, 2027, 1772, 125]`
+
+Conclusion:
+
+- Do not globally switch production code predictor attention to the
+  `pytorch_bf16` diagnostic mode. It improves local Python-cache attention
+  probes but does not align the full generated trajectory for this input.
+- Next debug pass should compare the Rust reference repos' code-predictor
+  generation structure, especially cache vs full-sequence recomputation,
+  position/cache semantics, and sampling/argmax behavior.
+
+Correction after inspecting the generated oracle JSON:
+
+- `target/tmp/reference_v9_code_predictor.json` currently has
+  `full_codec_groups[0]` equal to
+  `[1995, 1642, 519, 22, 793, 1485, 422, 1902, 1728, 1446, 743, 1377, 914, 2027, 1772, 125]`.
+- Therefore the older note that Python's first frame used head12 `344` is stale
+  for the current eager oracle state.
+- Current Rust default code predictor head12 `344` is a real mismatch against
+  the current Python eager full generation, not only a standalone re-generation
+  artifact.
+
+## 2026-05-27 Rust Reference Code-Predictor Cache Check
+
+Reference repos inspected:
+
+- `/tmp/qwen3-tts-rs` from `git@github.com:danielclough/qwen3-tts-rs.git`.
+- `/tmp/qwen3-burn` from `git@github.com:eidola-ai/qwen3-burn.git`.
+
+Findings:
+
+- `qwen3-tts-rs/qwen_tts/src/nn/code_predictor.rs` contains two paths:
+  - `generate`: full-sequence recomputation after each predicted codebook.
+  - `generate_with_cache`: cached autoregressive path.
+- Its call sites use `generate_with_cache`.
+- However `qwen3-tts-rs` passes only `last_hidden` into
+  `generate_with_cache`, while the official Python code predictor path passes
+  `torch.cat((past_hidden, last_id_hidden), dim=1)` where `last_id_hidden` is
+  the base codebook embedding. The official Python path is still the stronger
+  semantic reference for input construction.
+- `qwen3-burn` attention uses a straightforward Burn-native BF16 matmul,
+  softmax, and value matmul path. This is useful as a performance-oriented
+  Rust reference, but it does not solve the strict Python eager alignment by
+  itself.
+
+Diagnostic experiment:
+
+- Added temporary env `QWEN_TTS_CODE_PREDICTOR_FULL_RECOMPUTE=1`.
+- This uses official input construction but recomputes the whole code-predictor
+  sequence per head instead of reusing KV cache.
+
+CLI command:
+
+```bash
+QWEN_TTS_CODE_PREDICTOR_FULL_RECOMPUTE=1 \
+cargo run --release -p tts_rs_qwen_burn --bin qwen3-tts -- \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "你好，欢迎使用语音合成。" \
+  --language Chinese \
+  --speaker Vivian \
+  --output-dir . \
+  --max-new-tokens 64
+```
+
+Result:
+
+- First frame improved only at the final codebook:
+  - default cached first frame ended with `..., 1772, 1177`
+  - full recompute first frame ended with `..., 1772, 125`
+- It did not fix head12: first frame still has `344` while current Python eager
+  full generation has `2027`.
+- Audio is still invalid/clipped:
+  - peak `65.727135`
+  - RMS `15.721404`
+  - clip_fraction `0.94906324`
+  - verdict `invalid_clipped`
+
+Conclusion:
+
+- Code-predictor cache semantics contribute to at least the final codebook
+  mismatch, but they are not the primary end-to-end audio failure.
+- The talker trajectory is already diverging: full recompute changed the next
+  talker tokens (`1995, 215, 212, 1181, 462, 462, ...`) while default cached
+  had (`1995, 215, 212, 1181, 462, 333, ...`), and neither matches current
+  Python reference behavior.
+- Keep the full-recompute switch as a diagnostic only; do not promote it to
+  production without fixing strict alignment.
+
+## 2026-05-27 Python V9 Eager Enforcement Gap
+
+Finding:
+
+- `py/generate_reference_v9_code_predictor.py` already forced the wrapper,
+  talker, and code-predictor configs to `_attn_implementation = "eager"`.
+- `py/generate_reference_v9_e2e.py`,
+  `py/generate_reference_v9_prefill.py`,
+  `py/generate_reference_v9_talker_decode.py`, and
+  `py/generate_reference_v9_talker_prefill.py` did not force eager.
+- This violated the current rule that Python reference scripts must avoid
+  PyTorch SDPA and use eager attention only.
+
+Change:
+
+- Added `force_eager_attention(wrapper)` to those V9 scripts immediately after
+  `Qwen3TTSModel.from_pretrained(...)`.
+
+Consequence:
+
+- Older E2E notes generated without explicit eager may not be comparable with
+  the current strict code-predictor oracle.
+- Re-generate all V9 Python references before using them for new conclusions.
+
+## 2026-05-27 Model Isolation: Audio Codec Is Independently Clipping
+
+User guidance:
+
+- Split model tests to reduce scope.
+- Check Rust reference implementations first to ensure the functional structure
+  is correct, then use Python eager as numerical oracle.
+
+Change:
+
+- Added ignored test
+  `rust_audio_codec_decodes_python_eager_codes_without_clipping` in
+  `tts_rs_qwen_burn/tests/alignment_e2e.rs`.
+- The test generates Python eager codec groups for
+  `你好，欢迎使用语音合成。` and feeds those groups directly into the Rust
+  audio codec decoder. This bypasses Rust frontend, talker, and code predictor.
+
+Command:
+
+```bash
+cargo test --release -p tts_rs_qwen_burn --test alignment_e2e \
+  rust_audio_codec_decodes_python_eager_codes_without_clipping -- --ignored --nocapture
+```
+
+Result:
+
+- Failed.
+- Rust audio codec stats when decoding Python eager codec groups:
+  - min `-54.595306`
+  - max `65.140816`
+  - peak `65.140816`
+  - RMS `15.76966`
+  - clip_fraction `0.9492142`
+
+Conclusion:
+
+- The 65x clipped waveform is not caused only by Rust talker/code-predictor
+  token divergence.
+- The audio codec decoder is independently wrong: correct Python codec tokens
+  still decode to a clipped Rust waveform.
+- Next priority is audio codec decoder parity against the Rust references
+  (`/tmp/qwen3-tts-rs/qwen_tts/src/audio/tokenizer/v2`) and Python eager
+  decoder output. Keep talker/code-predictor debug paused until decoder output
+  scale is fixed.
+
+## 2026-05-27 Audio Codec SnakeBeta Fix
+
+Reference comparison:
+
+- Python
+  `/opt/miniconda3/lib/python3.13/site-packages/qwen_tts/core/tokenizer_12hz/modeling_qwen3_tts_tokenizer_v2.py`
+  `SnakeBeta.forward` uses:
+  - `alpha = exp(alpha)`
+  - `beta = exp(beta)`
+  - `x + sin(x * alpha)^2 / (beta + 1e-9)`
+- Rust reference
+  `/tmp/qwen3-tts-rs/qwen_tts/src/audio/tokenizer/v2/snake_beta.rs`
+  does the same and casts to F32 for the sin computation.
+
+Bug:
+
+- Our `tts_rs_qwen_burn/src/shared/nn/activation.rs` implementation used raw
+  `alpha` and raw `beta` directly and used `1e-8`.
+- This makes the vocoder activation numerically wrong and explains the huge
+  unclamped waveform scale.
+
+Fix:
+
+- Changed `AudioCodecSnakeBeta::forward` to:
+  - cast input and parameters to F32,
+  - apply `exp()` to `alpha` and `beta`,
+  - use epsilon `1e-9`,
+  - cast back to the input dtype.
+
+Verification:
+
+```bash
+cargo test --release -p tts_rs_qwen_burn --test alignment_e2e \
+  rust_audio_codec_decodes_python_eager_codes_without_clipping -- --ignored --nocapture
+```
+
+- Passed.
+- This proves the Rust audio codec no longer clips when fed Python eager codec
+  groups.
+
+Current CLI E2E check:
+
+```bash
+cargo run --release -p tts_rs_qwen_burn --bin qwen3-tts -- \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "你好，欢迎使用语音合成。" \
+  --language Chinese \
+  --speaker Vivian \
+  --output-dir . \
+  --max-new-tokens 64
+```
+
+Result:
+
+- Wrote `./0000.wav` and `./manifest.json`.
+- Manifest waveform stats:
+  - min `-0.15015113`
+  - max `0.1389156`
+  - peak `0.15015113`
+  - RMS `0.051504903`
+  - clip_fraction `0.0`
+  - verdict `plausible`
+
+Conclusion:
+
+- End-to-end Rust inference now produces a non-clipped plausible audio file in
+  the current folder.
+- Remaining talker/code-predictor exact alignment issues still exist, but they
+  are no longer masking the audio codec scale failure.
+
+## 2026-05-27 Audio Codec Output Clamp Parity
+
+Reference comparison:
+
+- Python `Qwen3TTSTokenizerV2Decoder.forward` returns
+  `wav.clamp(min=-1, max=1)`.
+- Rust reference `/tmp/qwen3-tts-rs/qwen_tts/src/audio/decoder/v2.rs` also
+  clamps after the final conv.
+- Our Rust decoder returned raw `h` from the final decoder entry and only
+  clamped in the WAV writer.
+
+Change:
+
+- Added `h.clamp_min(-1.0).clamp_max(1.0)` at the end of
+  `Qwen3TtsAudioCodecDecoder::forward`.
+
+Verification:
+
+```bash
+cargo test --release -p tts_rs_qwen_burn --test alignment_e2e \
+  rust_audio_codec_decodes_python_eager_codes_without_clipping -- --ignored --nocapture
+```
+
+- Passed after the clamp parity change.
+
+CLI recheck:
+
+```bash
+cargo run --release -p tts_rs_qwen_burn --bin qwen3-tts -- \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "你好，欢迎使用语音合成。" \
+  --language Chinese \
+  --speaker Vivian \
+  --output-dir . \
+  --max-new-tokens 64
+```
+
+- Still writes `./0000.wav`.
+- Manifest remains non-clipped:
+  - peak `0.15015113`
+  - RMS `0.051504903`
+  - clip_fraction `0.0`
+  - verdict `plausible`
