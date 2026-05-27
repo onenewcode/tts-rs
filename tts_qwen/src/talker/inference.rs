@@ -1,138 +1,58 @@
-//! # Talker Inference Pipeline
+//! Talker inference internals.
 //!
-//! This module orchestrates the talker's autoregressive generation loop:
-//!
-//! ```text
-//! Prefill (full sequence) → select first token → decode loop (one token at a time)
-//!                                                      │
-//!                          ┌───────────────────────────┘
-//!                          │ 1. Embed selected token
-//!                          │ 2. Run decode step (attention + KV cache)
-//!                          │ 3. Apply sampling controls (V5)
-//!                          │ 4. Apply repetition penalty (V6)
-//!                          │ 5. Check EOS / max tokens
-//!                          └→ next token or stop
-//! ```
-//!
-//! ## Sampling Pipeline (sample_token)
-//!
-//! ```text
-//! logits → suppress tokens → temperature → top-k → top-p → softmax → categorical
-//! ```
-//!
-//! All sampling math uses Burn tensor operations (`gather`, `scatter`, `sort`,
-//! `categorical`) and stays on-device.
-
-use std::collections::BTreeMap;
+//! The talker stage owns one entry point: `infer`, which performs prefill,
+//! autoregressive talker token generation, and per-step code predictor expansion.
 
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
+use super::model::build_attention_mask;
 use super::nn::mlp::native_linear_3d;
 
 use crate::Qwen3TtsInferenceError;
-
 use crate::shared::config::talker::Qwen3TtsTalkerConfig;
 use crate::shared::io::talker_load::LoadedQwen3TtsTalker;
 use crate::shared::runtime::cache::KeyValueCache;
+use crate::shared::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
 
-// Re-exported from types.rs + shared/runtime/sampling.rs
-pub use super::types::*;
-use crate::shared::runtime::sampling::apply_repetition_penalty;
-#[allow(unused_imports)]
-pub use crate::shared::runtime::sampling::{SamplingConfig, StoppingRules, sample_token};
-
-pub fn forward_talker_prefill<B>(
-    config: &Qwen3TtsTalkerConfig,
-    loaded: &LoadedQwen3TtsTalker<B>,
-    input: TalkerForwardInput<B>,
-    cache: &mut [KeyValueCache<B>],
-) -> Result<TalkerForwardOutput<B>, Qwen3TtsInferenceError>
-where
-    B: Backend,
-{
-    validate_cache_layer_count(config, cache)?;
-    validate_talker_input(
-        "talker prefill",
-        input.inputs_embeds.dims(),
-        input.position_ids.dims(),
-        input.attention_mask.as_ref().map(Tensor::dims),
-        None,
-    )?;
-
-    let (last_hidden_state, logits, activations, attention_activations) =
-        loaded.model.talker.forward(
-            input.inputs_embeds,
-            input.position_ids,
-            input.attention_mask,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            cache,
-            input.collect_activations,
-        );
-
-    Ok(TalkerForwardOutput {
-        last_hidden_state,
-        logits,
-        activations,
-        attention_activations,
-    })
+#[derive(Debug)]
+pub(crate) struct TalkerInferInput<B: Backend> {
+    pub prefill_inputs_embeds: Tensor<B, 3>,
+    pub prefill_position_ids: Tensor<B, 3, Int>,
+    pub prefill_attention_mask: Option<Tensor<B, 2, Int>>,
+    pub trailing_text_hidden: Option<Tensor<B, 3>>,
+    pub tts_pad_embed: Option<Tensor<B, 3>>,
+    pub sampling: SamplingConfig,
+    pub max_new_tokens: usize,
+    pub eos_token_id: Option<usize>,
+    pub suppress_token_ids: Vec<usize>,
 }
 
-pub fn forward_talker_decode_step<B>(
-    config: &Qwen3TtsTalkerConfig,
-    loaded: &LoadedQwen3TtsTalker<B>,
-    input: TalkerDecodeInput<B>,
-    cache: &mut [KeyValueCache<B>],
-) -> Result<TalkerDecodeOutput<B>, Qwen3TtsInferenceError>
-where
-    B: Backend,
-{
-    validate_cache_layer_count(config, cache)?;
-    let cache_len = validate_cache_lengths(cache)?;
-    validate_talker_input(
-        "talker decode",
-        input.inputs_embeds.dims(),
-        input.position_ids.dims(),
-        input.attention_mask.as_ref().map(Tensor::dims),
-        Some(cache_len),
-    )?;
-
-    let (last_hidden_state, logits, activations, attention_activations) =
-        loaded.model.talker.forward(
-            input.inputs_embeds,
-            input.position_ids,
-            input.attention_mask,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            cache,
-            input.collect_activations,
-        );
-
-    Ok(TalkerDecodeOutput {
-        last_hidden_state,
-        logits,
-        activations,
-        attention_activations,
-    })
+#[derive(Debug)]
+pub(crate) struct TalkerInferOutput<B: Backend> {
+    pub talker_token_ids: Tensor<B, 2, Int>,
+    pub codec_token_ids: Tensor<B, 3, Int>,
+    pub generated_audio_steps: usize,
 }
 
-pub fn generate_talker_tokens<B>(
+struct TalkerStepOutput<B: Backend> {
+    last_hidden_state: Tensor<B, 3>,
+    logits: Tensor<B, 3>,
+}
+
+pub(crate) fn infer<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
-    input: TalkerGenerateInput<B>,
+    input: TalkerInferInput<B>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<TalkerGenerateOutput<B>, Qwen3TtsInferenceError>
+) -> Result<TalkerInferOutput<B>, Qwen3TtsInferenceError>
 where
     B: Backend,
 {
-    let max_new_tokens = input.stopping.max_new_tokens;
     validate_cache_layer_count(config, cache)?;
-    if max_new_tokens == 0 {
+    if input.max_new_tokens == 0 {
         return Err(Qwen3TtsInferenceError::InvalidInput {
-            message: "talker generation max_new_tokens must be greater than zero".to_string(),
+            message: "talker infer max_new_tokens must be greater than zero".to_string(),
         });
     }
 
@@ -146,67 +66,49 @@ where
         batch_size,
         prefill_len,
         hidden_size,
-        max_new_tokens,
-        eos_token_id = ?input.stopping.eos_token_id,
+        max_new_tokens = input.max_new_tokens,
+        eos_token_id = ?input.eos_token_id,
         suppress_token_count = input.suppress_token_ids.len(),
-        "starting talker token generation"
+        "starting talker infer"
     );
-    let collect_step_diagnostics = input.collect_step_diagnostics;
-    let trailing_text_hidden = input.trailing_text_hidden;
-    let tts_pad_embed = input.tts_pad_embed;
     validate_generation_side_inputs(
         batch_size,
         config.hidden_size,
-        trailing_text_hidden.as_ref().map(Tensor::dims),
-        tts_pad_embed.as_ref().map(Tensor::dims),
+        input.trailing_text_hidden.as_ref().map(Tensor::dims),
+        input.tts_pad_embed.as_ref().map(Tensor::dims),
     )?;
 
-    let prefill_output = forward_talker_prefill(
+    let prefill = prefill(
         config,
         loaded,
-        TalkerForwardInput {
-            inputs_embeds: input.prefill_inputs_embeds,
-            position_ids: input.prefill_position_ids,
-            attention_mask: input.prefill_attention_mask,
-            collect_activations: false,
-        },
+        input.prefill_inputs_embeds,
+        input.prefill_position_ids,
+        input.prefill_attention_mask,
         cache,
     )?;
 
-    let sampling = &input.sampling;
-    let eos_id = input.stopping.eos_token_id;
-    let suppress = &input.suppress_token_ids;
-    let rep_penalty = sampling.repetition_penalty;
-
     let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
-    let prefill_logits =
-        apply_repetition_penalty(prefill_output.logits.clone(), &empty_history, rep_penalty);
-    let (mut selected_token, mut eos_mask) =
-        sample_token::<B>(prefill_logits, sampling, eos_id, suppress, &device);
-    let mut generated_tokens: Vec<Tensor<B, 2, Int>> = vec![selected_token.clone()];
-    let mut step_hidden_states = vec![last_hidden_step(prefill_output.last_hidden_state.clone())];
-    let mut step_logits = Vec::new();
-    let mut step_diagnostics = Vec::new();
+    let prefill_logits = apply_repetition_penalty(
+        prefill.logits.clone(),
+        &empty_history,
+        input.sampling.repetition_penalty,
+    );
+    let (mut selected_token, mut eos_mask) = sample_token::<B>(
+        prefill_logits,
+        &input.sampling,
+        input.eos_token_id,
+        &input.suppress_token_ids,
+        &device,
+    );
+    let mut talker_tokens = vec![selected_token.clone()];
+    let mut current_hidden = last_hidden_step(prefill.last_hidden_state);
+    let mut codec_steps = Vec::new();
 
-    for _step_idx in 1..max_new_tokens {
-        // If EOS set and all batch items stopped, exit early
-        if eos_id.is_some()
-            && eos_mask
-                .clone()
-                .all()
-                .into_data()
-                .convert::<bool>()
-                .into_vec::<bool>()
-                .unwrap()[0]
-        {
+    for step_idx in 0..input.max_new_tokens {
+        if input.eos_token_id.is_some() && batch_finished(&eos_mask) {
             break;
         }
 
-        let cache_len_before = validate_cache_lengths(cache)?;
-        let previous_hidden_state = step_hidden_states
-            .last()
-            .expect("generation always has a hidden state for the selected token")
-            .clone();
         let mut predictor_cache = (0..config.code_predictor_config.num_hidden_layers)
             .map(|_| {
                 KeyValueCache::new(
@@ -217,137 +119,151 @@ where
                 )
             })
             .collect::<Vec<_>>();
-        let codec_groups = generate_code_predictor_groups(
+        let codec_ids = infer_code_predictor_groups(
             config,
             loaded,
-            CodePredictorGenerateInput {
-                talker_hidden_state: previous_hidden_state,
-                base_codec_token_id: selected_token,
-                sampling: SamplingConfig::greedy(),
-                collect_step_diagnostics: false,
-            },
+            current_hidden.clone(),
+            selected_token.clone(),
+            &input.sampling,
             &mut predictor_cache,
         )?;
-        let inputs_embeds = codec_group_context_embedding(config, loaded, codec_groups.codec_ids);
-        let inputs_embeds = add_trailing_text_embed(
-            inputs_embeds,
-            trailing_text_hidden.as_ref(),
-            tts_pad_embed.as_ref(),
-            generated_tokens.len() - 1,
+        codec_steps.push(
+            codec_ids
+                .clone()
+                .reshape([batch_size, config.num_code_groups, 1]),
         );
-        let diagnostic_inputs_embeds = collect_step_diagnostics.then(|| inputs_embeds.clone());
-        let position_ids =
-            Tensor::<B, 3, Int>::full([3, batch_size, 1], cache_len_before as i32, &device);
-        let decode_output = forward_talker_decode_step(
-            config,
-            loaded,
-            TalkerDecodeInput {
-                inputs_embeds,
-                position_ids,
-                attention_mask: None,
-                collect_activations: collect_step_diagnostics,
-            },
-            cache,
-        )?;
 
-        let cache_len_after = validate_cache_lengths(cache)?;
-        // Concatenate past tokens for repetition penalty
-        let past_ids = Tensor::cat(generated_tokens.clone(), 1); // [batch, history]
-        let penalized_logits =
-            apply_repetition_penalty(decode_output.logits.clone(), &past_ids, rep_penalty);
-        let (next_token, next_eos) =
-            sample_token::<B>(penalized_logits, sampling, eos_id, suppress, &device);
-        // EOS flag is sticky: once true, stays true
-        eos_mask = eos_mask.bool_or(next_eos);
-        selected_token = next_token;
-        generated_tokens.push(selected_token.clone());
-        step_hidden_states.push(last_hidden_step(decode_output.last_hidden_state.clone()));
-
-        if collect_step_diagnostics {
-            step_logits.push(decode_output.logits);
-            let mut activations = decode_output.activations;
-            if let Some(inputs_embeds) = diagnostic_inputs_embeds {
-                activations.insert("decode.inputs_embeds".to_string(), inputs_embeds);
-            }
-            step_diagnostics.push(TalkerGenerateStepDiagnostic {
-                cache_len_before,
-                cache_len_after,
-                activations,
-                attention_activations: decode_output.attention_activations,
-            });
+        if step_idx + 1 == input.max_new_tokens {
+            break;
         }
+
+        let cache_len = validate_cache_lengths(cache)?;
+        let inputs_embeds = add_trailing_text_embed(
+            codec_group_context_embedding(config, loaded, codec_ids),
+            input.trailing_text_hidden.as_ref(),
+            input.tts_pad_embed.as_ref(),
+            step_idx,
+        );
+        let position_ids = Tensor::<B, 3, Int>::full([3, batch_size, 1], cache_len as i32, &device);
+        let decoded = decode_step(config, loaded, inputs_embeds, position_ids, cache)?;
+        let past_ids = Tensor::cat(talker_tokens.clone(), 1);
+        let penalized_logits =
+            apply_repetition_penalty(decoded.logits, &past_ids, input.sampling.repetition_penalty);
+        let (next_token, next_eos) = sample_token::<B>(
+            penalized_logits,
+            &input.sampling,
+            input.eos_token_id,
+            &input.suppress_token_ids,
+            &device,
+        );
+        selected_token = next_token;
+        eos_mask = eos_mask.bool_or(next_eos);
+        talker_tokens.push(selected_token.clone());
+        current_hidden = last_hidden_step(decoded.last_hidden_state);
     }
 
-    let generated_token_ids = Tensor::cat(generated_tokens, 1);
+    if codec_steps.is_empty() {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "talker emitted EOS before any audio codec token".to_string(),
+        });
+    }
+
+    let generated_audio_steps = codec_steps.len();
+    let talker_token_ids = Tensor::cat(talker_tokens, 1);
+    let codec_token_ids = Tensor::cat(codec_steps, 2);
     tracing::info!(
-        generated_tokens = generated_token_ids.dims()[1],
-        hidden_steps = step_hidden_states.len(),
-        "finished talker token generation"
+        generated_tokens = talker_token_ids.dims()[1],
+        generated_audio_steps,
+        "finished talker infer"
     );
 
-    Ok(TalkerGenerateOutput {
-        generated_token_ids,
-        step_hidden_states,
-        prefill_logits: prefill_output.logits,
-        step_logits,
-        step_diagnostics,
+    Ok(TalkerInferOutput {
+        talker_token_ids,
+        codec_token_ids,
+        generated_audio_steps,
     })
 }
 
-pub fn forward_code_predictor_teacher_forced<B>(
+fn prefill<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
-    input: CodePredictorTeacherForcedInput<B>,
+    inputs_embeds: Tensor<B, 3>,
+    position_ids: Tensor<B, 3, Int>,
+    attention_mask: Option<Tensor<B, 2, Int>>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<CodePredictorTeacherForcedOutput<B>, Qwen3TtsInferenceError>
+) -> Result<TalkerStepOutput<B>, Qwen3TtsInferenceError>
 where
     B: Backend,
 {
-    let predictor_config = &config.code_predictor_config;
+    validate_cache_layer_count(config, cache)?;
+    validate_talker_input(
+        "talker infer prefill",
+        inputs_embeds.dims(),
+        position_ids.dims(),
+        attention_mask.as_ref().map(Tensor::dims),
+        None,
+    )?;
 
-    // Use pure operator-based logic for input embedding construction
-    let [batch_size, _code_groups] = input.codec_ids.dims();
-    let mut embeddings = Vec::with_capacity(config.num_code_groups);
-    embeddings.push(input.talker_hidden_states.unsqueeze::<3>());
-
-    for group_idx in 0..config.num_code_groups.saturating_sub(1) {
-        let token_ids = input
-            .codec_ids
-            .clone()
-            .slice([0..batch_size, group_idx..group_idx + 1])
-            .reshape([batch_size, 1]);
-        let embedding = if group_idx == 0 {
-            loaded.model.talker.model.codec_embedding.forward(token_ids)
-        } else {
-            loaded.model.talker.code_predictor.model.codec_embedding[group_idx - 1]
-                .forward(token_ids)
-        };
-        embeddings.push(embedding);
-    }
-    let inputs_embeds = Tensor::cat(embeddings, 1);
-
-    let logits = loaded.model.talker.code_predictor.forward(
+    let (last_hidden_state, logits) = loaded.model.talker.infer(
         inputs_embeds,
-        predictor_config.num_attention_heads,
-        predictor_config.num_key_value_heads,
-        predictor_config.head_dim,
-        input.attention_mask,
+        position_ids,
+        attention_mask,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
         cache,
     );
 
-    Ok(CodePredictorTeacherForcedOutput {
+    Ok(TalkerStepOutput {
+        last_hidden_state,
         logits,
-        activations: BTreeMap::new(),
-        attention_activations: BTreeMap::new(),
     })
 }
 
-pub fn generate_code_predictor_groups<B>(
+fn decode_step<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
-    input: CodePredictorGenerateInput<B>,
+    inputs_embeds: Tensor<B, 3>,
+    position_ids: Tensor<B, 3, Int>,
     cache: &mut [KeyValueCache<B>],
-) -> Result<CodePredictorGenerateOutput<B>, Qwen3TtsInferenceError>
+) -> Result<TalkerStepOutput<B>, Qwen3TtsInferenceError>
+where
+    B: Backend,
+{
+    validate_cache_layer_count(config, cache)?;
+    let cache_len = validate_cache_lengths(cache)?;
+    validate_talker_input(
+        "talker infer decode",
+        inputs_embeds.dims(),
+        position_ids.dims(),
+        None,
+        Some(cache_len),
+    )?;
+
+    let (last_hidden_state, logits) = loaded.model.talker.infer(
+        inputs_embeds,
+        position_ids,
+        None,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+        cache,
+    );
+
+    Ok(TalkerStepOutput {
+        last_hidden_state,
+        logits,
+    })
+}
+
+fn infer_code_predictor_groups<B>(
+    config: &Qwen3TtsTalkerConfig,
+    loaded: &LoadedQwen3TtsTalker<B>,
+    talker_hidden_state: Tensor<B, 2>,
+    base_codec_token_id: Tensor<B, 2, Int>,
+    sampling: &SamplingConfig,
+    cache: &mut [KeyValueCache<B>],
+) -> Result<Tensor<B, 2, Int>, Qwen3TtsInferenceError>
 where
     B: Backend,
 {
@@ -363,14 +279,8 @@ where
         layer_cache.reset();
     }
 
-    let [batch_size, hidden_size] = input.talker_hidden_state.dims();
-    tracing::debug!(
-        batch_size,
-        hidden_size,
-        code_groups = config.num_code_groups,
-        "generating code predictor groups"
-    );
-    let base_token_dims = input.base_codec_token_id.dims();
+    let [batch_size, hidden_size] = talker_hidden_state.dims();
+    let base_token_dims = base_codec_token_id.dims();
     if base_token_dims != [batch_size, 1] {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: format!(
@@ -394,20 +304,12 @@ where
         .talker
         .model
         .codec_embedding
-        .forward(input.base_codec_token_id.clone());
+        .forward(base_codec_token_id.clone());
     let prefill_inputs = Tensor::cat(
-        vec![input.talker_hidden_state.unsqueeze::<3>(), base_embedding],
+        vec![talker_hidden_state.unsqueeze::<3>(), base_embedding],
         1,
     );
-    let (prefill_hidden, prefill_activations, prefill_attention_activations) =
-        forward_code_predictor_hidden(
-            config,
-            loaded,
-            prefill_inputs,
-            None,
-            cache,
-            input.collect_step_diagnostics,
-        );
+    let prefill_hidden = run_code_predictor_hidden(config, loaded, prefill_inputs, None, cache);
     let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
     let prefill_logits = native_linear_3d(
         prefill_head,
@@ -416,69 +318,26 @@ where
             .cast(prefill_head.weight.val().dtype()),
     );
     let device = prefill_logits.device();
-    let sampling = &input.sampling;
-    let eos_id: Option<usize> = None; // code predictor has no EOS — always generates N-1 tokens
-    let suppress: &[usize] = &[];
-    let rep_penalty = sampling.repetition_penalty;
     let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
-    let prefill_logits_pen =
-        apply_repetition_penalty(prefill_logits.clone(), &empty_history, rep_penalty);
-    let mut selected_token =
-        sample_token::<B>(prefill_logits_pen, sampling, eos_id, suppress, &device).0;
+    let prefill_logits =
+        apply_repetition_penalty(prefill_logits, &empty_history, sampling.repetition_penalty);
+    let mut selected_token = sample_token::<B>(prefill_logits, sampling, None, &[], &device).0;
     let mut predictor_tokens = vec![selected_token.clone()];
-    let mut step_logits = Vec::new();
-    let mut step_diagnostics = Vec::new();
-
-    if input.collect_step_diagnostics {
-        step_logits.push(prefill_logits);
-        step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
-            cache_len_before: 0,
-            cache_len_after: validate_cache_lengths(cache)?,
-            activations: prefill_activations,
-            attention_activations: prefill_attention_activations,
-            cache_activations: cache_snapshots(cache),
-        });
-    }
 
     for head_idx in 1..config.num_code_groups - 1 {
-        let cache_len_before = validate_cache_lengths(cache)?;
         let step_inputs = loaded.model.talker.code_predictor.model.codec_embedding[head_idx - 1]
             .forward(selected_token);
-        let (step_hidden, step_activations, step_attention_activations) =
-            forward_code_predictor_hidden(
-                config,
-                loaded,
-                step_inputs,
-                None,
-                cache,
-                input.collect_step_diagnostics,
-            );
+        let step_hidden = run_code_predictor_hidden(config, loaded, step_inputs, None, cache);
         let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
         let logits = native_linear_3d(head, step_hidden.clone().cast(head.weight.val().dtype()));
-        let cache_len_after = validate_cache_lengths(cache)?;
-        let past_ids = Tensor::cat(predictor_tokens.clone(), 1); // [batch, history]
-        let logits_pen = apply_repetition_penalty(logits.clone(), &past_ids, rep_penalty);
-        let next_token = sample_token::<B>(logits_pen, sampling, eos_id, suppress, &device).0;
-        selected_token = next_token;
+        let past_ids = Tensor::cat(predictor_tokens.clone(), 1);
+        let logits = apply_repetition_penalty(logits, &past_ids, sampling.repetition_penalty);
+        selected_token = sample_token::<B>(logits, sampling, None, &[], &device).0;
         predictor_tokens.push(selected_token.clone());
-
-        if input.collect_step_diagnostics {
-            step_logits.push(logits);
-            step_diagnostics.push(CodePredictorGenerateStepDiagnostic {
-                cache_len_before,
-                cache_len_after,
-                activations: step_activations,
-                attention_activations: step_attention_activations,
-                cache_activations: cache_snapshots(cache),
-            });
-        }
     }
 
     let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
-    let codec_ids = Tensor::cat(
-        vec![input.base_codec_token_id, predictor_token_ids.clone()],
-        1,
-    );
+    let codec_ids = Tensor::cat(vec![base_codec_token_id, predictor_token_ids], 1);
     let final_cache_len = validate_cache_lengths(cache)?;
     if final_cache_len != config.num_code_groups {
         return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -493,45 +352,16 @@ where
         predictor_config.num_code_groups, config.num_code_groups,
         "talker and code predictor code group counts should match"
     );
-    tracing::debug!(
-        cache_len = final_cache_len,
-        codec_shape = ?codec_ids.dims(),
-        "generated code predictor groups"
-    );
-
-    Ok(CodePredictorGenerateOutput {
-        codec_ids,
-        predictor_token_ids,
-        step_logits,
-        step_diagnostics,
-    })
+    Ok(codec_ids)
 }
 
-fn cache_snapshots<B: Backend>(cache: &[KeyValueCache<B>]) -> BTreeMap<String, Tensor<B, 4>> {
-    let mut snapshots = BTreeMap::new();
-    for (layer_idx, layer_cache) in cache.iter().enumerate() {
-        if let Some(key) = layer_cache.key_snapshot() {
-            snapshots.insert(format!("layers.{layer_idx}.cache.key"), key);
-        }
-        if let Some(value) = layer_cache.value_snapshot() {
-            snapshots.insert(format!("layers.{layer_idx}.cache.value"), value);
-        }
-    }
-    snapshots
-}
-
-fn forward_code_predictor_hidden<B>(
+fn run_code_predictor_hidden<B>(
     config: &Qwen3TtsTalkerConfig,
     loaded: &LoadedQwen3TtsTalker<B>,
     inputs_embeds: Tensor<B, 3>,
     attention_mask: Option<Tensor<B, 2, Int>>,
     cache: &mut [KeyValueCache<B>],
-    collect_activations: bool,
-) -> (
-    Tensor<B, 3>,
-    BTreeMap<String, Tensor<B, 3>>,
-    BTreeMap<String, Tensor<B, 4>>,
-)
+) -> Tensor<B, 3>
 where
     B: Backend,
 {
@@ -556,34 +386,27 @@ where
     let [batch_size, seq_len, _] = projected_inputs.dims();
     let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
     let device = projected_inputs.device();
-    let mask =
-        super::model::build_attention_mask(batch_size, seq_len, key_len, attention_mask, &device);
+    let mask = build_attention_mask(batch_size, seq_len, key_len, attention_mask, &device);
 
-    if collect_activations {
-        predictor.model.forward_with_activations(
-            projected_inputs,
-            config.code_predictor_config.num_attention_heads,
-            config.code_predictor_config.num_key_value_heads,
-            config.code_predictor_config.head_dim,
-            &predictor.rope,
-            mask,
-            cache,
-        )
-    } else {
-        (
-            predictor.model.forward(
-                projected_inputs,
-                config.code_predictor_config.num_attention_heads,
-                config.code_predictor_config.num_key_value_heads,
-                config.code_predictor_config.head_dim,
-                &predictor.rope,
-                mask,
-                cache,
-            ),
-            BTreeMap::new(),
-            BTreeMap::new(),
-        )
-    }
+    predictor.model.run_layers(
+        projected_inputs,
+        config.code_predictor_config.num_attention_heads,
+        config.code_predictor_config.num_key_value_heads,
+        config.code_predictor_config.head_dim,
+        &predictor.rope,
+        mask,
+        cache,
+    )
+}
+
+fn batch_finished<B: Backend>(eos_mask: &Tensor<B, 1, burn::tensor::Bool>) -> bool {
+    eos_mask
+        .clone()
+        .all()
+        .into_data()
+        .convert::<bool>()
+        .into_vec::<bool>()
+        .expect("eos mask should be readable")[0]
 }
 
 fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {

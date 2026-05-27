@@ -13,7 +13,7 @@
 //!
 //! ```no_run
 //! use burn::backend::Flex;
-//! use tts_qwen::{CustomVoiceRequest, Qwen3TtsPipeline, Qwen3TtsSynthesisOptions};
+//! use tts_qwen::{CustomVoiceRequest, Qwen3TtsInferOptions, Qwen3TtsPipeline};
 //!
 //! type Backend = Flex;
 //! let device = Default::default();
@@ -23,7 +23,7 @@
 //! )?;
 //!
 //! let request = CustomVoiceRequest::new("你好，欢迎使用语音合成。");
-//! let output = pipeline.synthesize(&request, &Qwen3TtsSynthesisOptions::default())?;
+//! let output = pipeline.infer(&request, &Qwen3TtsInferOptions::default())?;
 //! assert!(output.sample_rate > 0);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -40,8 +40,8 @@ pub use frontend::{
     Qwen3TtsTextTokenizer, build_custom_voice_prompt, load_custom_voice_generation_config,
 };
 pub use pipeline::{
-    Qwen3TtsCodecGenerationOutput, Qwen3TtsPipeline, Qwen3TtsPipelineError,
-    Qwen3TtsPipelineLoadReport, Qwen3TtsSynthesisOptions, Qwen3TtsSynthesisOutput,
+    Qwen3TtsCodecGenerationOutput, Qwen3TtsInferOptions, Qwen3TtsInferOutput, Qwen3TtsPipeline,
+    Qwen3TtsPipelineError, Qwen3TtsPipelineLoadReport,
 };
 pub use shared::error::{Qwen3TtsInferenceError, Qwen3TtsLoadError};
 pub use shared::io::{LoadReport, save_wav, write_wav};

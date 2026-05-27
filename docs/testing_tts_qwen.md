@@ -46,7 +46,7 @@ This writes `0000.wav` in the requested output directory.
 
 ## Real E2E Smoke
 
-The ignored Rust E2E smoke goes through `Qwen3TtsPipeline::synthesize_to_wav`,
+The ignored Rust E2E smoke goes through `Qwen3TtsPipeline::infer_to_wav`,
 loads real weights, generates audio, and validates WAV metadata plus non-zero
 PCM data:
 

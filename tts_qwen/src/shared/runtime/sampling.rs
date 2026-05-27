@@ -42,13 +42,6 @@ impl SamplingConfig {
     }
 }
 
-/// Conditions that cause autoregressive generation to stop.
-#[derive(Debug, Clone)]
-pub struct StoppingRules {
-    pub max_new_tokens: usize,
-    pub eos_token_id: Option<usize>,
-}
-
 /// Select one token per batch item from the last position of logits.
 pub fn sample_token<B: Backend>(
     logits: Tensor<B, 3>,

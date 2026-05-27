@@ -7,7 +7,7 @@ use crate::Qwen3TtsInferenceError;
 use crate::shared::config::audio_codec::Qwen3TtsAudioCodecDecoderConfig;
 use crate::shared::io::audio_codec_load::LoadedQwen3TtsAudioCodec;
 
-pub fn decode_codec_tokens<B: Backend>(
+pub(crate) fn infer<B: Backend>(
     loaded: &LoadedQwen3TtsAudioCodec<B>,
     codec_ids: Tensor<B, 3, Int>,
     config: &Qwen3TtsAudioCodecDecoderConfig,

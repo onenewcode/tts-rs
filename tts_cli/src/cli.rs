@@ -1,12 +1,10 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use burn::backend::Flex;
+use burn::tensor::backend::Backend;
 use clap::{Parser, ValueEnum};
 use tracing::info;
-use tts_qwen::{CustomVoiceRequest, Qwen3TtsPipeline, Qwen3TtsSynthesisOptions};
-
-type Backend = Flex;
+use tts_qwen::{CustomVoiceRequest, Qwen3TtsInferOptions, Qwen3TtsPipeline};
 
 #[derive(Debug, Parser)]
 #[command(name = "tts_cli")]
@@ -19,6 +17,8 @@ pub struct Args {
     pub language: Option<String>,
     #[arg(long)]
     pub speaker: Option<String>,
+    #[arg(long, value_enum)]
+    pub backend: Option<BackendKind>,
     #[arg(long, default_value = "output")]
     pub output_dir: PathBuf,
     #[arg(long, default_value_t = 256)]
@@ -48,6 +48,14 @@ impl LogLevel {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum BackendKind {
+    #[cfg(feature = "backend-flex")]
+    Flex,
+    #[cfg(feature = "backend-ndarray")]
+    Ndarray,
+}
+
 pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
     run(Args::parse())
 }
@@ -56,18 +64,16 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     init_logging(args.log_level);
     let total_started = Instant::now();
     std::fs::create_dir_all(&args.output_dir)?;
+    let backend = resolve_backend(args.backend)?;
     info!(
         model_dir = %args.model_dir.display(),
         output_dir = %args.output_dir.display(),
+        backend = %backend.label(),
         max_new_tokens = args.max_new_tokens,
         language = args.language.as_deref().unwrap_or("Auto"),
         speaker = args.speaker.as_deref().unwrap_or(""),
         "starting tts generation"
     );
-
-    let device = Default::default();
-    let pipeline = Qwen3TtsPipeline::<Backend>::load(&args.model_dir, &device)
-        .map_err(|e| format!("failed to load pipeline: {e}"))?;
 
     let request = CustomVoiceRequest {
         text: args.text.clone(),
@@ -75,16 +81,14 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         speaker: args.speaker.clone(),
     };
     let wav_path = args.output_dir.join("0000.wav");
-    let output = pipeline
-        .synthesize_to_wav(
-            &request,
-            &Qwen3TtsSynthesisOptions {
-                max_new_tokens: args.max_new_tokens,
-                ..Qwen3TtsSynthesisOptions::default()
-            },
-            &wav_path,
-        )
-        .map_err(|e| format!("tts synthesis failed: {e}"))?;
+    let output = match backend {
+        #[cfg(feature = "backend-flex")]
+        BackendKind::Flex => run_with_backend::<burn::backend::Flex>(&args, &request, &wav_path)?,
+        #[cfg(feature = "backend-ndarray")]
+        BackendKind::Ndarray => {
+            run_with_backend::<burn::backend::NdArray>(&args, &request, &wav_path)?
+        }
+    };
     info!(
         wav_path = %wav_path.display(),
         sample_rate = output.sample_rate,
@@ -92,6 +96,69 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         "saved wav"
     );
     Ok(())
+}
+
+fn run_with_backend<B>(
+    args: &Args,
+    request: &CustomVoiceRequest,
+    wav_path: &std::path::Path,
+) -> Result<tts_qwen::Qwen3TtsInferOutput<B>, Box<dyn std::error::Error>>
+where
+    B: Backend,
+    B::Device: Clone + Default,
+{
+    let device = Default::default();
+    let pipeline = Qwen3TtsPipeline::<B>::load(&args.model_dir, &device)
+        .map_err(|e| format!("failed to load pipeline: {e}"))?;
+    pipeline
+        .infer_to_wav(
+            request,
+            &Qwen3TtsInferOptions {
+                max_new_tokens: args.max_new_tokens,
+                ..Qwen3TtsInferOptions::default()
+            },
+            wav_path,
+        )
+        .map_err(|e| format!("tts inference failed: {e}").into())
+}
+
+fn resolve_backend(
+    selected: Option<BackendKind>,
+) -> Result<BackendKind, Box<dyn std::error::Error>> {
+    let available = available_backends();
+    match (selected, available.as_slice()) {
+        (Some(backend), _) => Ok(backend),
+        (None, [backend]) => Ok(*backend),
+        (None, _) => Err(format!(
+            "multiple backends are compiled in; pass --backend one of: {}",
+            available
+                .iter()
+                .map(|backend| backend.label())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into()),
+    }
+}
+
+fn available_backends() -> Vec<BackendKind> {
+    let mut backends = Vec::new();
+    #[cfg(feature = "backend-flex")]
+    backends.push(BackendKind::Flex);
+    #[cfg(feature = "backend-ndarray")]
+    backends.push(BackendKind::Ndarray);
+    backends
+}
+
+impl BackendKind {
+    fn label(&self) -> &'static str {
+        match self {
+            #[cfg(feature = "backend-flex")]
+            Self::Flex => "flex",
+            #[cfg(feature = "backend-ndarray")]
+            Self::Ndarray => "ndarray",
+        }
+    }
 }
 
 fn init_logging(level: LogLevel) {
@@ -123,6 +190,7 @@ mod tests {
         assert_eq!(args.text, "hello");
         assert_eq!(args.language, None);
         assert_eq!(args.speaker, None);
+        assert_eq!(args.backend, None);
         assert_eq!(args.output_dir, PathBuf::from("output"));
         assert_eq!(args.max_new_tokens, 256);
         assert_eq!(args.log_level, LogLevel::Info);
@@ -140,6 +208,8 @@ mod tests {
             "Chinese",
             "--speaker",
             "Vivian",
+            "--backend",
+            available_backends()[0].label(),
             "--output-dir",
             ".",
             "--max-new-tokens",
@@ -154,5 +224,24 @@ mod tests {
         assert_eq!(args.output_dir, PathBuf::from("."));
         assert_eq!(args.max_new_tokens, 64);
         assert_eq!(args.log_level, LogLevel::Debug);
+    }
+
+    #[test]
+    fn resolve_backend_defaults_when_only_one_backend_is_compiled() {
+        let available = available_backends();
+        if available.len() == 1 {
+            assert_eq!(resolve_backend(None).unwrap(), available[0]);
+        }
+    }
+
+    #[cfg(all(feature = "backend-flex", feature = "backend-ndarray"))]
+    #[test]
+    fn resolve_backend_requires_explicit_choice_when_multiple_backends_are_compiled() {
+        let err = resolve_backend(None).expect_err("backend choice should be required");
+        assert!(
+            err.to_string()
+                .contains("multiple backends are compiled in"),
+            "unexpected error: {err}"
+        );
     }
 }

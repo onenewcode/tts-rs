@@ -77,6 +77,7 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         codec_prefix_ids.push(prefix_ids);
     }
 
+    let preferred_dtype = preferred_hidden_dtype::<B>(device);
     let batch_size = batch.requests.len();
     let max_len = seq_lens.iter().copied().max().unwrap_or(0);
     let dtype = sample_embeddings[0].dtype();
@@ -106,7 +107,7 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         }
     }
 
-    let inputs_embeds = Tensor::cat(padded_embeddings, 0).cast(DType::BF16);
+    let inputs_embeds = Tensor::cat(padded_embeddings, 0).cast(preferred_dtype);
     let attention_mask = Tensor::<B, 2, Int>::from_data(
         TensorData::new(attention_data, [batch_size, max_len]),
         device,
@@ -129,7 +130,7 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
             padded_trailing_hiddens.push(hidden);
         }
     }
-    let trailing_text_hidden = Tensor::cat(padded_trailing_hiddens, 0).cast(DType::BF16);
+    let trailing_text_hidden = Tensor::cat(padded_trailing_hiddens, 0).cast(preferred_dtype);
     tracing::info!(
         batch_size,
         max_len,
@@ -145,8 +146,16 @@ pub fn build_custom_voice_prefill_batch<B: Backend>(
         position_ids,
         attention_mask,
         trailing_text_hidden,
-        tts_pad_embed: pad_embed.cast(DType::BF16),
+        tts_pad_embed: pad_embed.cast(preferred_dtype),
     })
+}
+
+fn preferred_hidden_dtype<B: Backend>(device: &B::Device) -> DType {
+    if B::supports_dtype(device, DType::BF16) {
+        DType::BF16
+    } else {
+        DType::F32
+    }
 }
 
 fn build_tts_pad_embed<B: Backend>(

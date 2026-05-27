@@ -3,10 +3,15 @@ name = "tts_cli"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["backend-flex"]
+backend-flex = ["burn/flex", "tts_qwen/backend-flex"]
+backend-ndarray = ["burn/ndarray", "tts_qwen/backend-ndarray"]
+
 [dependencies]
-burn = { workspace = true, features = ["std", "flex"] }
+burn = { workspace = true, default-features = false, features = ["std"] }
 clap = { workspace = true }
-tts_qwen = { path = "../tts_qwen" }
+tts_qwen = { path = "../tts_qwen", default-features = false }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

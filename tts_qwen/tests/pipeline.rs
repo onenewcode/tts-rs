@@ -1,7 +1,7 @@
 mod common;
 
 use burn::backend::Flex;
-use tts_qwen::{CustomVoiceRequest, Qwen3TtsPipeline, Qwen3TtsSynthesisOptions};
+use tts_qwen::{CustomVoiceRequest, Qwen3TtsInferOptions, Qwen3TtsPipeline};
 
 type Backend = Flex;
 
@@ -44,11 +44,11 @@ fn pipeline_generates_valid_wav_with_real_model() {
         speaker: Some("Vivian".to_string()),
     };
     let output = pipeline
-        .synthesize_to_wav(
+        .infer_to_wav(
             &request,
-            &Qwen3TtsSynthesisOptions {
+            &Qwen3TtsInferOptions {
                 max_new_tokens: 64,
-                ..Qwen3TtsSynthesisOptions::default()
+                ..Qwen3TtsInferOptions::default()
             },
             &wav_path,
         )

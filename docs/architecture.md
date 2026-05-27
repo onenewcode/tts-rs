@@ -12,10 +12,10 @@ text -> frontend -> talker -> code predictor -> audio_codec -> WAV
 
 | Stage | Module | Key API |
 |---|---|---|
-| Public facade | `tts_qwen` | `Qwen3TtsPipeline::load()`, `synthesize()`, `synthesize_to_wav()` |
+| Public facade | `tts_qwen` | `Qwen3TtsPipeline::load()`, `infer()`, `infer_to_wav()` |
 | Text tokenizer / prompt / prefill | `frontend` | `Qwen3TtsPipeline::build_frontend()` |
-| Codec generation | `talker` | `generate_talker_tokens()`, `generate_code_predictor_groups()` |
-| Waveform decoding | `audio_codec` | `decode_codec_tokens()` |
+| Codec generation | `talker` | `infer()` |
+| Waveform decoding | `audio_codec` | `infer()` |
 | Output | `shared::io` | `save_wav()`, `write_wav()` |
 
 ## Module Rules

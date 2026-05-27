@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use burn::module::Module;
 use burn::nn::attention::generate_autoregressive_mask;
 use burn::nn::{Embedding, Linear, RmsNorm};
@@ -13,7 +11,6 @@ use super::nn::{
     Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding, Qwen3TtsDecoderLayer, Qwen3TtsTalkerResizeMlp,
 };
 use crate::shared::runtime::cache::KeyValueCache;
-use crate::talker::types::{TalkerActivations, TalkerAttentionActivations};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsCheckpoint<B: Backend> {
@@ -33,7 +30,7 @@ impl<B> Qwen3TtsTalker<B>
 where
     B: Backend,
 {
-    pub fn forward(
+    pub fn infer(
         &self,
         inputs_embeds: Tensor<B, 3>,
         position_ids: Tensor<B, 3, Int>,
@@ -42,19 +39,13 @@ where
         num_kv_heads: usize,
         head_dim: usize,
         cache: &mut [KeyValueCache<B>],
-        collect_activations: bool,
-    ) -> (
-        Tensor<B, 3>,
-        Tensor<B, 3>,
-        TalkerActivations<B>,
-        TalkerAttentionActivations<B>,
-    ) {
+    ) -> (Tensor<B, 3>, Tensor<B, 3>) {
         let [batch_size, seq_len, _] = inputs_embeds.dims();
         let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
         let device = inputs_embeds.device();
         let final_mask = build_attention_mask(batch_size, seq_len, key_len, mask, &device);
 
-        let (hidden_states, mut activations, attention_activations) = self.model.forward(
+        let hidden_states = self.model.run_layers(
             inputs_embeds,
             position_ids,
             num_heads,
@@ -63,13 +54,9 @@ where
             &self.mrope,
             final_mask,
             cache,
-            collect_activations,
         );
         let logits = native_linear_3d(&self.codec_head, hidden_states.clone());
-        if collect_activations {
-            activations.insert("codec_head.logits".to_string(), logits.clone());
-        }
-        (hidden_states, logits, activations, attention_activations)
+        (hidden_states, logits)
     }
 }
 
@@ -85,7 +72,7 @@ impl<B> Qwen3TtsTalkerModel<B>
 where
     B: Backend,
 {
-    pub fn forward(
+    pub fn run_layers(
         &self,
         inputs_embeds: Tensor<B, 3>,
         position_ids: Tensor<B, 3, Int>,
@@ -95,131 +82,30 @@ where
         mrope: &Qwen3RotaryEncoding<B>,
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
-        collect_activations: bool,
-    ) -> (
-        Tensor<B, 3>,
-        TalkerActivations<B>,
-        TalkerAttentionActivations<B>,
-    ) {
+    ) -> Tensor<B, 3> {
         let (cos, sin) = mrope.get_cos_sin(position_ids, inputs_embeds.dtype());
 
         let mut x = inputs_embeds;
-        let mut activations = BTreeMap::new();
-        let mut attention_activations = BTreeMap::new();
-        for (idx, (layer, c)) in self.layers.iter().zip(cache.iter_mut()).enumerate() {
-            let output = layer.forward(
-                x,
-                num_heads,
-                num_kv_heads,
-                head_dim,
-                AttentionPosition::Mrope {
-                    cos: cos.clone(),
-                    sin: sin.clone(),
-                },
-                mask.clone(),
-                c,
-                AttentionValueMode::CastSoftmaxToModelDTypeBeforeValueMatmul,
-                collect_activations,
-            );
-            if collect_activations {
-                activations.insert(
-                    format!("layers.{idx}.input_norm.output"),
-                    output
-                        .input_norm
-                        .expect("input norm output collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.attn.output"),
-                    output
-                        .attn_output
-                        .expect("attention output collected when requested"),
-                );
-                attention_activations.insert(
-                    format!("layers.{idx}.attn.weights"),
-                    output
-                        .attn_weights
-                        .expect("attention weights collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.attn_residual.output"),
-                    output
-                        .attn_residual
-                        .expect("attention residual collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.post_attention_norm.output"),
-                    output
-                        .post_attention_norm
-                        .expect("post attention norm output collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.mlp.gate"),
-                    output
-                        .mlp_gate
-                        .expect("mlp gate output collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.mlp.up"),
-                    output
-                        .mlp_up
-                        .expect("mlp up output collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.mlp.activated_gate"),
-                    output
-                        .mlp_activated_gate
-                        .expect("mlp activated gate output collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.mlp.product"),
-                    output
-                        .mlp_product
-                        .expect("mlp product output collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.mlp.output"),
-                    output
-                        .mlp_output
-                        .expect("mlp output collected when requested"),
-                );
-                activations.insert(format!("layers.{idx}.hidden.output"), output.hidden.clone());
-                activations.insert(
-                    format!("layers.{idx}.q_proj.output"),
-                    output.q_proj.expect("q_proj collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.k_proj.output"),
-                    output.k_proj.expect("k_proj collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.v_proj.output"),
-                    output.v_proj.expect("v_proj collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.q_norm.output"),
-                    output.q_norm.expect("q_norm collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.k_norm.output"),
-                    output.k_norm.expect("k_norm collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.q_rot.output"),
-                    output.q_rot.expect("q_rot collected when requested"),
-                );
-                activations.insert(
-                    format!("layers.{idx}.k_rot.output"),
-                    output.k_rot.expect("k_rot collected when requested"),
-                );
-            }
-            x = output.hidden;
+        for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
+            x = layer
+                .forward(
+                    x,
+                    num_heads,
+                    num_kv_heads,
+                    head_dim,
+                    AttentionPosition::Mrope {
+                        cos: cos.clone(),
+                        sin: sin.clone(),
+                    },
+                    mask.clone(),
+                    c,
+                    AttentionValueMode::CastSoftmaxToModelDTypeBeforeValueMatmul,
+                    false,
+                )
+                .hidden;
         }
 
-        let x = qwen_rms_norm(&self.norm, x);
-        if collect_activations {
-            activations.insert("model.norm.output".to_string(), x.clone());
-        }
-        (x, activations, attention_activations)
+        qwen_rms_norm(&self.norm, x)
     }
 }
 
@@ -235,7 +121,7 @@ impl<B> Qwen3TtsTalkerCodePredictor<B>
 where
     B: Backend,
 {
-    pub fn forward(
+    pub fn predict(
         &self,
         inputs_embeds: Tensor<B, 3>,
         num_heads: usize,
@@ -259,7 +145,7 @@ where
         };
         let x = x.cast(self.model.layers[0].self_attn.q_proj.weight.val().dtype());
 
-        let hidden_states = self.model.forward(
+        let hidden_states = self.model.run_layers(
             x,
             num_heads,
             num_kv_heads,
@@ -297,7 +183,7 @@ impl<B> Qwen3TtsTalkerCodePredictorModel<B>
 where
     B: Backend,
 {
-    pub fn forward(
+    pub fn run_layers(
         &self,
         inputs_embeds: Tensor<B, 3>,
         num_heads: usize,
@@ -337,144 +223,6 @@ where
                 .hidden;
         }
         qwen_rms_norm(&self.norm, x)
-    }
-
-    pub fn forward_with_activations(
-        &self,
-        inputs_embeds: Tensor<B, 3>,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        rope: &Qwen3StandardRotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
-        cache: &mut [KeyValueCache<B>],
-    ) -> (
-        Tensor<B, 3>,
-        TalkerActivations<B>,
-        TalkerAttentionActivations<B>,
-    ) {
-        let [batch_size, seq_len, _] = inputs_embeds.dims();
-        let start = cache.first().map_or(0, KeyValueCache::len);
-        let key_len = start + seq_len;
-        let (cos, sin) = rope.get_cos_sin(
-            batch_size,
-            seq_len,
-            start,
-            inputs_embeds.dtype(),
-            &inputs_embeds.device(),
-        );
-        let mut x = inputs_embeds;
-        let mut activations = BTreeMap::new();
-        let mut attention_activations = BTreeMap::new();
-        for (idx, (layer, c)) in self.layers.iter().zip(cache.iter_mut()).enumerate() {
-            let output = layer.forward(
-                x,
-                num_heads,
-                num_kv_heads,
-                head_dim,
-                AttentionPosition::Standard {
-                    cos: cos.clone(),
-                    sin: sin.clone(),
-                },
-                mask.clone(),
-                c,
-                code_predictor_attention_value_mode(key_len, idx),
-                true,
-            );
-            activations.insert(
-                format!("layers.{idx}.input_norm.output"),
-                output
-                    .input_norm
-                    .expect("input norm output collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.attn.output"),
-                output
-                    .attn_output
-                    .expect("attention output collected when requested"),
-            );
-            attention_activations.insert(
-                format!("layers.{idx}.attn.weights"),
-                output
-                    .attn_weights
-                    .expect("attention weights collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.attn_residual.output"),
-                output
-                    .attn_residual
-                    .expect("attention residual collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.post_attention_norm.output"),
-                output
-                    .post_attention_norm
-                    .expect("post attention norm output collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.mlp.gate"),
-                output
-                    .mlp_gate
-                    .expect("mlp gate output collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.mlp.up"),
-                output
-                    .mlp_up
-                    .expect("mlp up output collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.mlp.activated_gate"),
-                output
-                    .mlp_activated_gate
-                    .expect("mlp activated gate output collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.mlp.product"),
-                output
-                    .mlp_product
-                    .expect("mlp product output collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.mlp.output"),
-                output
-                    .mlp_output
-                    .expect("mlp output collected when requested"),
-            );
-            activations.insert(format!("layers.{idx}.hidden.output"), output.hidden.clone());
-            activations.insert(
-                format!("layers.{idx}.q_proj.output"),
-                output.q_proj.expect("q_proj collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.k_proj.output"),
-                output.k_proj.expect("k_proj collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.v_proj.output"),
-                output.v_proj.expect("v_proj collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.q_norm.output"),
-                output.q_norm.expect("q_norm collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.k_norm.output"),
-                output.k_norm.expect("k_norm collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.q_rot.output"),
-                output.q_rot.expect("q_rot collected when requested"),
-            );
-            activations.insert(
-                format!("layers.{idx}.k_rot.output"),
-                output.k_rot.expect("k_rot collected when requested"),
-            );
-            x = output.hidden;
-        }
-        let x = qwen_rms_norm(&self.norm, x);
-        activations.insert("model.norm.output".to_string(), x.clone());
-        (x, activations, attention_activations)
     }
 }
 

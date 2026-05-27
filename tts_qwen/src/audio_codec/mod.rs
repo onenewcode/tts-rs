@@ -12,7 +12,7 @@
 //!
 //! | Function | Purpose |
 //! |---|---|
-//! | `decode_codec_tokens` | Full decoder pipeline: tokens → waveform |
+//! | `infer` | Internal codec stage: tokens → waveform |
 
 mod inference;
 mod factory {
@@ -31,4 +31,4 @@ pub use crate::shared::config::audio_codec::Qwen3TtsAudioCodecConfig;
 pub use crate::shared::io::audio_codec_load::{
     LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec,
 };
-pub use inference::decode_codec_tokens;
+pub(crate) use inference::infer;
