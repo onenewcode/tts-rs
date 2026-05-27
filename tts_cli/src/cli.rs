@@ -160,6 +160,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn args_parse_required_fields_with_defaults() {
+        let args = Args::try_parse_from([
+            "tts_cli",
+            "--model-dir",
+            "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "--text",
+            "hello",
+        ])
+        .expect("minimal args should parse");
+
+        assert_eq!(
+            args.model_dir,
+            PathBuf::from("Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
+        );
+        assert_eq!(args.text, "hello");
+        assert_eq!(args.language, None);
+        assert_eq!(args.speaker, None);
+        assert_eq!(args.output_dir, PathBuf::from("output"));
+        assert_eq!(args.max_new_tokens, 256);
+    }
+
+    #[test]
+    fn args_parse_optional_generation_fields() {
+        let args = Args::try_parse_from([
+            "tts_cli",
+            "--model-dir",
+            "model",
+            "--text",
+            "你好",
+            "--language",
+            "Chinese",
+            "--speaker",
+            "Vivian",
+            "--output-dir",
+            ".",
+            "--max-new-tokens",
+            "64",
+        ])
+        .expect("full args should parse");
+
+        assert_eq!(args.language.as_deref(), Some("Chinese"));
+        assert_eq!(args.speaker.as_deref(), Some("Vivian"));
+        assert_eq!(args.output_dir, PathBuf::from("."));
+        assert_eq!(args.max_new_tokens, 64);
+    }
+
+    #[test]
     fn generated_audio_steps_stop_before_eos() {
         assert_eq!(generated_audio_steps(&[10, 11, 2150, 12], 2150), 2);
     }

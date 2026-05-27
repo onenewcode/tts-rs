@@ -6,9 +6,8 @@ use super::factory::encoder::{derive_encoder_downsample_factor, derive_encoder_d
 use super::model::decoder::{
     Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder, Qwen3TtsAudioCodecDecoderAttention,
     Qwen3TtsAudioCodecDecoderCodebook, Qwen3TtsAudioCodecDecoderMlp,
-    Qwen3TtsAudioCodecDecoderQuantizer, Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
-    Qwen3TtsAudioCodecDecoderResidualVectorQuantizer, Qwen3TtsAudioCodecDecoderTransformer,
-    Qwen3TtsAudioCodecDecoderTransformerLayer, Qwen3TtsAudioCodecDecoderVectorQuantization,
+    Qwen3TtsAudioCodecDecoderResidualVectorQuantization, Qwen3TtsAudioCodecDecoderTransformerLayer,
+    Qwen3TtsAudioCodecDecoderVectorQuantization,
 };
 use super::model::encoder::Qwen3TtsAudioCodecEncoderBackboneLayer;
 use super::model::wave_decoder::{
@@ -448,7 +447,6 @@ fn quantizer_full_3d_input_shape() {
 #[test]
 fn convnext_block_preserves_shape() {
     let device = Default::default();
-    let config = sample_config();
     // Use a small test block: channels=8
     let block = Qwen3TtsAudioCodecConvNeXtBlock::<TestBackend> {
         dwconv: AudioCodecCausalConv1d::<TestBackend>::new(8, 8, 7, 1, 1, 8, true, &device),
@@ -687,7 +685,7 @@ fn wave_decoder_entry_dispatch() {
 #[test]
 fn decoder_quantizer_output_shape_before_preconv() {
     let device = Default::default();
-    let (decoder, dconfig) = make_decoder();
+    let (decoder, _dconfig) = make_decoder();
     let codec_ids = Tensor::<TestBackend, 3, Int>::zeros([1, 4, 1], &device);
     let q_out = decoder.quantizer.forward(codec_ids, 1);
     assert_eq!(q_out.dims(), [1, 8, 1], "quantizer output shape");
@@ -696,7 +694,7 @@ fn decoder_quantizer_output_shape_before_preconv() {
 #[test]
 fn decoder_preconv_output_shape() {
     let device = Default::default();
-    let (decoder, dconfig) = make_decoder();
+    let (decoder, _dconfig) = make_decoder();
     let codec_ids = Tensor::<TestBackend, 3, Int>::zeros([1, 4, 1], &device);
     let q_out = decoder.quantizer.forward(codec_ids, 1);
     let conv_out = decoder.pre_conv.forward(q_out);
@@ -710,7 +708,7 @@ fn decoder_preconv_output_shape() {
 #[test]
 fn decoder_upsample_output_shape() {
     let device = Default::default();
-    let (decoder, dconfig) = make_decoder();
+    let (decoder, _dconfig) = make_decoder();
     let codec_ids = Tensor::<TestBackend, 3, Int>::zeros([1, 4, 1], &device);
     let q_out = decoder.quantizer.forward(codec_ids, 1);
     let h = decoder.pre_conv.forward(q_out);

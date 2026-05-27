@@ -19,6 +19,7 @@ pub fn resolve_model_dir() -> PathBuf {
     )
 }
 
+#[allow(dead_code)]
 pub fn workspace_root() -> PathBuf {
     default_workspace_root()
 }
