@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::TtsModelAdapter;
+use crate::TtsModelExecutor;
 
 #[derive(Default)]
 pub struct ModelRegistry {
-    adapters: HashMap<String, Arc<dyn TtsModelAdapter>>,
+    executors: HashMap<String, Arc<dyn TtsModelExecutor>>,
 }
 
 impl ModelRegistry {
@@ -16,12 +16,12 @@ impl ModelRegistry {
     pub fn register(
         &mut self,
         model_id: impl Into<String>,
-        adapter: Arc<dyn TtsModelAdapter>,
-    ) -> Option<Arc<dyn TtsModelAdapter>> {
-        self.adapters.insert(model_id.into(), adapter)
+        executor: Arc<dyn TtsModelExecutor>,
+    ) -> Option<Arc<dyn TtsModelExecutor>> {
+        self.executors.insert(model_id.into(), executor)
     }
 
-    pub fn get(&self, model_id: &str) -> Option<&Arc<dyn TtsModelAdapter>> {
-        self.adapters.get(model_id)
+    pub fn get(&self, model_id: &str) -> Option<&Arc<dyn TtsModelExecutor>> {
+        self.executors.get(model_id)
     }
 }

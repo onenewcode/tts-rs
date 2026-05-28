@@ -2,9 +2,9 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
 use crate::error::QwenTtsInferenceError;
+use crate::frontend::CompiledRequest;
 use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
-use crate::pipeline::CompiledRequest;
 use crate::profiling::record_operator;
 use tts_core::runtime::kv::KeyValueCache;
 use tts_core::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
@@ -38,16 +38,13 @@ pub struct TalkerGenerator<B: Backend> {
 
 #[derive(Debug)]
 pub struct TalkerStep<B: Backend> {
-    pub codec_ids: Tensor<B, 2, Int>,
-    pub generated_audio_steps: usize,
     pub finished: bool,
+    _codec_ids: Tensor<B, 2, Int>,
 }
 
 #[derive(Debug)]
 pub struct TalkerGenerationOutput<B: Backend> {
-    pub talker_token_ids: Tensor<B, 2, Int>,
     pub codec_token_ids: Tensor<B, 3, Int>,
-    pub generated_audio_steps: usize,
 }
 
 pub(crate) struct TalkerStepOutput<B: Backend> {
@@ -188,9 +185,8 @@ where
         if self.step_idx >= self.max_new_tokens {
             self.finished = true;
             return Ok(Some(TalkerStep {
-                codec_ids,
-                generated_audio_steps: self.codec_steps.len(),
                 finished: true,
+                _codec_ids: codec_ids,
             }));
         }
 
@@ -233,18 +229,13 @@ where
             self.finished = true;
         }
         Ok(Some(TalkerStep {
-            codec_ids,
-            generated_audio_steps: self.codec_steps.len(),
             finished: self.finished,
+            _codec_ids: codec_ids,
         }))
     }
 
     pub fn step_idx(&self) -> usize {
         self.step_idx
-    }
-
-    pub fn generated_audio_steps(&self) -> usize {
-        self.codec_steps.len()
     }
 
     pub fn finalize(&self) -> Result<TalkerGenerationOutput<B>, QwenTtsInferenceError> {
@@ -254,9 +245,7 @@ where
             });
         }
         Ok(TalkerGenerationOutput {
-            talker_token_ids: Tensor::cat(self.talker_tokens.clone(), 1),
             codec_token_ids: Tensor::cat(self.codec_steps.clone(), 2),
-            generated_audio_steps: self.codec_steps.len(),
         })
     }
 }

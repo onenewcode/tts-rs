@@ -1,7 +1,7 @@
 mod common;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use tts_qwen::runtime::sampling::{SamplingConfig, sample_token};
+use tts_core::runtime::sampling::{SamplingConfig, sample_token};
 
 #[cfg(feature = "flex")]
 fn bench_sampling(c: &mut Criterion) {

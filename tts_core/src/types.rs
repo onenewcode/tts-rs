@@ -60,9 +60,3 @@ pub enum SynthesisEvent {
     AudioChunk(AudioChunk),
     Finished,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionStep {
-    Running,
-    Finished,
-}

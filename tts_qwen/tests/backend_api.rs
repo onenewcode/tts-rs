@@ -1,4 +1,4 @@
-use tts_qwen::{available_backends, resolve_backend};
+use tts_qwen::available_backends;
 
 #[cfg(any(
     feature = "flex",
@@ -61,6 +61,17 @@ fn compiled_backends_only_include_supported_runtime_targets() {
         ));
     }
 }
+
+#[cfg(not(any(
+    feature = "flex",
+    feature = "wgpu",
+    feature = "cuda",
+    feature = "rocm",
+    feature = "metal",
+    feature = "vulkan",
+    feature = "webgpu"
+)))]
+use tts_qwen::resolve_backend;
 
 #[cfg(not(any(
     feature = "flex",

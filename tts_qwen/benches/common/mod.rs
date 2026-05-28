@@ -5,9 +5,7 @@ use std::path::PathBuf;
 
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
-use tts_qwen::{
-    CustomVoiceRequest, EngineConfig, ProfilingConfig, SamplingConfig, SessionConfig, StreamingMode,
-};
+use tts_qwen::CustomVoiceRequest;
 
 pub const SHORT_ASCII_TEXT: &str = "synthetic benchmark short ascii input";
 pub const SHORT_ZH_TEXT: &str = "这是固定的合成基准短句。";
@@ -69,27 +67,6 @@ pub fn require_model_dir(bench_name: &str) -> Option<PathBuf> {
         return None;
     }
     Some(path)
-}
-
-pub fn engine_config() -> EngineConfig {
-    EngineConfig {
-        codec_chunk_steps: 8,
-        profiling: ProfilingConfig {
-            enabled: false,
-            per_step: false,
-            stage_summary: true,
-            log_topk: 8,
-        },
-        ..EngineConfig::default()
-    }
-}
-
-pub fn session_config(max_new_tokens: usize) -> SessionConfig {
-    SessionConfig {
-        max_new_tokens,
-        sampling: SamplingConfig::greedy(),
-        streaming: StreamingMode::Full,
-    }
 }
 
 pub fn synthetic_pcm(sample_count: usize) -> Vec<i16> {

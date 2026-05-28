@@ -2,82 +2,75 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tts_core::{
-    AudioChunk as CoreAudioChunk, ComputeBackend, ModelCapabilities, ModelRegistry, SessionStep,
-    SynthesisEvent, SynthesisOptions, SynthesisRequest, SynthesisResult, TtsCoreError,
-    TtsModelAdapter, TtsModelSession,
+    ComputeBackend, ModelCapabilities, ModelRegistry, ModelStep, SynthesisOptions,
+    SynthesisRequest, SynthesisResult, TtsCoreError, TtsModelExecutor, TtsModelRun,
 };
 
-use crate::pipeline::{SessionConfig, SessionHandle, StreamingMode};
+use crate::frontend::CustomVoiceRequest;
+use crate::model::variant::QwenTtsVariant;
 use crate::{
-    BackendKind, CustomVoiceRequest, EngineConfig, ProfilingConfig, QwenTtsEngine, StepOutcome,
-    StreamEvent, resolve_backend,
+    BackendKind, EngineConfig, ProfilingConfig, QwenRun, QwenRunConfig, QwenRunStep, QwenTtsEngine,
+    resolve_backend,
 };
 
-pub struct QwenFamilyAdapter {
+pub(crate) struct QwenFamilyExecutor {
     model_dir: PathBuf,
-    variant: String,
+    variant: QwenTtsVariant,
 }
 
 pub fn register_qwen_family_model(
     registry: &mut ModelRegistry,
     model_id: impl Into<String>,
     model_dir: impl AsRef<Path>,
-    variant: impl Into<String>,
+    variant: impl AsRef<str>,
 ) -> bool {
+    let variant = match parse_variant(variant.as_ref()) {
+        Ok(variant) => variant,
+        Err(_) => return false,
+    };
     registry
         .register(
             model_id.into(),
-            Arc::new(QwenFamilyAdapter::new(model_dir, variant)),
+            Arc::new(QwenFamilyExecutor::new(model_dir, variant)),
         )
         .is_none()
 }
 
-impl QwenFamilyAdapter {
-    pub fn new(model_dir: impl AsRef<Path>, variant: impl Into<String>) -> Self {
+impl QwenFamilyExecutor {
+    fn new(model_dir: impl AsRef<Path>, variant: QwenTtsVariant) -> Self {
         Self {
             model_dir: model_dir.as_ref().to_path_buf(),
-            variant: variant.into(),
+            variant,
         }
-    }
-
-    pub fn variant(&self) -> &str {
-        &self.variant
     }
 
     fn resolve_backend(
         &self,
         backend: Option<&ComputeBackend>,
     ) -> Result<BackendKind, TtsCoreError> {
-        resolve_backend(backend.map(map_backend)).map_err(to_adapter_error)
+        resolve_backend(backend.map(map_backend)).map_err(to_executor_error)
     }
 
     fn build_engine_config(options: &SynthesisOptions) -> EngineConfig {
         EngineConfig {
-            codec_chunk_steps: options.chunk_steps,
             profiling: ProfilingConfig {
                 enabled: options.profiling,
                 per_step: options.profiling,
                 stage_summary: true,
                 log_topk: 8,
             },
-            ..EngineConfig::default()
         }
     }
 
-    fn build_session_config(options: &SynthesisOptions) -> SessionConfig {
-        SessionConfig {
+    fn build_run_config(options: &SynthesisOptions) -> QwenRunConfig {
+        QwenRunConfig {
             max_new_tokens: options.max_new_tokens,
             sampling: options.sampling.clone(),
-            streaming: if options.stream {
-                StreamingMode::AudioChunks
-            } else {
-                StreamingMode::Full
-            },
         }
     }
 }
 
-impl TtsModelAdapter for QwenFamilyAdapter {
+impl TtsModelExecutor for QwenFamilyExecutor {
     fn family(&self) -> &'static str {
         "qwen"
     }
@@ -89,11 +82,11 @@ impl TtsModelAdapter for QwenFamilyAdapter {
         }
     }
 
-    fn start_session(
+    fn start_run(
         &self,
         request: &SynthesisRequest,
         options: &SynthesisOptions,
-    ) -> Result<Box<dyn TtsModelSession>, TtsCoreError> {
+    ) -> Result<Box<dyn TtsModelRun>, TtsCoreError> {
         let backend = self.resolve_backend(options.backend.as_ref())?;
         let request = CustomVoiceRequest {
             text: request.text.clone(),
@@ -101,23 +94,24 @@ impl TtsModelAdapter for QwenFamilyAdapter {
             speaker: request.speaker.clone(),
         };
         let engine_config = Self::build_engine_config(options);
-        let session_config = Self::build_session_config(options);
+        let run_config = Self::build_run_config(options);
 
-        let session =
+        let run =
             match backend {
                 BackendKind::Flex => {
                     #[cfg(feature = "flex")]
                     {
-                        QwenSession::Flex(build_default_session::<burn::backend::Flex>(
+                        QwenBackendRun::Flex(build_default_run::<burn::backend::Flex>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                         )?)
                     }
                     #[cfg(not(feature = "flex"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `flex` is not compiled in".to_string(),
                             },
@@ -127,17 +121,18 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 BackendKind::Wgpu => {
                     #[cfg(feature = "wgpu")]
                     {
-                        QwenSession::Wgpu(build_wgpu_session::<burn::backend::Wgpu, _>(
+                        QwenBackendRun::Wgpu(build_wgpu_run::<burn::backend::Wgpu, _>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                             |_| {},
                         )?)
                     }
                     #[cfg(not(feature = "wgpu"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `wgpu` is not compiled in".to_string(),
                             },
@@ -147,16 +142,17 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 BackendKind::Cuda => {
                     #[cfg(feature = "cuda")]
                     {
-                        QwenSession::Cuda(build_default_session::<burn::backend::Cuda>(
+                        QwenBackendRun::Cuda(build_default_run::<burn::backend::Cuda>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                         )?)
                     }
                     #[cfg(not(feature = "cuda"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `cuda` is not compiled in".to_string(),
                             },
@@ -166,16 +162,17 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 BackendKind::Rocm => {
                     #[cfg(feature = "rocm")]
                     {
-                        QwenSession::Rocm(build_default_session::<burn::backend::Rocm>(
+                        QwenBackendRun::Rocm(build_default_run::<burn::backend::Rocm>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                         )?)
                     }
                     #[cfg(not(feature = "rocm"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `rocm` is not compiled in".to_string(),
                             },
@@ -185,11 +182,12 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 BackendKind::Metal => {
                     #[cfg(feature = "metal")]
                     {
-                        QwenSession::Metal(build_wgpu_session::<burn::backend::Metal, _>(
+                        QwenBackendRun::Metal(build_wgpu_run::<burn::backend::Metal, _>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                             |device| {
                                 burn::backend::wgpu::init_setup::<
                                     burn::backend::wgpu::graphics::Metal,
@@ -199,7 +197,7 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                     }
                     #[cfg(not(feature = "metal"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `metal` is not compiled in".to_string(),
                             },
@@ -209,11 +207,12 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 BackendKind::Vulkan => {
                     #[cfg(feature = "vulkan")]
                     {
-                        QwenSession::Vulkan(build_wgpu_session::<burn::backend::Vulkan, _>(
+                        QwenBackendRun::Vulkan(build_wgpu_run::<burn::backend::Vulkan, _>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                             |device| {
                                 burn::backend::wgpu::init_setup::<
                                     burn::backend::wgpu::graphics::Vulkan,
@@ -223,7 +222,7 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                     }
                     #[cfg(not(feature = "vulkan"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `vulkan` is not compiled in".to_string(),
                             },
@@ -233,11 +232,12 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 BackendKind::WebGpu => {
                     #[cfg(feature = "webgpu")]
                     {
-                        QwenSession::WebGpu(build_wgpu_session::<burn::backend::WebGpu, _>(
+                        QwenBackendRun::WebGpu(build_wgpu_run::<burn::backend::WebGpu, _>(
                             &self.model_dir,
+                            self.variant,
                             request,
                             engine_config,
-                            session_config,
+                            run_config,
                             |device| {
                                 burn::backend::wgpu::init_setup::<
                                     burn::backend::wgpu::graphics::WebGpu,
@@ -247,7 +247,7 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                     }
                     #[cfg(not(feature = "webgpu"))]
                     {
-                        return Err(to_adapter_error(
+                        return Err(to_executor_error(
                             crate::QwenTtsInferenceError::InvalidInput {
                                 message: "backend `webgpu` is not compiled in".to_string(),
                             },
@@ -256,42 +256,46 @@ impl TtsModelAdapter for QwenFamilyAdapter {
                 }
             };
 
-        Ok(Box::new(session))
+        Ok(Box::new(run))
     }
 }
 
-struct EngineSession<B>
+struct BackendRun<B>
 where
     B: burn::tensor::backend::Backend,
     B::Device: Clone,
 {
     engine: QwenTtsEngine<B>,
-    handle: SessionHandle,
+    run: QwenRun<B>,
 }
 
-impl<B> EngineSession<B>
+impl<B> BackendRun<B>
 where
     B: burn::tensor::backend::Backend,
     B::Device: Clone,
 {
-    fn step(&mut self) -> Result<SessionStep, TtsCoreError> {
-        match self.engine.step(self.handle).map_err(to_adapter_error)? {
-            StepOutcome::Finished => Ok(SessionStep::Finished),
-            StepOutcome::MadeProgress | StepOutcome::ProducedEvents => Ok(SessionStep::Running),
-        }
+    fn advance(&mut self) -> Result<ModelStep, TtsCoreError> {
+        let step = self
+            .engine
+            .step_run(&mut self.run)
+            .map_err(to_executor_error)?;
+        Ok(map_step(step))
     }
 
-    fn drain_events(&mut self) -> Result<Vec<SynthesisEvent>, TtsCoreError> {
+    fn decode_audio(&self) -> Result<SynthesisResult, TtsCoreError> {
         self.engine
-            .drain_events(self.handle)
-            .map_err(to_adapter_error)
-            .map(|events| events.into_iter().map(map_event).collect())
+            .snapshot_audio(&self.run)
+            .map_err(to_executor_error)
+            .map(|result| SynthesisResult {
+                waveform_pcm: result.waveform_pcm,
+                sample_rate: result.sample_rate,
+            })
     }
 
-    fn finish(mut self) -> Result<SynthesisResult, TtsCoreError> {
+    fn finish(self) -> Result<SynthesisResult, TtsCoreError> {
         self.engine
-            .finish_session(self.handle)
-            .map_err(to_adapter_error)
+            .finish_run(self.run)
+            .map_err(to_executor_error)
             .map(|result| SynthesisResult {
                 waveform_pcm: result.waveform_pcm,
                 sample_rate: result.sample_rate,
@@ -299,78 +303,78 @@ where
     }
 }
 
-enum QwenSession {
+enum QwenBackendRun {
     #[cfg(feature = "flex")]
-    Flex(EngineSession<burn::backend::Flex>),
+    Flex(BackendRun<burn::backend::Flex>),
     #[cfg(feature = "wgpu")]
-    Wgpu(EngineSession<burn::backend::Wgpu>),
+    Wgpu(BackendRun<burn::backend::Wgpu>),
     #[cfg(feature = "cuda")]
-    Cuda(EngineSession<burn::backend::Cuda>),
+    Cuda(BackendRun<burn::backend::Cuda>),
     #[cfg(feature = "rocm")]
-    Rocm(EngineSession<burn::backend::Rocm>),
+    Rocm(BackendRun<burn::backend::Rocm>),
     #[cfg(feature = "metal")]
-    Metal(EngineSession<burn::backend::Metal>),
+    Metal(BackendRun<burn::backend::Metal>),
     #[cfg(feature = "vulkan")]
-    Vulkan(EngineSession<burn::backend::Vulkan>),
+    Vulkan(BackendRun<burn::backend::Vulkan>),
     #[cfg(feature = "webgpu")]
-    WebGpu(EngineSession<burn::backend::WebGpu>),
+    WebGpu(BackendRun<burn::backend::WebGpu>),
 }
 
-impl TtsModelSession for QwenSession {
-    fn step(&mut self) -> Result<SessionStep, TtsCoreError> {
+impl TtsModelRun for QwenBackendRun {
+    fn advance(&mut self) -> Result<ModelStep, TtsCoreError> {
         match self {
             #[cfg(feature = "flex")]
-            Self::Flex(session) => session.step(),
+            Self::Flex(run) => run.advance(),
             #[cfg(feature = "wgpu")]
-            Self::Wgpu(session) => session.step(),
+            Self::Wgpu(run) => run.advance(),
             #[cfg(feature = "cuda")]
-            Self::Cuda(session) => session.step(),
+            Self::Cuda(run) => run.advance(),
             #[cfg(feature = "rocm")]
-            Self::Rocm(session) => session.step(),
+            Self::Rocm(run) => run.advance(),
             #[cfg(feature = "metal")]
-            Self::Metal(session) => session.step(),
+            Self::Metal(run) => run.advance(),
             #[cfg(feature = "vulkan")]
-            Self::Vulkan(session) => session.step(),
+            Self::Vulkan(run) => run.advance(),
             #[cfg(feature = "webgpu")]
-            Self::WebGpu(session) => session.step(),
+            Self::WebGpu(run) => run.advance(),
         }
     }
 
-    fn drain_events(&mut self) -> Result<Vec<SynthesisEvent>, TtsCoreError> {
+    fn decode_audio(&self) -> Result<SynthesisResult, TtsCoreError> {
         match self {
             #[cfg(feature = "flex")]
-            Self::Flex(session) => session.drain_events(),
+            Self::Flex(run) => run.decode_audio(),
             #[cfg(feature = "wgpu")]
-            Self::Wgpu(session) => session.drain_events(),
+            Self::Wgpu(run) => run.decode_audio(),
             #[cfg(feature = "cuda")]
-            Self::Cuda(session) => session.drain_events(),
+            Self::Cuda(run) => run.decode_audio(),
             #[cfg(feature = "rocm")]
-            Self::Rocm(session) => session.drain_events(),
+            Self::Rocm(run) => run.decode_audio(),
             #[cfg(feature = "metal")]
-            Self::Metal(session) => session.drain_events(),
+            Self::Metal(run) => run.decode_audio(),
             #[cfg(feature = "vulkan")]
-            Self::Vulkan(session) => session.drain_events(),
+            Self::Vulkan(run) => run.decode_audio(),
             #[cfg(feature = "webgpu")]
-            Self::WebGpu(session) => session.drain_events(),
+            Self::WebGpu(run) => run.decode_audio(),
         }
     }
 
     fn finish(self: Box<Self>) -> Result<SynthesisResult, TtsCoreError> {
         match *self {
             #[cfg(feature = "flex")]
-            Self::Flex(session) => session.finish(),
+            Self::Flex(run) => run.finish(),
             #[cfg(feature = "wgpu")]
-            Self::Wgpu(session) => session.finish(),
+            Self::Wgpu(run) => run.finish(),
             #[cfg(feature = "cuda")]
-            Self::Cuda(session) => session.finish(),
+            Self::Cuda(run) => run.finish(),
             #[cfg(feature = "rocm")]
-            Self::Rocm(session) => session.finish(),
+            Self::Rocm(run) => run.finish(),
             #[cfg(feature = "metal")]
-            Self::Metal(session) => session.finish(),
+            Self::Metal(run) => run.finish(),
             #[cfg(feature = "vulkan")]
-            Self::Vulkan(session) => session.finish(),
+            Self::Vulkan(run) => run.finish(),
             #[cfg(feature = "webgpu")]
-            Self::WebGpu(session) => session.finish(),
+            Self::WebGpu(run) => run.finish(),
         }
     }
 }
@@ -384,18 +388,26 @@ impl TtsModelSession for QwenSession {
     feature = "vulkan",
     feature = "webgpu"
 ))]
-fn build_default_session<B>(
+fn build_default_run<B>(
     model_dir: &Path,
+    variant: QwenTtsVariant,
     request: CustomVoiceRequest,
     engine_config: EngineConfig,
-    session_config: SessionConfig,
-) -> Result<EngineSession<B>, TtsCoreError>
+    run_config: QwenRunConfig,
+) -> Result<BackendRun<B>, TtsCoreError>
 where
     B: burn::tensor::backend::Backend,
     B::Device: Clone + Default,
 {
     let device = Default::default();
-    build_session_on_device::<B>(model_dir, &device, request, engine_config, session_config)
+    build_run_on_device::<B>(
+        model_dir,
+        variant,
+        &device,
+        request,
+        engine_config,
+        run_config,
+    )
 }
 
 #[cfg(any(
@@ -404,20 +416,28 @@ where
     feature = "vulkan",
     feature = "webgpu"
 ))]
-fn build_wgpu_session<B, F>(
+fn build_wgpu_run<B, F>(
     model_dir: &Path,
+    variant: QwenTtsVariant,
     request: CustomVoiceRequest,
     engine_config: EngineConfig,
-    session_config: SessionConfig,
+    run_config: QwenRunConfig,
     init: F,
-) -> Result<EngineSession<B>, TtsCoreError>
+) -> Result<BackendRun<B>, TtsCoreError>
 where
     B: burn::tensor::backend::Backend<Device = burn::backend::wgpu::WgpuDevice>,
     F: FnOnce(&burn::backend::wgpu::WgpuDevice),
 {
     let device = Default::default();
     init(&device);
-    build_session_on_device::<B>(model_dir, &device, request, engine_config, session_config)
+    build_run_on_device::<B>(
+        model_dir,
+        variant,
+        &device,
+        request,
+        engine_config,
+        run_config,
+    )
 }
 
 #[cfg(any(
@@ -429,23 +449,33 @@ where
     feature = "vulkan",
     feature = "webgpu"
 ))]
-fn build_session_on_device<B>(
+fn build_run_on_device<B>(
     model_dir: &Path,
+    variant: QwenTtsVariant,
     device: &B::Device,
     request: CustomVoiceRequest,
     engine_config: EngineConfig,
-    session_config: SessionConfig,
-) -> Result<EngineSession<B>, TtsCoreError>
+    run_config: QwenRunConfig,
+) -> Result<BackendRun<B>, TtsCoreError>
 where
     B: burn::tensor::backend::Backend,
     B::Device: Clone,
 {
-    let mut engine =
-        QwenTtsEngine::<B>::load(model_dir, device, engine_config).map_err(to_adapter_error)?;
-    let handle = engine
-        .start_session(request, session_config)
-        .map_err(to_adapter_error)?;
-    Ok(EngineSession { engine, handle })
+    let engine = QwenTtsEngine::<B>::load(model_dir, device, variant, engine_config)
+        .map_err(to_executor_error)?;
+    let run = engine
+        .start_run(request, run_config)
+        .map_err(to_executor_error)?;
+    Ok(BackendRun { engine, run })
+}
+
+fn parse_variant(value: &str) -> Result<QwenTtsVariant, TtsCoreError> {
+    QwenTtsVariant::parse(value).ok_or_else(|| TtsCoreError::Config {
+        message: format!(
+            "unsupported qwen variant `{value}`; currently supported: {}",
+            QwenTtsVariant::Qwen3Tts12Hz06BCustomVoice.label()
+        ),
+    })
 }
 
 fn map_backend(backend: &ComputeBackend) -> BackendKind {
@@ -460,21 +490,27 @@ fn map_backend(backend: &ComputeBackend) -> BackendKind {
     }
 }
 
-fn map_event(event: StreamEvent) -> SynthesisEvent {
-    match event {
-        StreamEvent::CodecChunk { steps } => SynthesisEvent::CodecChunk { steps },
-        StreamEvent::AudioChunk(chunk) => SynthesisEvent::AudioChunk(CoreAudioChunk {
-            pcm: chunk.pcm,
-            sample_rate: chunk.sample_rate,
-            is_final: chunk.is_final,
-        }),
-        StreamEvent::Finished => SynthesisEvent::Finished,
+fn map_step(step: QwenRunStep) -> ModelStep {
+    ModelStep {
+        generated_steps: step.generated_steps,
+        finished: step.finished,
     }
 }
 
-fn to_adapter_error(error: impl ToString) -> TtsCoreError {
-    TtsCoreError::Adapter {
-        model_type: "qwen",
+fn to_executor_error(error: impl ToString) -> TtsCoreError {
+    TtsCoreError::Executor {
+        family: "qwen",
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_variant;
+
+    #[test]
+    fn rejects_unknown_variant() {
+        let err = parse_variant("unknown").expect_err("unknown qwen variant should be rejected");
+        assert!(err.to_string().contains("unsupported qwen variant"));
     }
 }

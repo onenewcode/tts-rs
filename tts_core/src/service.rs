@@ -1,8 +1,88 @@
 use std::sync::Arc;
 
+use crate::scheduler::should_emit_audio_chunk;
 use crate::{
-    ModelRegistry, SessionStep, SynthesisOptions, SynthesisRequest, SynthesisResult, TtsCoreError,
+    ModelRegistry, ModelStep, SynthesisEvent, SynthesisOptions, SynthesisRequest, SynthesisResult,
+    TtsCoreError,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeSessionState {
+    Running,
+    Finished,
+}
+
+struct RuntimeSession {
+    run: Box<dyn crate::TtsModelRun>,
+    state: RuntimeSessionState,
+    chunk_steps: usize,
+    stream: bool,
+    generated_steps: usize,
+    emitted_audio_steps: usize,
+    emitted_samples: usize,
+    events: Vec<SynthesisEvent>,
+}
+
+impl RuntimeSession {
+    fn new(run: Box<dyn crate::TtsModelRun>, options: &SynthesisOptions) -> Self {
+        Self {
+            run,
+            state: RuntimeSessionState::Running,
+            chunk_steps: options.chunk_steps,
+            stream: options.stream,
+            generated_steps: 0,
+            emitted_audio_steps: 0,
+            emitted_samples: 0,
+            events: Vec::new(),
+        }
+    }
+
+    fn advance_until_finished(mut self) -> Result<SynthesisResult, TtsCoreError> {
+        while self.state != RuntimeSessionState::Finished {
+            let step = self.run.advance()?;
+            self.on_model_step(step)?;
+        }
+        self.run.finish()
+    }
+
+    fn on_model_step(&mut self, step: ModelStep) -> Result<(), TtsCoreError> {
+        if step.generated_steps > 0 {
+            self.generated_steps += step.generated_steps;
+            self.events.push(SynthesisEvent::CodecChunk {
+                steps: step.generated_steps,
+            });
+            self.maybe_emit_audio(step.finished)?;
+        }
+        if step.finished {
+            self.state = RuntimeSessionState::Finished;
+            self.events.push(SynthesisEvent::Finished);
+        }
+        Ok(())
+    }
+
+    fn maybe_emit_audio(&mut self, finished: bool) -> Result<(), TtsCoreError> {
+        if !self.stream {
+            return Ok(());
+        }
+        let pending_steps = self
+            .generated_steps
+            .saturating_sub(self.emitted_audio_steps);
+        if !should_emit_audio_chunk(pending_steps, self.chunk_steps, finished) {
+            return Ok(());
+        }
+        let result = self.run.decode_audio()?;
+        let delta = result.waveform_pcm[self.emitted_samples..].to_vec();
+        self.events
+            .push(SynthesisEvent::AudioChunk(crate::AudioChunk {
+                pcm: delta,
+                sample_rate: result.sample_rate,
+                is_final: finished,
+            }));
+        self.emitted_audio_steps = self.generated_steps;
+        self.emitted_samples = result.waveform_pcm.len();
+        Ok(())
+    }
+}
 
 pub struct TtsService {
     registry: Arc<ModelRegistry>,
@@ -27,21 +107,13 @@ impl TtsService {
             });
         }
 
-        let adapter = self
+        let executor = self
             .registry
             .get(model_id)
             .ok_or_else(|| TtsCoreError::UnknownModel {
                 model_id: model_id.to_string(),
             })?;
-
-        let mut session = adapter.start_session(request, options)?;
-        loop {
-            if matches!(session.step()?, SessionStep::Finished) {
-                break;
-            }
-            let _ = session.drain_events()?;
-        }
-        session.finish()
+        RuntimeSession::new(executor.start_run(request, options)?, options).advance_until_finished()
     }
 }
 
@@ -50,26 +122,34 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{ModelCapabilities, SessionStep, SynthesisEvent, TtsModelAdapter, TtsModelSession};
+    use crate::{ModelCapabilities, TtsModelExecutor, TtsModelRun};
 
-    struct MockAdapter;
-    struct MockSession {
-        done: bool,
+    struct MockExecutor;
+    struct MockRun {
+        steps_left: usize,
         sample: i16,
     }
 
-    impl TtsModelSession for MockSession {
-        fn step(&mut self) -> Result<SessionStep, TtsCoreError> {
-            if self.done {
-                Ok(SessionStep::Finished)
-            } else {
-                self.done = true;
-                Ok(SessionStep::Running)
+    impl TtsModelRun for MockRun {
+        fn advance(&mut self) -> Result<ModelStep, TtsCoreError> {
+            if self.steps_left == 0 {
+                return Ok(ModelStep {
+                    generated_steps: 0,
+                    finished: true,
+                });
             }
+            self.steps_left -= 1;
+            Ok(ModelStep {
+                generated_steps: 1,
+                finished: self.steps_left == 0,
+            })
         }
 
-        fn drain_events(&mut self) -> Result<Vec<SynthesisEvent>, TtsCoreError> {
-            Ok(vec![SynthesisEvent::CodecChunk { steps: 1 }])
+        fn decode_audio(&self) -> Result<SynthesisResult, TtsCoreError> {
+            Ok(SynthesisResult {
+                waveform_pcm: vec![self.sample],
+                sample_rate: 24000,
+            })
         }
 
         fn finish(self: Box<Self>) -> Result<SynthesisResult, TtsCoreError> {
@@ -80,7 +160,7 @@ mod tests {
         }
     }
 
-    impl TtsModelAdapter for MockAdapter {
+    impl TtsModelExecutor for MockExecutor {
         fn family(&self) -> &'static str {
             "mock"
         }
@@ -89,13 +169,13 @@ mod tests {
             ModelCapabilities::default()
         }
 
-        fn start_session(
+        fn start_run(
             &self,
             request: &SynthesisRequest,
             _options: &SynthesisOptions,
-        ) -> Result<Box<dyn TtsModelSession>, TtsCoreError> {
-            Ok(Box::new(MockSession {
-                done: false,
+        ) -> Result<Box<dyn TtsModelRun>, TtsCoreError> {
+            Ok(Box::new(MockRun {
+                steps_left: 2,
                 sample: request.text.len() as i16,
             }))
         }
@@ -104,7 +184,7 @@ mod tests {
     #[test]
     fn synthesize_routes_to_registered_adapter() {
         let mut registry = ModelRegistry::new();
-        registry.register("mock", Arc::new(MockAdapter));
+        registry.register("mock", Arc::new(MockExecutor));
         let service = TtsService::new(registry);
 
         let request = SynthesisRequest {

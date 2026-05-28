@@ -2,34 +2,44 @@ use std::path::{Path, PathBuf};
 
 use burn::tensor::backend::Backend;
 use tokenizers::Tokenizer;
-use tts_core::scheduler::should_emit_audio_chunk;
+use tts_core::runtime::sampling::SamplingConfig;
 
 use crate::engine::config::EngineConfig;
 use crate::error::{QwenTtsError, QwenTtsInferenceError};
+use crate::frontend::{
+    CustomVoiceGenerationConfig, CustomVoiceRequest, compile_request,
+    load_custom_voice_generation_config,
+};
 use crate::io::tokenizer::load_qwen3_tts_tokenizer;
 use crate::model::load::audio_codec::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
 use crate::model::load::talker::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
-use crate::pipeline::{
-    AudioChunk, CustomVoiceGenerationConfig, CustomVoiceRequest, FinishedSession, SessionConfig,
-    SessionHandle, StreamEvent, StreamingMode, TtsSession, TtsSessionState,
-    load_custom_voice_generation_config,
-};
+use crate::model::variant::QwenTtsVariant;
 use crate::profiling::{configure, with_session_context};
 use crate::runners::codec::{decode_waveform, waveform_to_pcm};
-use crate::runners::frontend::compile_request;
 use crate::runners::talker::{TalkerGenerationOutput, TalkerGenerator};
 
 #[derive(Debug, Clone)]
-pub enum StepOutcome {
-    MadeProgress,
-    ProducedEvents,
-    Finished,
+pub(crate) struct QwenRunConfig {
+    pub max_new_tokens: usize,
+    pub sampling: SamplingConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QwenRunStep {
+    pub generated_steps: usize,
+    pub finished: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct FinishedInference {
+pub(crate) struct FinishedInference {
     pub sample_rate: u32,
     pub waveform_pcm: Vec<i16>,
+}
+
+#[derive(Debug)]
+pub(crate) struct QwenRun<B: Backend> {
+    id: usize,
+    talker: TalkerGenerator<B>,
 }
 
 #[derive(Debug)]
@@ -37,14 +47,12 @@ pub struct QwenTtsEngine<B: Backend>
 where
     B::Device: Clone,
 {
-    config: EngineConfig,
     model_dir: PathBuf,
     talker: LoadedQwen3TtsTalker<B>,
     audio_codec: LoadedQwen3TtsAudioCodec<B>,
     tokenizer: Tokenizer,
     generation_config: CustomVoiceGenerationConfig,
     device: B::Device,
-    sessions: Vec<Option<TtsSession<B>>>,
 }
 
 impl<B> QwenTtsEngine<B>
@@ -55,9 +63,13 @@ where
     pub fn load(
         model_dir: impl AsRef<Path>,
         device: &B::Device,
+        variant: QwenTtsVariant,
         config: EngineConfig,
     ) -> Result<Self, QwenTtsError> {
         configure(&config.profiling);
+        match variant {
+            QwenTtsVariant::Qwen3Tts12Hz06BCustomVoice => {}
+        }
         let model_dir = model_dir.as_ref().to_path_buf();
         let talker = load_qwen3_tts_talker_for_inference::<B>(&model_dir, device)?;
         let audio_codec = load_qwen3_tts_audio_codec::<B>(&model_dir, device)?;
@@ -65,37 +77,20 @@ where
             load_qwen3_tts_tokenizer(&model_dir).map_err(QwenTtsInferenceError::from)?;
         let generation_config = load_custom_voice_generation_config(&model_dir)?;
         Ok(Self {
-            config,
             model_dir,
             talker,
             audio_codec,
             tokenizer,
             generation_config,
             device: device.clone(),
-            sessions: Vec::new(),
         })
     }
 
-    pub fn start_session(
-        &mut self,
+    pub fn start_run(
+        &self,
         request: CustomVoiceRequest,
-        config: SessionConfig,
-    ) -> Result<SessionHandle, QwenTtsError> {
-        if self
-            .sessions
-            .iter()
-            .filter(|session| session.is_some())
-            .count()
-            >= self.config.max_concurrent_sessions
-        {
-            return Err(QwenTtsInferenceError::InvalidInput {
-                message: format!(
-                    "max_concurrent_sessions={} exceeded",
-                    self.config.max_concurrent_sessions
-                ),
-            }
-            .into());
-        }
+        config: QwenRunConfig,
+    ) -> Result<QwenRun<B>, QwenTtsError> {
         let compiled = compile_request(
             &self.tokenizer,
             &self.model_dir,
@@ -104,178 +99,51 @@ where
             &request,
             &self.device,
         )?;
-        let id = self
-            .sessions
-            .iter()
-            .position(Option::is_none)
-            .unwrap_or(self.sessions.len());
-        let session = TtsSession {
-            id,
-            state: TtsSessionState::Created,
-            config,
-            compiled,
-            talker: None,
-            pending_audio: Default::default(),
-            queued_events: Vec::new(),
-        };
-        if id == self.sessions.len() {
-            self.sessions.push(Some(session));
-        } else {
-            self.sessions[id] = Some(session);
-        }
-        Ok(SessionHandle(id))
+        let talker = TalkerGenerator::start(
+            &self.talker.config.talker_config,
+            &self.talker,
+            &compiled,
+            config.sampling,
+            config.max_new_tokens,
+            Some(self.generation_config.codec_eos_token_id),
+            self.generation_config.suppress_token_ids.clone(),
+        )?;
+        Ok(QwenRun { id: 0, talker })
     }
 
-    pub fn step(&mut self, handle: SessionHandle) -> Result<StepOutcome, QwenTtsError> {
-        let mut session = self.take_session(handle)?;
-        if session.state == TtsSessionState::Finished {
-            self.put_session(handle, session);
-            return Ok(StepOutcome::Finished);
+    pub fn step_run(&self, run: &mut QwenRun<B>) -> Result<QwenRunStep, QwenTtsError> {
+        let step_idx = run.talker.step_idx();
+        let step_result = with_session_context(run.id, step_idx, || run.talker.step(&self.talker))?;
+        match step_result {
+            Some(step) => Ok(QwenRunStep {
+                generated_steps: 1,
+                finished: step.finished,
+            }),
+            None => Ok(QwenRunStep {
+                generated_steps: 0,
+                finished: true,
+            }),
         }
-        if session.talker.is_none() {
-            session.talker = Some(TalkerGenerator::start(
-                &self.talker.config.talker_config,
-                &self.talker,
-                &session.compiled,
-                session.config.sampling.clone(),
-                session.config.max_new_tokens,
-                Some(self.generation_config.codec_eos_token_id),
-                self.generation_config.suppress_token_ids.clone(),
-            )?);
-            session.state = TtsSessionState::Prefilled;
-        }
-
-        let session_id = session.id;
-        let step_idx = session
-            .talker
-            .as_ref()
-            .map(TalkerGenerator::step_idx)
-            .unwrap_or_default();
-        let step_result = with_session_context(session_id, step_idx, || {
-            session
-                .talker
-                .as_mut()
-                .expect("talker session should exist")
-                .step(&self.talker)
-        })?;
-        let outcome = if let Some(step) = step_result {
-            session.state = if step.finished {
-                TtsSessionState::Draining
-            } else {
-                TtsSessionState::Generating
-            };
-            session
-                .queued_events
-                .push(StreamEvent::CodecChunk { steps: 1 });
-            self.maybe_emit_audio(&mut session, step.finished)?;
-            if step.finished {
-                session.queued_events.push(StreamEvent::Finished);
-                session.state = TtsSessionState::Finished;
-                StepOutcome::Finished
-            } else if session.queued_events.is_empty() {
-                StepOutcome::MadeProgress
-            } else {
-                StepOutcome::ProducedEvents
-            }
-        } else {
-            self.maybe_emit_audio(&mut session, true)?;
-            session.queued_events.push(StreamEvent::Finished);
-            session.state = TtsSessionState::Finished;
-            StepOutcome::Finished
-        };
-        self.put_session(handle, session);
-        Ok(outcome)
     }
 
-    pub fn drain_events(
-        &mut self,
-        handle: SessionHandle,
-    ) -> Result<Vec<StreamEvent>, QwenTtsError> {
-        let mut session = self.take_session(handle)?;
-        let events = std::mem::take(&mut session.queued_events);
-        self.put_session(handle, session);
-        Ok(events)
+    pub fn snapshot_audio(&self, run: &QwenRun<B>) -> Result<FinishedInference, QwenTtsError> {
+        self.decode_finished_talker(&run.talker)
     }
 
-    pub fn finish_session(
-        &mut self,
-        handle: SessionHandle,
+    pub fn finish_run(&self, run: QwenRun<B>) -> Result<FinishedInference, QwenTtsError> {
+        self.decode_finished_talker(&run.talker)
+    }
+
+    fn decode_finished_talker(
+        &self,
+        talker: &TalkerGenerator<B>,
     ) -> Result<FinishedInference, QwenTtsError> {
-        let mut session = self.take_session(handle)?;
-        let finished = self.decode_finished_session(&mut session)?;
+        let generation: TalkerGenerationOutput<B> = talker.finalize()?;
+        let waveform = decode_waveform(&self.audio_codec, generation.codec_token_ids)?;
+        let pcm = waveform_to_pcm(&waveform)?;
         Ok(FinishedInference {
-            sample_rate: finished.sample_rate,
-            waveform_pcm: finished.waveform_pcm,
-        })
-    }
-
-    fn maybe_emit_audio(
-        &self,
-        session: &mut TtsSession<B>,
-        finished: bool,
-    ) -> Result<(), QwenTtsError> {
-        if session.config.streaming == StreamingMode::Full {
-            return Ok(());
-        }
-        let talker = session
-            .talker
-            .as_ref()
-            .expect("talker session should exist");
-        let generated_steps = talker.generated_audio_steps();
-        let pending_steps = generated_steps.saturating_sub(session.pending_audio.emitted_steps);
-        if !should_emit_audio_chunk(pending_steps, self.config.codec_chunk_steps, finished) {
-            return Ok(());
-        }
-        let generation = talker.finalize()?;
-        let waveform = decode_waveform(&self.audio_codec, generation.codec_token_ids)?;
-        let pcm = waveform_to_pcm(&waveform)?;
-        let delta = pcm[session.pending_audio.emitted_samples..].to_vec();
-        session.pending_audio.emitted_steps = generated_steps;
-        session.pending_audio.emitted_samples = pcm.len();
-        session
-            .queued_events
-            .push(StreamEvent::AudioChunk(AudioChunk {
-                pcm: delta,
-                sample_rate: self.audio_codec.config.output_sample_rate as u32,
-                is_final: finished,
-            }));
-        Ok(())
-    }
-
-    fn decode_finished_session(
-        &self,
-        session: &mut TtsSession<B>,
-    ) -> Result<FinishedSession, QwenTtsError> {
-        let generation: TalkerGenerationOutput<B> = session
-            .talker
-            .as_ref()
-            .expect("talker session should exist")
-            .finalize()?;
-        let waveform = decode_waveform(&self.audio_codec, generation.codec_token_ids)?;
-        let pcm = waveform_to_pcm(&waveform)?;
-        Ok(FinishedSession {
             sample_rate: self.audio_codec.config.output_sample_rate as u32,
             waveform_pcm: pcm,
         })
-    }
-
-    fn take_session(&mut self, handle: SessionHandle) -> Result<TtsSession<B>, QwenTtsError> {
-        self.sessions
-            .get_mut(handle.0)
-            .and_then(Option::take)
-            .ok_or_else(|| {
-                QwenTtsInferenceError::InvalidInput {
-                    message: format!("unknown session handle {}", handle.0),
-                }
-                .into()
-            })
-    }
-
-    fn put_session(&mut self, handle: SessionHandle, session: TtsSession<B>) {
-        if handle.0 == self.sessions.len() {
-            self.sessions.push(Some(session));
-        } else {
-            self.sessions[handle.0] = Some(session);
-        }
     }
 }

@@ -2,22 +2,19 @@
 
 mod common;
 
-use std::sync::Arc;
-
 use tts_core::{ComputeBackend, ModelRegistry, SynthesisOptions, SynthesisRequest, TtsService};
-use tts_qwen::QwenFamilyAdapter;
+use tts_qwen::register_qwen_family_model;
 
 #[test]
 fn engine_loads_and_runs_a_session_to_completion() {
     let model_dir = common::resolve_model_dir();
     let mut registry = ModelRegistry::new();
-    registry.register(
+    assert!(register_qwen_family_model(
+        &mut registry,
         "qwen-test",
-        Arc::new(QwenFamilyAdapter::new(
-            &model_dir,
-            "qwen3-tts-12hz-0.6b-customvoice",
-        )),
-    );
+        &model_dir,
+        "qwen3-tts-12hz-0.6b-customvoice",
+    ));
     let service = TtsService::new(registry);
     let finished = service
         .synthesize(
@@ -47,13 +44,12 @@ fn engine_generates_valid_wav_with_real_model() {
     std::fs::create_dir_all(&output_dir).expect("e2e output dir should exist");
     let wav_path = output_dir.join("0000.wav");
     let mut registry = ModelRegistry::new();
-    registry.register(
+    assert!(register_qwen_family_model(
+        &mut registry,
         "qwen-test",
-        Arc::new(QwenFamilyAdapter::new(
-            &model_dir,
-            "qwen3-tts-12hz-0.6b-customvoice",
-        )),
-    );
+        &model_dir,
+        "qwen3-tts-12hz-0.6b-customvoice",
+    ));
     let service = TtsService::new(registry);
     let output = service
         .synthesize(

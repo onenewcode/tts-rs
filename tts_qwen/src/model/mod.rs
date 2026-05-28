@@ -9,3 +9,4 @@ mod build;
 pub mod config;
 pub mod load;
 pub mod qwen_tts;
+pub(crate) mod variant;
