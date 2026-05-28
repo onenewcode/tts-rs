@@ -1,0 +1,17 @@
+format: qwen3_tts_package/v1
+name: qwen3-tts-12hz-0.6b-customvoice
+
+artifacts:
+  tokenizer: tokenizer.json
+  talker_config: configs/talker.json
+  talker_weights: weights/talker.safetensors
+  codec_config: configs/codec.json
+  codec_weights: weights/codec.safetensors
+
+profiles:
+  base:
+    generation_config: profiles/base/generation_config.json
+    control_config: profiles/base/control_config.json
+  custom_voice:
+    generation_config: profiles/custom_voice/generation_config.json
+    control_config: profiles/custom_voice/control_config.json

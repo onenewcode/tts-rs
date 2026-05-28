@@ -1,12 +1,11 @@
-models:
-  - id: qwen-default
-    family: qwen
-    variant: qwen3-tts-12hz-0.6b-customvoice
-    paths:
-      model_dir: Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice
-    defaults:
-      max_new_tokens: 256
-      chunk_steps: 8
-      stream: false
-      profiling: false
-      backend: flex
+# Legacy example retained only to prevent accidental reuse of the old registry
+# shape during the refactor. It is no longer the target configuration format.
+#
+# New target:
+# - package-first CLI input
+# - per-package manifest
+# - no global models registry
+#
+# See `docs/qwen3_tts_package.example.yaml` and
+# `docs/refactor/06-package-manifest-example.md`.
+legacy_models_registry_retired: true

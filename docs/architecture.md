@@ -1,56 +1,46 @@
-# TTS Inference Engine Architecture
+# TTS Refactor Architecture
 
-The workspace is split into a reusable execution core and a Qwen-specific
-model crate:
+This repository is in the middle of a planned architecture reset. The current
+source tree still contains the legacy `tts_core` + `tts_qwen` split, but that
+layout is no longer the target design.
 
-- `tts_core`: model-agnostic execution kernel, scheduling helpers, shared
-  sampling runtime, and output abstractions.
-- `tts_qwen`: Qwen-family runtime, release routing, request profiles, shared
-  Qwen architectures, tokenizer loading, and WAV output helpers.
+The implementation target is now:
 
-## Runtime Flow
+- `tts_infer`: a thin inference-service crate that owns lifecycle orchestration,
+  `PcmAudio`, and the internal session contract.
+- `tts_qwen3_tts`: the concrete model crate for the current Qwen3-TTS model.
+- `tts_cli`: a thin command-line entrypoint over `tts_qwen3_tts`.
 
-```text
-request -> tts_core runtime -> qwen release router -> qwen profile compiler -> qwen arch runner -> codec -> WAV
-           ^                                                                 |
-           |                                                                 v
-    core session/events/chunking                                  backend + model lifecycle glue
-```
+The old design elements below are intended to be removed during implementation:
 
-## Public API
+- the `tts_core` crate
+- the public `variant/release` layer
+- `tts_qwen/src/arch`
+- fake-generic request types such as `text/language/speaker` in a shared core
+- the old registry/executor facade path
 
-| API | Purpose |
-|---|---|
-| `tts_core::TtsService::synthesize()` | model-agnostic runtime entrypoint |
-| `tts_qwen::register_qwen_family_model()` | register a Qwen release into the core registry |
-| `tts_qwen::CustomVoiceRequest` | public request type for the exported custom-voice Qwen profile |
+Use the refactor documents under `docs/refactor/` as the source of truth for
+implementation. They are intentionally written as target-state documents for
+Goal-mode automation, not as descriptions of the current code.
 
-## Source Layout
+## Refactor Document Set
 
-```text
-tts_core/src/
-  executor.rs    core executor/run contract
-  service.rs     core-owned runtime loop and chunking policy
-  runtime/       shared sampling + KV primitives
-  scheduler.rs   chunk emission scheduling helper
+- `docs/refactor/README.md`: overall objective, principles, and document index
+- `docs/refactor/01-crate-boundaries.md`: workspace split and crate ownership
+- `docs/refactor/02-tts-infer-contract.md`: thin service-layer contract and
+  session state machine
+- `docs/refactor/03-tts-qwen3-tts-design.md`: model-crate public API,
+  package/compiler/model/session design
+- `docs/refactor/04-cli-and-package-shape.md`: CLI shape and package-manifest
+  responsibilities
+- `docs/refactor/05-migration-and-acceptance.md`: migration map, acceptance
+  criteria, and validation plan
+- `docs/refactor/06-package-manifest-example.md`: locked target manifest shape
+- `docs/refactor/07-source-tree-migration-map.md`: file-level migration map and
+  target tree
 
-tts_qwen/src/
-  arch/          shared qwen-family model structure, loaders, runners, and kernels
-  profile/       request semantics, prompt rules, and request compilation
-  releases.rs    family release metadata and release-to-architecture/profile routing
-  runtime/       crate-local executor glue and runtime-local types
-  io/            tokenizer and WAV helpers
-  profiling/     profiling toggles and operator instrumentation
-  registry.rs    qwen family registration entrypoint
-```
+## Example Inputs
 
-## Design Rules
-
-- Core orchestration lives in `tts_core`; model crates should not reimplement
-  generic runtime loops, chunk scheduling, or event policy.
-- Release selection is metadata-driven: a release resolves to one architecture
-  runner plus one request profile.
-- Architecture modules own model structure, weights, state, and forward paths.
-- Profile modules own request semantics, prompt rules, and request compilation.
-- Runtime modules own backend setup and run lifecycle; they must not absorb
-  Qwen prompt or model-shape logic.
+- `docs/qwen3_tts_package.example.yaml`: target package manifest example
+- `docs/models.example.yaml`: deprecated legacy registry example kept only as a
+  marker that the old path is retired

@@ -1,117 +1,89 @@
-# Testing tts_qwen
+# Testing Target For The Qwen3-TTS Refactor
 
-## Test Layers
+This repository is moving away from the legacy `tts_core` + `tts_qwen`
+architecture. Until code lands, this document defines the intended validation
+shape for the new design so later Goal-mode implementation can wire tests to the
+correct seams.
 
-The workspace separates fast Rust-only validation from model-backed synthesis
-checks around the Qwen runtime, profile compiler, and the CLI wrapper.
+## Target Crates
 
-## Fast Validation
+The target workspace is:
+
+- `tts_infer`
+- `tts_qwen3_tts`
+- `tts_cli`
+
+## Service-Layer Validation
+
+Expected fast tests for `tts_infer`:
 
 ```bash
-cargo check --workspace
-cargo test -p tts_qwen --lib
+cargo test -p tts_infer
+```
+
+These should cover:
+
+- `Engine<M>::synthesize()` driving `start_session + step + finish`
+- `EngineSession` state guard behavior
+- `InferError::Model(...)` vs `InferError::Service(...)`
+- `PcmAudio` result invariants
+
+## Model-Crate Validation
+
+Expected fast tests for `tts_qwen3_tts`:
+
+```bash
+cargo test -p tts_qwen3_tts --lib
+cargo test -p tts_qwen3_tts --tests --no-run
+```
+
+These should cover:
+
+- package manifest parsing
+- package-path normalization into `Qwen3TtsPackage`
+- backend resolution rules
+- request validation for `BaseRequest` and `CustomVoiceRequest`
+- compiler loading profile config once at engine load
+- prompt recipe behavior
+- `SessionSeed<B>` construction
+- session finalization into `PcmAudio`
+
+## CLI Validation
+
+Expected fast tests for `tts_cli`:
+
+```bash
 cargo test -p tts_cli --lib
-cargo test -p tts_qwen --test backend_api
-cargo test -p tts_qwen --tests --no-run
 ```
 
-These cover release routing, profile-facing APIs, CLI parsing, and integration
-binary compilation without requiring local model weights.
+These should cover:
 
-## Model-Backed Integration Tests
+- package-first input parsing
+- profile subcommands
+- mapping subcommand args into `QwenRequest`
+- mapping run flags into `Qwen3TtsRunOptions`
 
-The integration tests under `tts_qwen/tests/` still require
-`QWEN_TTS_MODEL_DIR`. These tests are useful for API-level debugging, but the
-most representative synthesis check is the CLI smoke run shown below.
+## Model-Backed Smoke Goal
 
-Useful runs:
+The preferred end-to-end path is:
 
-```bash
-cargo test -p tts_qwen --test frontend -- --nocapture
-cargo test -p tts_qwen --test tokenizer -- --nocapture
-cargo test -p tts_qwen --test pipeline -- --nocapture
-```
+- load package through `Qwen3TtsEngine::load(...)`
+- synthesize through `Qwen3TtsEngine::synthesize(...)`
+- write `PcmAudio` to a WAV file via `tts_cli`
 
-## Preferred CLI End-to-End Smoke
+Expected artifact properties:
 
-Use the CLI for end-to-end synthesis validation. This exercises backend
-selection, release routing, profile compilation, arch execution, codec decode,
-and WAV writing in the same path that end users call.
-
-```bash
-cargo run --release -p tts_cli -- \
-  --models-config docs/models.example.yaml \
-  --model-id qwen-default \
-  --text "你好，欢迎使用语音合成。" \
-  --language Chinese \
-  --speaker Vivian \
-  --output-dir . \
-  --max-new-tokens 64 \
-  --chunk-steps 8
-```
-
-This writes `0000.wav` in the current directory.
-
-Why these arguments matter:
-
-- `--language Chinese` and `--speaker Vivian` produce a stable reference path
-  for the current local custom-voice model.
-- `--max-new-tokens 64` avoids extremely long generations and trailing silence
-  on short prompts.
-- `--output-dir .` makes it obvious where the artifact landed when doing manual
-  listening checks.
-
-After generation, validate the artifact itself:
-
-```bash
-python3 - <<'PY'
-import wave
-with wave.open("0000.wav", "rb") as wav:
-    print("channels=", wav.getnchannels())
-    print("rate=", wav.getframerate())
-    print("width=", wav.getsampwidth())
-    print("frames=", wav.getnframes())
-PY
-```
-
-Expected shape for the current model path:
-
-- mono channel
-- 24000 Hz sample rate
+- mono
+- 24000 Hz
 - 16-bit PCM
 - non-zero frame count
 
-## Benchmarks
+## Legacy Test Debt To Remove
 
-Use `criterion` benchmarks for long-term local performance comparisons. All
-benchmark inputs are fixed synthetic data so prompt content and numeric inputs
-stay stable across runs. The `engine_bench` target still requires real model
-weights because it measures the actual inference path.
+When the code migration starts, tests tied only to the deleted architecture
+should be removed or rewritten:
 
-Fast synthetic-only benches:
-
-```bash
-cargo bench -p tts_qwen --bench prompt_bench
-cargo bench -p tts_qwen --bench sampling_bench
-cargo bench -p tts_qwen --bench wav_bench
-```
-
-Model-backed benchmark targets:
-
-```bash
-QWEN_TTS_MODEL_DIR=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
-  cargo bench -p tts_qwen --bench tokenizer_bench
-
-QWEN_TTS_MODEL_DIR=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
-  cargo bench -p tts_qwen --bench engine_bench
-```
-
-Benchmark reports are written under `target/criterion/`.
-
-Interpretation rules:
-
-- compare results only on the same machine, same model directory, and same
-  compiled backend
-- treat `engine_bench` as the main inference optimization baseline
-- do not compare different backends as one trend line; compare within the same
-  backend only
+- tests centered on `tts_core`
+- tests centered on public release/variant routing
+- tests that assume `tts_qwen/src/arch`
+- tests for fake streaming/chunk policy behavior from the old service loop
