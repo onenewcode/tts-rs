@@ -6,8 +6,8 @@ use tts_core::{
     TtsCoreError, TtsModelExecutor, TtsModelRun,
 };
 
-use crate::arch::engine::assembly::bridge::{
-    FinishedInference, QwenEngine, QwenEngineBridge, QwenRun, QwenRunConfig, QwenRunStep,
+use crate::arch::engine::assembly::{
+    EngineArtifact, FinishedInference, QwenRun, QwenRunConfig, QwenRunStep,
 };
 use crate::profile::QwenRequest;
 use crate::releases::{QwenReleaseManifest, parse_release_manifest};
@@ -106,7 +106,8 @@ where
     B: burn::tensor::backend::Backend,
     B::Device: Clone,
 {
-    engine: QwenEngine<B>,
+    engine: EngineArtifact<B>,
+    device: B::Device,
     run: QwenRun<B>,
 }
 
@@ -125,14 +126,14 @@ where
 
     fn decode_audio(&self) -> Result<SynthesisResult, TtsCoreError> {
         self.engine
-            .snapshot_audio(&self.run)
+            .snapshot_audio(&self.run, &self.device)
             .map_err(to_executor_error)
             .map(map_result)
     }
 
     fn finish(self) -> Result<SynthesisResult, TtsCoreError> {
         self.engine
-            .finish_run(self.run)
+            .finish_run(self.run, &self.device)
             .map_err(to_executor_error)
             .map(map_result)
     }
@@ -457,7 +458,7 @@ where
     B: burn::tensor::backend::Backend,
     B::Device: Clone,
 {
-    let engine = QwenEngineBridge::load_engine::<B>(model_dir, release, device, engine_config)
+    let engine = EngineArtifact::assemble(model_dir, release, device, engine_config)
         .map_err(to_executor_error)?;
     let run = engine
         .start_run(
@@ -466,9 +467,14 @@ where
                 max_new_tokens: run_config.max_new_tokens,
                 sampling: run_config.sampling,
             },
+            device,
         )
         .map_err(to_executor_error)?;
-    Ok(BackendRun { engine, run })
+    Ok(BackendRun {
+        engine,
+        device: device.clone(),
+        run,
+    })
 }
 
 fn unavailable_backend_error(name: &str) -> TtsCoreError {

@@ -1,28 +1,31 @@
 use burn::tensor::backend::Backend;
 
+use crate::arch::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
+use crate::arch::engine::components::generator::weights::LoadedQwen3TtsTalker;
+use crate::arch::engine::protocol::{CodecTokenSequence, PreparedCondition};
 use crate::error::QwenTtsInferenceError;
+use crate::profile::compile::{CompiledRequest, materialize_compiled_request};
 
 use super::graph::runner::TalkerGenerationOutput;
-use crate::arch::engine::protocol::{CodecTokenSequence, PreparedCondition};
 
 #[derive(Debug)]
 pub(crate) struct GeneratorExecutionForm<B: Backend> {
-    prepared: PreparedCondition<B>,
+    compiled: CompiledRequest<B>,
 }
 
 impl<B: Backend> GeneratorExecutionForm<B> {
     #[cfg(test)]
     pub(crate) fn batch_size(&self) -> usize {
-        self.prepared.dims()[0]
+        self.compiled.inputs_embeds.dims()[0]
     }
 
     #[cfg(test)]
     pub(crate) fn sequence_len(&self) -> usize {
-        self.prepared.dims()[1]
+        self.compiled.inputs_embeds.dims()[1]
     }
 
-    pub(crate) fn into_prepared(self) -> PreparedCondition<B> {
-        self.prepared
+    pub(crate) fn into_compiled(self) -> CompiledRequest<B> {
+        self.compiled
     }
 }
 
@@ -31,25 +34,45 @@ pub(crate) struct GeneratorLowering;
 
 impl GeneratorLowering {
     pub(crate) fn lower<B: Backend>(
-        prepared: PreparedCondition<B>,
+        prepared: &PreparedCondition,
+        talker_config: &Qwen3TtsTalkerConfig,
+        talker: &LoadedQwen3TtsTalker<B>,
+        device: &B::Device,
     ) -> Result<GeneratorExecutionForm<B>, QwenTtsInferenceError> {
         let release_label = prepared.release_label();
-        let dims = prepared.dims();
-        if dims[0] != 1 {
+        if prepared.batch_size() != 1 {
             return Err(QwenTtsInferenceError::InvalidInput {
                 message: format!(
                     "generator lowering currently supports exactly one request per session for `{release_label}`, got batch {}",
-                    dims[0]
+                    prepared.batch_size()
                 ),
             });
         }
-        Ok(GeneratorExecutionForm { prepared })
+        let compiled = materialize_compiled_request(prepared.semantic(), talker_config, talker, device)?;
+        Ok(GeneratorExecutionForm { compiled })
     }
 
     pub(crate) fn lift_output<B: Backend>(
         output: TalkerGenerationOutput<B>,
         num_code_groups: usize,
-    ) -> Result<CodecTokenSequence<B>, QwenTtsInferenceError> {
-        CodecTokenSequence::new(output.codec_token_ids, num_code_groups)
+    ) -> Result<CodecTokenSequence, QwenTtsInferenceError> {
+        let dims = output.codec_token_ids.dims();
+        let [batch_size, quantizers, time_steps] = dims;
+        let token_ids = output
+            .codec_token_ids
+            .into_data()
+            .convert::<i32>()
+            .into_vec::<i32>()
+            .map_err(|e| QwenTtsInferenceError::TensorRead {
+                message: format!("failed to read codec token sequence: {e}"),
+            })?;
+        if quantizers != num_code_groups {
+            return Err(QwenTtsInferenceError::InvalidInput {
+                message: format!(
+                    "codec token sequence quantizer mismatch: expected {num_code_groups}, got {quantizers}"
+                ),
+            });
+        }
+        CodecTokenSequence::new(token_ids, batch_size, quantizers, time_steps)
     }
 }

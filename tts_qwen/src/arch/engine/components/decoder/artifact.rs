@@ -2,12 +2,12 @@ use std::path::Path;
 
 use burn::tensor::backend::Backend;
 
+use crate::arch::engine::protocol::{CodecTokenSequence, Waveform};
 use crate::error::{Qwen3TtsLoadError, QwenTtsInferenceError};
 
 use super::lowering::{DecoderExecutionForm, DecoderLowering};
 use super::spec::decoder_component_spec;
 use super::weights::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
-use crate::arch::engine::protocol::{CodecTokenSequence, Waveform};
 
 #[derive(Debug)]
 pub(crate) struct DecoderArtifact<B: Backend> {
@@ -30,25 +30,24 @@ impl<B: Backend> DecoderArtifact<B> {
         self.spec
     }
 
-
     pub(crate) fn num_quantizers(&self) -> usize {
         self.loaded.config.decoder_config.num_quantizers
     }
 
     pub(crate) fn decode(
         &self,
-        sequence: CodecTokenSequence<B>,
-    ) -> Result<Waveform<B>, QwenTtsInferenceError> {
-        let execution = DecoderLowering::lower(sequence)?;
+        sequence: &CodecTokenSequence,
+        device: &B::Device,
+    ) -> Result<Waveform, QwenTtsInferenceError> {
+        let execution = DecoderLowering::lower(sequence, device)?;
         self.decode_from_execution(execution)
     }
 
     fn decode_from_execution(
         &self,
         execution: DecoderExecutionForm<B>,
-    ) -> Result<Waveform<B>, QwenTtsInferenceError> {
-        let sequence = execution.into_sequence();
-        let waveform = super::graph::decode_waveform(&self.loaded, sequence.into_tensor())?;
+    ) -> Result<Waveform, QwenTtsInferenceError> {
+        let waveform = super::graph::decode_waveform(&self.loaded, execution.into_tensor())?;
         DecoderLowering::lift_output(self.loaded.config.output_sample_rate as u32, waveform)
     }
 }

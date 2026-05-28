@@ -7,15 +7,22 @@ pub mod spec;
 #[cfg(test)]
 mod tests {
     use burn::backend::Flex;
-    use burn::tensor::{Int, Tensor, TensorData};
 
     use super::components::{
         decoder::lowering::DecoderLowering,
-        generator::lowering::GeneratorLowering,
+        generator::{
+            import::config::{
+                Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
+                Qwen3TtsTalkerRopeScalingConfig,
+            },
+            lowering::GeneratorLowering,
+            weights::LoadedQwen3TtsTalker,
+        },
     };
     use super::protocol::{CodecTokenSequence, PreparedCondition};
     use super::spec::{ComponentKind, EnginePolicy, qwen_engine_spec};
-    use crate::profile::compile::CompiledRequest;
+    use crate::profile::compile::SemanticRequestCondition;
+    use crate::profile::model_config::ProfileControlIds;
 
     type TestBackend = Flex;
 
@@ -48,36 +55,100 @@ mod tests {
     #[test]
     fn generator_lowering_keeps_request_semantics_outside_graph() {
         let device = Default::default();
-        let compiled = CompiledRequest {
-            inputs_embeds: Tensor::<TestBackend, 3>::zeros([1, 2, 4], &device),
-            position_ids: Tensor::<TestBackend, 3, Int>::zeros([3, 1, 2], &device),
-            attention_mask: Tensor::<TestBackend, 2, Int>::ones([1, 2], &device),
-            trailing_text_hidden: Tensor::<TestBackend, 3>::zeros([1, 1, 4], &device),
-            tts_pad_embed: Tensor::<TestBackend, 3>::zeros([1, 1, 4], &device),
-        };
-        let prepared = PreparedCondition::new("qwen3-tts-12hz-0.6b-base", compiled).unwrap();
+        let talker = synthetic_loaded_talker::<TestBackend>(&device);
+        let prepared = PreparedCondition::new(
+            "qwen3-tts-12hz-0.6b-base",
+            SemanticRequestCondition {
+                text_token_ids: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                controls: ProfileControlIds {
+                    tts_bos_token_id: 1,
+                    tts_eos_token_id: 2,
+                    tts_pad_token_id: 3,
+                    codec_bos_id: 4,
+                    codec_pad_id: 5,
+                    codec_prefix_ids: vec![4, 6, 7],
+                },
+            },
+        )
+        .unwrap();
 
-        let execution = GeneratorLowering::lower(prepared).unwrap();
+        assert_eq!(prepared.sequence_len_hint(), 12);
+
+        let execution = GeneratorLowering::lower(
+            &prepared,
+            &talker.config.talker_config,
+            &talker,
+            &device,
+        )
+        .unwrap();
         assert_eq!(execution.batch_size(), 1);
-        assert_eq!(execution.sequence_len(), 2);
-        assert_eq!(execution.into_prepared().release_label(), "qwen3-tts-12hz-0.6b-base");
+        assert!(execution.sequence_len() > 0);
+        assert_eq!(prepared.release_label(), "qwen3-tts-12hz-0.6b-base");
     }
 
     #[test]
     fn decoder_lowering_requires_complete_codec_token_sequences() {
         let device = Default::default();
-        let tokens = Tensor::<TestBackend, 3, Int>::from_data(
-            TensorData::new(vec![1, 2, 3, 4], [1, 2, 2]),
-            &device,
-        );
-        let sequence = CodecTokenSequence::new(tokens, 2).unwrap();
-        let execution = DecoderLowering::lower(sequence).unwrap();
+        let sequence = CodecTokenSequence::new(vec![1, 2, 3, 4], 1, 2, 2).unwrap();
+        let execution = DecoderLowering::lower::<TestBackend>(&sequence, &device).unwrap();
         assert_eq!(execution.batch_size(), 1);
         assert_eq!(execution.num_quantizers(), 2);
         assert_eq!(execution.time_steps(), 2);
 
-        let empty = Tensor::<TestBackend, 3, Int>::zeros([1, 2, 0], &device);
-        let error = CodecTokenSequence::new(empty, 2).unwrap_err().to_string();
+        let error = CodecTokenSequence::new(vec![], 1, 2, 0)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("time dimension must be non-zero"));
+    }
+
+    #[test]
+    fn waveform_protocol_keeps_semantic_shape_metadata() {
+        let waveform = super::protocol::Waveform::new(24_000, 1, 1, vec![0.0, 0.5, -0.5]).unwrap();
+        assert_eq!(waveform.sample_rate(), 24_000);
+        assert_eq!(waveform.batch_size(), 1);
+        assert_eq!(waveform.channels(), 1);
+        assert_eq!(waveform.samples().len(), 3);
+    }
+
+    fn synthetic_loaded_talker<B: burn::tensor::backend::Backend>(
+        device: &B::Device,
+    ) -> LoadedQwen3TtsTalker<B> {
+        let config = Qwen3TtsConfig {
+            talker_config: Qwen3TtsTalkerConfig {
+                code_predictor_config: Qwen3TtsTalkerCodePredictorConfig {
+                    vocab_size: 16,
+                    hidden_size: 4,
+                    intermediate_size: 8,
+                    hidden_act: "silu".to_string(),
+                    num_hidden_layers: 1,
+                    num_attention_heads: 1,
+                    num_key_value_heads: 1,
+                    head_dim: 4,
+                    max_position_embeddings: 32,
+                    rms_norm_eps: 1e-6,
+                    rope_theta: 10_000.0,
+                    attention_bias: false,
+                    num_code_groups: 3,
+                },
+                vocab_size: 16,
+                hidden_size: 4,
+                intermediate_size: 8,
+                hidden_act: "silu".to_string(),
+                num_hidden_layers: 1,
+                num_attention_heads: 1,
+                num_key_value_heads: 1,
+                head_dim: 4,
+                max_position_embeddings: 32,
+                rms_norm_eps: 1e-6,
+                rope_theta: 10_000.0,
+                rope_scaling: Qwen3TtsTalkerRopeScalingConfig::default(),
+                attention_bias: false,
+                num_code_groups: 3,
+                text_hidden_size: 4,
+                text_vocab_size: 32,
+            },
+        };
+        let model = config.init_checkpoint(device);
+        LoadedQwen3TtsTalker { config, model }
     }
 }

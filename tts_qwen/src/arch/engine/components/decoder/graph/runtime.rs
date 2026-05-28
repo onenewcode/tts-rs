@@ -2,9 +2,10 @@ use burn::nn::RotaryEncodingConfig;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
-use crate::error::QwenTtsInferenceError;
 use crate::arch::engine::components::decoder::import::config::Qwen3TtsAudioCodecDecoderConfig;
 use crate::arch::engine::components::decoder::weights::LoadedQwen3TtsAudioCodec;
+use crate::arch::engine::protocol::Waveform;
+use crate::error::QwenTtsInferenceError;
 use crate::profiling::record_operator;
 
 pub fn decode_waveform<B: Backend>(
@@ -14,20 +15,12 @@ pub fn decode_waveform<B: Backend>(
     infer(loaded, codec_ids, &loaded.config.decoder_config)
 }
 
-pub fn waveform_to_pcm<B: Backend>(
-    waveform: &Tensor<B, 3>,
-) -> Result<Vec<i16>, QwenTtsInferenceError> {
-    let samples: Vec<f32> = waveform
-        .clone()
-        .flatten::<1>(0, 2)
-        .into_data()
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .map_err(|e| QwenTtsInferenceError::TensorRead {
-            message: format!("failed to read waveform: {e}"),
-        })?;
-    Ok(samples
-        .into_iter()
+pub fn waveform_to_pcm(waveform: &Waveform) -> Result<Vec<i16>, QwenTtsInferenceError> {
+    let _frame_count = waveform.samples().len() / (waveform.batch_size() * waveform.channels());
+    Ok(waveform
+        .samples()
+        .iter()
+        .copied()
         .map(|sample| (sample.clamp(-1.0, 1.0) * 32767.0) as i16)
         .collect())
 }

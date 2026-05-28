@@ -3,14 +3,13 @@ use std::path::Path;
 use burn::tensor::backend::Backend;
 use tts_core::runtime::sampling::SamplingConfig;
 
+use crate::arch::engine::protocol::{CodecTokenSequence, PreparedCondition};
 use crate::error::{Qwen3TtsLoadError, QwenTtsInferenceError};
 
 use super::graph::runner::TalkerGenerator;
-use super::import::config::Qwen3TtsTalkerConfig;
 use super::lowering::{GeneratorExecutionForm, GeneratorLowering};
 use super::spec::generator_component_spec;
 use super::weights::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
-use crate::arch::engine::protocol::{CodecTokenSequence, PreparedCondition};
 
 #[derive(Debug)]
 pub(crate) struct GeneratorArtifact<B: Backend> {
@@ -33,9 +32,6 @@ impl<B: Backend> GeneratorArtifact<B> {
         self.spec
     }
 
-    pub(crate) fn talker_config(&self) -> &Qwen3TtsTalkerConfig {
-        &self.loaded.config.talker_config
-    }
 
     pub(crate) fn loaded_talker(&self) -> &LoadedQwen3TtsTalker<B> {
         &self.loaded
@@ -45,22 +41,40 @@ impl<B: Backend> GeneratorArtifact<B> {
         self.loaded.config.talker_config.num_code_groups
     }
 
+    pub(crate) fn execution_form(
+        &self,
+        prepared: &PreparedCondition,
+        device: &B::Device,
+    ) -> Result<GeneratorExecutionForm<B>, QwenTtsInferenceError> {
+        GeneratorLowering::lower(
+            prepared,
+            &self.loaded.config.talker_config,
+            &self.loaded,
+            device,
+        )
+    }
+
     pub(crate) fn start_run(
         &self,
-        prepared: PreparedCondition<B>,
+        execution: GeneratorExecutionForm<B>,
         sampling: SamplingConfig,
         max_new_tokens: usize,
         eos_token_id: Option<usize>,
         suppress_token_ids: Vec<usize>,
     ) -> Result<TalkerGenerator<B>, QwenTtsInferenceError> {
-        let execution = GeneratorLowering::lower(prepared)?;
-        self.start_from_execution(execution, sampling, max_new_tokens, eos_token_id, suppress_token_ids)
+        self.start_from_execution(
+            execution,
+            sampling,
+            max_new_tokens,
+            eos_token_id,
+            suppress_token_ids,
+        )
     }
 
     pub(crate) fn finalize_sequence(
         &self,
         run: &TalkerGenerator<B>,
-    ) -> Result<CodecTokenSequence<B>, QwenTtsInferenceError> {
+    ) -> Result<CodecTokenSequence, QwenTtsInferenceError> {
         let output = run.finalize()?;
         GeneratorLowering::lift_output(output, self.num_code_groups())
     }
@@ -73,8 +87,7 @@ impl<B: Backend> GeneratorArtifact<B> {
         eos_token_id: Option<usize>,
         suppress_token_ids: Vec<usize>,
     ) -> Result<TalkerGenerator<B>, QwenTtsInferenceError> {
-        let prepared = execution.into_prepared();
-        let compiled = prepared.into_compiled();
+        let compiled = execution.into_compiled();
         TalkerGenerator::start(
             &self.loaded.config.talker_config,
             &self.loaded,

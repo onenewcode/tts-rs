@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use burn::tensor::backend::Backend;
 use tokenizers::Tokenizer;
 
 use crate::error::QwenTtsInferenceError;
@@ -10,7 +9,6 @@ use crate::profile::compile::compile_request;
 use crate::profile::model_config::GenerationConfig;
 use crate::releases::QwenReleaseManifest;
 
-use super::components::generator::artifact::GeneratorArtifact;
 use super::protocol::PreparedCondition;
 
 #[derive(Debug, Clone)]
@@ -32,9 +30,15 @@ impl ConditionCompiler {
         release: &'static QwenReleaseManifest,
     ) -> Result<Self, QwenTtsInferenceError> {
         let model_dir = model_dir.as_ref().to_path_buf();
-        tracing::debug!(architecture = release.architecture.label, ?release.architecture.id, model_dir = %model_dir.display(), "loading condition compiler");
+        tracing::debug!(
+            architecture = release.architecture.label,
+            ?release.architecture.id,
+            model_dir = %model_dir.display(),
+            "loading condition compiler"
+        );
         let tokenizer = load_qwen3_tts_tokenizer(&model_dir)?;
-        let generation_config = (release.architecture.load_generation_config)(&model_dir, release.profile)?;
+        let generation_config =
+            (release.architecture.load_generation_config)(&model_dir, release.profile)?;
         Ok(Self {
             artifact: CompilerArtifact {
                 model_dir,
@@ -44,7 +48,6 @@ impl ConditionCompiler {
             },
         })
     }
-
 
     pub(crate) fn into_artifact(self) -> CompilerArtifact {
         self.artifact
@@ -56,21 +59,11 @@ impl CompilerArtifact {
         &self.generation_config
     }
 
-    pub(crate) fn prepare<B: Backend>(
+    pub(crate) fn prepare(
         &self,
-        generator: &GeneratorArtifact<B>,
         request: &QwenRequest,
-        device: &B::Device,
-    ) -> Result<PreparedCondition<B>, QwenTtsInferenceError> {
-        let compiled = compile_request(
-            self.release,
-            &self.tokenizer,
-            &self.model_dir,
-            generator.talker_config(),
-            generator.loaded_talker(),
-            request,
-            device,
-        )?;
-        PreparedCondition::new(self.release.label, compiled)
+    ) -> Result<PreparedCondition, QwenTtsInferenceError> {
+        let semantic = compile_request(self.release, &self.tokenizer, &self.model_dir, request)?;
+        PreparedCondition::new(self.release.label, semantic)
     }
 }

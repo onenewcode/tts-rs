@@ -1,16 +1,43 @@
-pub mod bridge;
-
 use std::path::Path;
 
 use burn::tensor::backend::Backend;
+use tts_core::runtime::sampling::SamplingConfig;
 
+use crate::arch::engine::components::decoder::graph::waveform_to_pcm;
+use crate::arch::engine::components::generator::graph::runner::TalkerGenerator;
 use crate::error::{QwenTtsError, QwenTtsInferenceError};
+use crate::profiling::with_session_context;
+use crate::profile::QwenRequest;
 use crate::releases::QwenReleaseManifest;
 use crate::runtime::types::EngineConfig;
 
 use super::compiler::{CompilerArtifact, ConditionCompiler};
 use super::components::{decoder::artifact::DecoderArtifact, generator::artifact::GeneratorArtifact};
 use super::spec::{ComponentKind, ComponentSpec, EngineSpec, qwen_engine_spec};
+
+#[derive(Debug, Clone)]
+pub(crate) struct QwenRunConfig {
+    pub max_new_tokens: usize,
+    pub sampling: SamplingConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QwenRunStep {
+    pub generated_steps: usize,
+    pub finished: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FinishedInference {
+    pub sample_rate: u32,
+    pub waveform_pcm: Vec<i16>,
+}
+
+#[derive(Debug)]
+pub(crate) struct QwenRun<B: Backend> {
+    id: usize,
+    generator_run: TalkerGenerator<B>,
+}
 
 #[derive(Debug)]
 pub(crate) struct EngineArtifact<B: Backend> {
@@ -41,17 +68,76 @@ impl<B: Backend> EngineArtifact<B> {
         Ok(artifact)
     }
 
-    pub(crate) fn compiler(&self) -> &CompilerArtifact {
-        &self.compiler
+    pub(crate) fn start_run(
+        &self,
+        request: QwenRequest,
+        config: QwenRunConfig,
+        device: &B::Device,
+    ) -> Result<QwenRun<B>, QwenTtsError> {
+        let prepared = self.compiler.prepare(&request)?;
+        let execution = self.generator.execution_form(&prepared, device)?;
+        let generation = self.generator.start_run(
+            execution,
+            config.sampling,
+            config.max_new_tokens,
+            Some(self.compiler.generation_config().codec_eos_token_id),
+            self.compiler.generation_config().suppress_token_ids.clone(),
+        )?;
+        Ok(QwenRun {
+            id: 0,
+            generator_run: generation,
+        })
     }
 
-    pub(crate) fn generator(&self) -> &GeneratorArtifact<B> {
-        &self.generator
+    pub(crate) fn step_run(&self, run: &mut QwenRun<B>) -> Result<QwenRunStep, QwenTtsError> {
+        let step_idx = run.generator_run.step_idx();
+        let step_result = with_session_context(run.id, step_idx, || {
+            run.generator_run.step(self.generator.loaded_talker())
+        })?;
+        match step_result {
+            Some(step) => Ok(QwenRunStep {
+                generated_steps: 1,
+                finished: step.finished,
+            }),
+            None => Ok(QwenRunStep {
+                generated_steps: 0,
+                finished: true,
+            }),
+        }
     }
 
-    pub(crate) fn decoder(&self) -> &DecoderArtifact<B> {
-        &self.decoder
+    pub(crate) fn snapshot_audio(
+        &self,
+        run: &QwenRun<B>,
+        device: &B::Device,
+    ) -> Result<FinishedInference, QwenTtsError> {
+        self.decode_finished_generator(&run.generator_run, device)
     }
+
+    pub(crate) fn finish_run(
+        &self,
+        run: QwenRun<B>,
+        device: &B::Device,
+    ) -> Result<FinishedInference, QwenTtsError> {
+        self.decode_finished_generator(&run.generator_run, device)
+    }
+
+    fn decode_finished_generator(
+        &self,
+        generator_run: &TalkerGenerator<B>,
+        device: &B::Device,
+    ) -> Result<FinishedInference, QwenTtsError> {
+        let sequence = self.generator.finalize_sequence(generator_run)?;
+        let waveform = self.decoder.decode(&sequence, device)?;
+        let pcm = waveform_to_pcm(&waveform)?;
+        Ok(FinishedInference {
+            sample_rate: waveform.sample_rate(),
+            waveform_pcm: pcm,
+        })
+    }
+
+
+
 
     fn validate_compatibility(&self) -> Result<(), QwenTtsInferenceError> {
         validate_engine_contract(

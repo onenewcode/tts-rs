@@ -4,9 +4,9 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 use tokenizers::Tokenizer;
 
-use crate::error::QwenTtsInferenceError;
 use crate::arch::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
 use crate::arch::engine::components::generator::weights::LoadedQwen3TtsTalker;
+use crate::error::QwenTtsInferenceError;
 use crate::profile::QwenRequest;
 use crate::profile::base::BaseRequest;
 use crate::profile::base::config::resolve_base_control_ids;
@@ -18,6 +18,12 @@ use crate::profile::model_config::ProfileControlIds;
 use crate::profiling::record_operator;
 use crate::releases::{QwenProfile, QwenReleaseManifest};
 
+#[derive(Debug, Clone)]
+pub(crate) struct SemanticRequestCondition {
+    pub text_token_ids: Vec<i64>,
+    pub controls: ProfileControlIds,
+}
+
 #[derive(Debug)]
 pub(crate) struct CompiledRequest<B: Backend> {
     pub inputs_embeds: Tensor<B, 3>,
@@ -27,72 +33,45 @@ pub(crate) struct CompiledRequest<B: Backend> {
     pub tts_pad_embed: Tensor<B, 3>,
 }
 
-pub(crate) fn compile_request<B: Backend>(
+pub(crate) fn compile_request(
     release: &'static QwenReleaseManifest,
     tokenizer: &Tokenizer,
     model_dir: &Path,
-    talker_config: &Qwen3TtsTalkerConfig,
-    talker: &LoadedQwen3TtsTalker<B>,
     request: &QwenRequest,
-    device: &B::Device,
-) -> Result<CompiledRequest<B>, QwenTtsInferenceError> {
+) -> Result<SemanticRequestCondition, QwenTtsInferenceError> {
     match release.profile {
         QwenProfile::Base => {
             let request = BaseRequest::from(request.clone());
             let prompt = build_base_prompt(&request);
             let controls = resolve_base_control_ids(model_dir, &request, request.source())?;
-            compile_qwen3_tts_request(tokenizer, talker_config, talker, prompt, &controls, device)
+            compile_semantic_condition(tokenizer, prompt, controls)
         }
         QwenProfile::CustomVoice => {
             let request = CustomVoiceRequest::from(request.clone());
             let prompt = build_custom_voice_prompt(&request);
             let controls = resolve_custom_voice_control_ids(model_dir, &request)?;
-            compile_qwen3_tts_request(tokenizer, talker_config, talker, prompt, &controls, device)
+            compile_semantic_condition(tokenizer, prompt, controls)
         }
     }
 }
 
-fn compile_qwen3_tts_request<B: Backend>(
-    tokenizer: &Tokenizer,
+pub(crate) fn materialize_compiled_request<B: Backend>(
+    condition: &SemanticRequestCondition,
     talker_config: &Qwen3TtsTalkerConfig,
     talker: &LoadedQwen3TtsTalker<B>,
-    prompt: String,
-    controls: &ProfileControlIds,
     device: &B::Device,
 ) -> Result<CompiledRequest<B>, QwenTtsInferenceError> {
-    let text_ids = record_operator("profile.tokenize", || {
-        tokenizer.encode(prompt.as_str(), false)
-    })
-    .map(|encoding| {
-        encoding
-            .get_ids()
-            .iter()
-            .map(|id| i64::from(*id))
-            .collect::<Vec<_>>()
-    })
-    .map_err(|source| QwenTtsInferenceError::InvalidInput {
-        message: format!("failed to tokenize qwen prompt: {source}"),
-    })?;
-    if text_ids.len() < 8 {
-        return Err(QwenTtsInferenceError::InvalidInput {
-            message: format!(
-                "qwen prompt tokenization is too short: {} tokens",
-                text_ids.len()
-            ),
-        });
-    }
-
     let sample = record_operator("profile.sample_embed", || {
         build_non_streaming_sample(
             talker,
-            &text_ids,
-            controls,
+            &condition.text_token_ids,
+            &condition.controls,
             talker_config.hidden_size,
             device,
         )
     });
     let tts_pad_embed = record_operator("profile.tts_pad_embed", || {
-        build_tts_pad_embed(talker, controls.tts_pad_token_id, device)
+        build_tts_pad_embed(talker, condition.controls.tts_pad_token_id, device)
     });
     let trailing_text_hidden = tts_pad_embed.clone();
 
@@ -113,6 +92,39 @@ fn compile_qwen3_tts_request<B: Backend>(
         attention_mask,
         trailing_text_hidden: trailing_text_hidden.cast(preferred_dtype),
         tts_pad_embed: tts_pad_embed.cast(preferred_dtype),
+    })
+}
+
+fn compile_semantic_condition(
+    tokenizer: &Tokenizer,
+    prompt: String,
+    controls: ProfileControlIds,
+) -> Result<SemanticRequestCondition, QwenTtsInferenceError> {
+    let text_token_ids = record_operator("profile.tokenize", || {
+        tokenizer.encode(prompt.as_str(), false)
+    })
+    .map(|encoding| {
+        encoding
+            .get_ids()
+            .iter()
+            .map(|id| i64::from(*id))
+            .collect::<Vec<_>>()
+    })
+    .map_err(|source| QwenTtsInferenceError::InvalidInput {
+        message: format!("failed to tokenize qwen prompt: {source}"),
+    })?;
+    if text_token_ids.len() < 8 {
+        return Err(QwenTtsInferenceError::InvalidInput {
+            message: format!(
+                "qwen prompt tokenization is too short: {} tokens",
+                text_token_ids.len()
+            ),
+        });
+    }
+
+    Ok(SemanticRequestCondition {
+        text_token_ids,
+        controls,
     })
 }
 
