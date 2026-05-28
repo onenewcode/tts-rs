@@ -42,6 +42,14 @@ pub enum Qwen3TtsLoadError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to load tokenizer from {path}: {source}")]
+    Tokenizer {
+        path: PathBuf,
+        #[source]
+        source: tokenizers::Error,
+    },
+    #[error("backend `{backend}` is not compiled in")]
+    UnavailableBackend { backend: String },
     #[error("invalid package manifest: {message}")]
     InvalidManifest { message: String },
 }
@@ -82,4 +90,3 @@ pub enum Qwen3TtsError {
 }
 
 pub type QwenTtsInferenceError = Qwen3TtsInferenceError;
-pub type QwenTtsError = Qwen3TtsError;

@@ -3,6 +3,6 @@
 ## 常用验证
 
 ```bash
-cargo test --release --workspace
-cargo test --release -p tts_qwen --test pipeline -- --ignored --nocapture
+cargo test
+cargo test -p tts_qwen3_tts --test real_model -- --ignored --nocapture
 ```

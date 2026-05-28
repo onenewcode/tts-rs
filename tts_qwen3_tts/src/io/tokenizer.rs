@@ -11,12 +11,19 @@ struct TokenizerConfig {
     added_tokens_decoder: serde_json::Map<String, serde_json::Value>,
 }
 
-pub fn load_qwen3_tts_tokenizer(model_dir: impl AsRef<Path>) -> tokenizers::Result<Tokenizer> {
-    let model_dir = model_dir.as_ref();
-    let vocab = model_dir.join("vocab.json");
+pub fn load_qwen3_tts_tokenizer(tokenizer_path: impl AsRef<Path>) -> tokenizers::Result<Tokenizer> {
+    let tokenizer_path = tokenizer_path.as_ref();
+    match tokenizer_path.file_name().and_then(|name| name.to_str()) {
+        Some("tokenizer.json") => Tokenizer::from_file(tokenizer_path),
+        _ => load_legacy_qwen_bpe_tokenizer(tokenizer_path),
+    }
+}
+
+fn load_legacy_qwen_bpe_tokenizer(vocab_path: &Path) -> tokenizers::Result<Tokenizer> {
+    let model_dir = vocab_path.parent().unwrap_or_else(|| Path::new("."));
     let merges = model_dir.join("merges.txt");
     let bpe = BPE::from_file(
-        vocab.to_string_lossy().as_ref(),
+        vocab_path.to_string_lossy().as_ref(),
         merges.to_string_lossy().as_ref(),
     )
     .unk_token("<|endoftext|>".to_string())

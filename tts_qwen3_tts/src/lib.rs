@@ -1,14 +1,10 @@
-#[path = "legacy_arch/mod.rs"]
-mod arch;
 mod compiler;
 mod backend;
 mod error;
 mod io;
 mod model;
 mod package;
-mod profile;
 mod profiling;
-mod releases;
 mod request;
 mod runtime;
 mod sampling;
@@ -16,7 +12,7 @@ mod sampling;
 use tts_infer::{Engine, PcmAudio};
 
 use compiler::Qwen3TtsRequestCompiler;
-use model::{Qwen3TtsLoadedModel, Qwen3TtsModelInner};
+use model::Qwen3TtsLoadedModel;
 
 pub use backend::{Qwen3TtsBackend, available_backends, resolve_backend};
 pub use error::{Qwen3TtsError, Qwen3TtsInferenceError, Qwen3TtsLoadError};
@@ -29,8 +25,7 @@ pub use profiling::Qwen3TtsProfilingConfig;
 pub use request::{BaseRequest, CustomVoiceRequest, LanguageSelection, QwenRequest};
 pub use sampling::SamplingConfig;
 
-pub(crate) use arch::kernels;
-pub(crate) use profile::compile as frontend;
+pub(crate) use model::graph::kernels;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Qwen3TtsEngineConfig {
@@ -66,12 +61,12 @@ impl Qwen3TtsEngine {
     pub fn load(config: Qwen3TtsEngineConfig) -> Result<Self, Qwen3TtsLoadError> {
         let package = Qwen3TtsPackage::load(&config.package)?;
         let compiler = Qwen3TtsRequestCompiler::load(&package)?;
-        let model = Qwen3TtsLoadedModel::new(Qwen3TtsModelInner {
-            package: package.clone(),
-            backend: config.backend,
-            profiling: config.profiling.clone(),
+        let model = Qwen3TtsLoadedModel::load(
+            package.clone(),
+            config.backend,
+            &config.profiling,
             compiler,
-        });
+        )?;
         Ok(Self {
             inner: Engine::new(model),
             package,

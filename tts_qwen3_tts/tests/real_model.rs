@@ -60,9 +60,9 @@ fn write_manifest_fixture(model_dir: &Path) -> PathBuf {
     let manifest = format!(
         "format: qwen3_tts_package/v1\nname: qwen3-tts-12hz-0.6b-customvoice\n\nartifacts:\n  tokenizer: {tokenizer}\n  talker_config: {talker_config}\n  talker_weights: {talker_weights}\n  codec_config: {codec_config}\n  codec_weights: {codec_weights}\n\nprofiles:\n  base:\n    generation_config: {generation_config}\n    control_config: {base_control}\n  custom_voice:\n    generation_config: {generation_config}\n    control_config: {custom_control}\n",
         tokenizer = yaml_path(&model_dir.join("vocab.json")),
-        talker_config = yaml_path(&model_dir.join("configuration.json")),
+        talker_config = yaml_path(&model_dir.join("config.json")),
         talker_weights = yaml_path(&model_dir.join("model.safetensors")),
-        codec_config = yaml_path(&model_dir.join("speech_tokenizer/configuration.json")),
+        codec_config = yaml_path(&model_dir.join("speech_tokenizer/config.json")),
         codec_weights = yaml_path(&model_dir.join("speech_tokenizer/model.safetensors")),
         generation_config = yaml_path(&model_dir.join("generation_config.json")),
         base_control = yaml_path(&package_dir.join("profiles/base/control_config.json")),

@@ -1,7 +1,6 @@
 mod config;
 
 pub use config::Qwen3TtsProfilingConfig;
-pub(crate) use config::Qwen3TtsProfilingConfig as ProfilingConfig;
 
 #[cfg(feature = "operator-profiling")]
 use std::cell::RefCell;

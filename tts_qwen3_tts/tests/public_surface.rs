@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tts_qwen3_tts::{
-    BaseRequest, CustomVoiceRequest, LanguageSelection, Qwen3TtsBackend, Qwen3TtsEngine,
-    Qwen3TtsEngineConfig, Qwen3TtsPackage, Qwen3TtsPackageSource, Qwen3TtsProfilingConfig,
-    Qwen3TtsRunOptions, QwenRequest, SamplingConfig,
+    BaseRequest, CustomVoiceRequest, LanguageSelection, Qwen3TtsBackend, Qwen3TtsPackage,
+    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest,
+    SamplingConfig,
 };
 
 #[test]
@@ -52,14 +52,8 @@ fn backend_parses_supported_labels() {
 #[test]
 fn engine_load_normalizes_manifest_relative_paths() {
     let package_dir = write_package_fixture("package-load");
-    let engine = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
-        package: Qwen3TtsPackageSource::PackageDir(package_dir.clone()),
-        backend: Qwen3TtsBackend::Flex,
-        profiling: Qwen3TtsProfilingConfig::default(),
-    })
-    .expect("package fixture should load");
-
-    let package = engine.package();
+    let package = Qwen3TtsPackage::load(&Qwen3TtsPackageSource::PackageDir(package_dir.clone()))
+        .expect("package fixture should normalize relative paths");
     assert_eq!(package.name, "fixture-package");
     assert_eq!(package.package_root, package_dir);
     assert_eq!(package.tokenizer_path, package.package_root.join("tokenizer.json"));
