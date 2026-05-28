@@ -7,7 +7,7 @@ use super::attention::{AttentionPosition, Qwen3TtsAttention};
 use super::mlp::Qwen3TtsTextMlp;
 use super::norm::qwen_rms_norm;
 use crate::profiling::record_operator;
-use crate::runtime::kv::KeyValueCache;
+use tts_core::runtime::kv::KeyValueCache;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsDecoderLayer<B: Backend> {

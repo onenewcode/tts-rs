@@ -2,35 +2,33 @@ use std::path::{Path, PathBuf};
 
 use burn::tensor::backend::Backend;
 use tokenizers::Tokenizer;
+use tts_core::scheduler::should_emit_audio_chunk;
 
 use crate::engine::config::EngineConfig;
 use crate::error::{QwenTtsError, QwenTtsInferenceError};
 use crate::io::tokenizer::load_qwen3_tts_tokenizer;
 use crate::model::load::audio_codec::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
 use crate::model::load::talker::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
-use crate::profiling::{configure, with_session_context};
-use crate::runners::codec::{decode_waveform, waveform_to_pcm};
-use crate::runners::frontend::compile_request;
-use crate::runners::talker::{TalkerGenerationOutput, TalkerGenerator};
-use crate::scheduler::SingleSessionScheduler;
-use crate::session::{
+use crate::pipeline::{
     AudioChunk, CustomVoiceGenerationConfig, CustomVoiceRequest, FinishedSession, SessionConfig,
     SessionHandle, StreamEvent, StreamingMode, TtsSession, TtsSessionState,
     load_custom_voice_generation_config,
 };
+use crate::profiling::{configure, with_session_context};
+use crate::runners::codec::{decode_waveform, waveform_to_pcm};
+use crate::runners::frontend::compile_request;
+use crate::runners::talker::{TalkerGenerationOutput, TalkerGenerator};
 
 #[derive(Debug, Clone)]
 pub enum StepOutcome {
     MadeProgress,
-    ProducedEvents(usize),
+    ProducedEvents,
     Finished,
 }
 
 #[derive(Debug, Clone)]
 pub struct FinishedInference {
     pub sample_rate: u32,
-    pub generated_audio_steps: usize,
-    pub talker_token_count: usize,
     pub waveform_pcm: Vec<i16>,
 }
 
@@ -47,7 +45,6 @@ where
     generation_config: CustomVoiceGenerationConfig,
     device: B::Device,
     sessions: Vec<Option<TtsSession<B>>>,
-    scheduler: SingleSessionScheduler,
 }
 
 impl<B> QwenTtsEngine<B>
@@ -76,12 +73,7 @@ where
             generation_config,
             device: device.clone(),
             sessions: Vec::new(),
-            scheduler: SingleSessionScheduler,
         })
-    }
-
-    pub fn model_dir(&self) -> &Path {
-        &self.model_dir
     }
 
     pub fn start_session(
@@ -183,7 +175,7 @@ where
             } else if session.queued_events.is_empty() {
                 StepOutcome::MadeProgress
             } else {
-                StepOutcome::ProducedEvents(session.queued_events.len())
+                StepOutcome::ProducedEvents
             }
         } else {
             self.maybe_emit_audio(&mut session, true)?;
@@ -205,16 +197,6 @@ where
         Ok(events)
     }
 
-    pub fn run_to_end(&mut self, handle: SessionHandle) -> Result<FinishedInference, QwenTtsError> {
-        loop {
-            if matches!(self.step(handle)?, StepOutcome::Finished) {
-                break;
-            }
-            let _ = self.drain_events(handle)?;
-        }
-        self.finish_session(handle)
-    }
-
     pub fn finish_session(
         &mut self,
         handle: SessionHandle,
@@ -223,8 +205,6 @@ where
         let finished = self.decode_finished_session(&mut session)?;
         Ok(FinishedInference {
             sample_rate: finished.sample_rate,
-            generated_audio_steps: finished.generated_audio_steps,
-            talker_token_count: finished.talker_token_count,
             waveform_pcm: finished.waveform_pcm,
         })
     }
@@ -243,11 +223,7 @@ where
             .expect("talker session should exist");
         let generated_steps = talker.generated_audio_steps();
         let pending_steps = generated_steps.saturating_sub(session.pending_audio.emitted_steps);
-        if !self.scheduler.should_emit_audio_chunk(
-            pending_steps,
-            self.config.codec_chunk_steps,
-            finished,
-        ) {
+        if !should_emit_audio_chunk(pending_steps, self.config.codec_chunk_steps, finished) {
             return Ok(());
         }
         let generation = talker.finalize()?;
@@ -279,8 +255,6 @@ where
         let pcm = waveform_to_pcm(&waveform)?;
         Ok(FinishedSession {
             sample_rate: self.audio_codec.config.output_sample_rate as u32,
-            generated_audio_steps: generation.generated_audio_steps,
-            talker_token_count: generation.talker_token_ids.dims()[1],
             waveform_pcm: pcm,
         })
     }

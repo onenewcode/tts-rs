@@ -1,15 +1,12 @@
 //! Configurable token sampling strategies for autoregressive generation.
 //!
 //! Supports greedy argmax and randomized sampling with:
-//! suppress → temperature → top-k → top-p → softmax → categorical.
-//!
-//! All operations stay on-device using Burn tensor APIs.
+//! suppress -> temperature -> top-k -> top-p -> softmax -> categorical.
 
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor, TensorData};
 
-/// Controls how tokens are selected from logits during generation.
 #[derive(Debug, Clone)]
 pub struct SamplingConfig {
     pub do_sample: bool,
@@ -42,7 +39,6 @@ impl SamplingConfig {
     }
 }
 
-/// Select one token per batch item from the last position of logits.
 pub fn sample_token<B: Backend>(
     logits: Tensor<B, 3>,
     sampling: &SamplingConfig,
@@ -55,7 +51,6 @@ pub fn sample_token<B: Backend>(
         .slice([0..batch_size, seq_len - 1..seq_len, 0..vocab_size])
         .reshape([batch_size, vocab_size]);
 
-    // 1. Suppress tokens
     if !suppress_token_ids.is_empty() {
         let mut mask_data = vec![false; batch_size * vocab_size];
         for batch in 0..batch_size {
@@ -81,10 +76,8 @@ pub fn sample_token<B: Backend>(
         return (selected, eos_mask);
     }
 
-    // 2. Temperature
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
 
-    // 3. Top-k
     if let Some(k) = sampling.top_k.filter(|k| *k > 0 && *k < vocab_size) {
         let kth_value = logits_2d
             .clone()
@@ -94,7 +87,6 @@ pub fn sample_token<B: Backend>(
         logits_2d = logits_2d.mask_fill(mask, f32::NEG_INFINITY);
     }
 
-    // 4. Top-p
     if sampling.top_p < 1.0 {
         let (sorted_vals, sorted_idx) = logits_2d.clone().sort_descending_with_indices(1);
         let sorted_probs = softmax(sorted_vals.clone().cast(DType::F32), 1).cast(DType::F32);
@@ -105,7 +97,6 @@ pub fn sample_token<B: Backend>(
         logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
     }
 
-    // 5. Softmax + categorical
     let probs = softmax(logits_2d.clone().cast(DType::F32), 1);
     let selected = probs.categorical(1);
 
@@ -143,8 +134,6 @@ fn greedy_argmax_lowest_index<B: Backend>(
     Tensor::<B, 2, Int>::from_data(TensorData::new(selected, [batch_size, 1]), device)
 }
 
-/// Apply repetition penalty: `logits[:, t] /= penalty` for each past token `t`.
-/// Uses gather + scatter-add to stay on-device.
 pub fn apply_repetition_penalty<B: Backend>(
     logits: Tensor<B, 3>,
     past_token_ids: &Tensor<B, 2, Int>,

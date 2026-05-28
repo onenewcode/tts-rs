@@ -8,7 +8,7 @@ use burn::tensor::{Bool, Tensor};
 use super::mlp::native_linear_3d;
 use super::norm::qwen_rms_norm;
 use crate::profiling::record_operator;
-use crate::runtime::kv::KeyValueCache;
+use tts_core::runtime::kv::KeyValueCache;
 
 pub enum AttentionPosition<B: Backend> {
     Standard {

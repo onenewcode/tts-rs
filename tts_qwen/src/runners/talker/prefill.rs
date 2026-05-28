@@ -4,7 +4,7 @@ use burn::tensor::{Int, Tensor};
 use crate::error::QwenTtsInferenceError;
 use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
-use crate::runtime::kv::KeyValueCache;
+use tts_core::runtime::kv::KeyValueCache;
 
 use super::{TalkerStepOutput, validate_cache_layer_count, validate_talker_input};
 

@@ -2,41 +2,40 @@
 
 mod common;
 
-use burn::backend::Flex;
-use tts_qwen::{
-    CustomVoiceRequest, EngineConfig, QwenTtsEngine, SessionConfig, StepOutcome, StreamingMode,
-};
+use std::sync::Arc;
 
-type Backend = Flex;
+use tts_core::{ComputeBackend, ModelRegistry, SynthesisOptions, SynthesisRequest, TtsService};
+use tts_qwen::QwenFamilyAdapter;
 
 #[test]
 fn engine_loads_and_runs_a_session_to_completion() {
     let model_dir = common::resolve_model_dir();
-    let device = Default::default();
-    let mut engine =
-        QwenTtsEngine::<Backend>::load(&model_dir, &device, EngineConfig::default()).unwrap();
-    let handle = engine
-        .start_session(
-            CustomVoiceRequest::new("你好，欢迎使用语音合成。"),
-            SessionConfig {
+    let mut registry = ModelRegistry::new();
+    registry.register(
+        "qwen-test",
+        Arc::new(QwenFamilyAdapter::new(
+            &model_dir,
+            "qwen3-tts-12hz-0.6b-customvoice",
+        )),
+    );
+    let service = TtsService::new(registry);
+    let finished = service
+        .synthesize(
+            "qwen-test",
+            &SynthesisRequest {
+                text: "你好，欢迎使用语音合成。".to_string(),
+                language: None,
+                speaker: None,
+            },
+            &SynthesisOptions {
                 max_new_tokens: 4,
-                streaming: StreamingMode::AudioChunks,
-                ..SessionConfig::default()
+                stream: true,
+                backend: Some(ComputeBackend::Flex),
+                ..SynthesisOptions::default()
             },
         )
         .unwrap();
-
-    loop {
-        if matches!(engine.step(handle).unwrap(), StepOutcome::Finished) {
-            break;
-        }
-        let _ = engine.drain_events(handle).unwrap();
-    }
-
-    let finished = engine.finish_session(handle).unwrap();
     assert!(finished.sample_rate > 0);
-    assert!(finished.generated_audio_steps > 0);
-    assert!(finished.talker_token_count > 0);
     assert!(!finished.waveform_pcm.is_empty());
 }
 
@@ -47,33 +46,32 @@ fn engine_generates_valid_wav_with_real_model() {
     let output_dir = common::unique_output_dir("pipeline-e2e");
     std::fs::create_dir_all(&output_dir).expect("e2e output dir should exist");
     let wav_path = output_dir.join("0000.wav");
-
-    let device = Default::default();
-    let mut engine =
-        QwenTtsEngine::<Backend>::load(&model_dir, &device, EngineConfig::default()).unwrap();
-    let handle = engine
-        .start_session(
-            CustomVoiceRequest {
+    let mut registry = ModelRegistry::new();
+    registry.register(
+        "qwen-test",
+        Arc::new(QwenFamilyAdapter::new(
+            &model_dir,
+            "qwen3-tts-12hz-0.6b-customvoice",
+        )),
+    );
+    let service = TtsService::new(registry);
+    let output = service
+        .synthesize(
+            "qwen-test",
+            &SynthesisRequest {
                 text: "你好，欢迎使用语音合成。".to_string(),
                 language: Some("Chinese".to_string()),
                 speaker: Some("Vivian".to_string()),
             },
-            SessionConfig {
+            &SynthesisOptions {
                 max_new_tokens: 64,
-                ..SessionConfig::default()
+                backend: Some(ComputeBackend::Flex),
+                ..SynthesisOptions::default()
             },
         )
         .unwrap();
-    let output = engine.run_to_end(handle).unwrap();
 
-    let waveform = output
-        .waveform_pcm
-        .iter()
-        .map(|sample| f32::from(*sample) / 32767.0)
-        .collect::<Vec<_>>();
-    let tensor = burn::tensor::Tensor::<Backend, 3>::from_floats(waveform.as_slice(), &device)
-        .reshape([1, 1, waveform.len()]);
-    tts_qwen::save_wav(&tensor, &wav_path, output.sample_rate).unwrap();
+    tts_core::save_pcm_wav(&output.waveform_pcm, &wav_path, output.sample_rate).unwrap();
 
     let wav = std::fs::read(&wav_path).expect("wav should be readable");
     assert_valid_nonempty_wav(&wav, output.sample_rate);

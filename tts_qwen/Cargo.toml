@@ -26,6 +26,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
 tracing = { workspace = true }
+tts_core = { path = "../tts_core" }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

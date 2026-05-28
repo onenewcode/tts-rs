@@ -1,36 +1,68 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Instant;
 
 use clap::Parser;
+use serde::Deserialize;
 use tracing::info;
-use tts_qwen::{BackendKind, CustomVoiceRequest, default_engine_config, default_session_config};
+use tts_core::{
+    ComputeBackend, ModelRegistry, SynthesisOptions, SynthesisRequest, TtsService, save_pcm_wav,
+};
+use tts_qwen::register_qwen_family_model;
 
 #[derive(Debug, Parser)]
 #[command(name = "tts_cli")]
 pub struct Args {
     #[arg(long)]
-    pub model_dir: PathBuf,
+    pub models_config: PathBuf,
+    #[arg(long)]
+    pub model_id: String,
     #[arg(long)]
     pub text: String,
     #[arg(long)]
     pub language: Option<String>,
     #[arg(long)]
     pub speaker: Option<String>,
-    #[arg(long)]
-    pub backend: Option<String>,
+    #[arg(long, value_enum)]
+    pub backend: Option<CliBackend>,
     #[arg(long, default_value = "output")]
     pub output_dir: PathBuf,
-    #[arg(long, default_value_t = 256)]
-    pub max_new_tokens: usize,
-    #[arg(long, default_value_t = 8)]
-    pub chunk_steps: usize,
+    #[arg(long)]
+    pub max_new_tokens: Option<usize>,
+    #[arg(long)]
+    pub chunk_steps: Option<usize>,
     #[arg(long)]
     pub stream: bool,
     #[arg(long)]
     pub profiling: bool,
     #[arg(long, value_enum, default_value_t = LogLevel::Info)]
     pub log_level: LogLevel,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CliBackend {
+    Flex,
+    Wgpu,
+    Cuda,
+    Rocm,
+    Metal,
+    Vulkan,
+    Webgpu,
+}
+
+impl CliBackend {
+    fn to_backend(self) -> ComputeBackend {
+        match self {
+            Self::Flex => ComputeBackend::Flex,
+            Self::Wgpu => ComputeBackend::Wgpu,
+            Self::Cuda => ComputeBackend::Cuda,
+            Self::Rocm => ComputeBackend::Rocm,
+            Self::Metal => ComputeBackend::Metal,
+            Self::Vulkan => ComputeBackend::Vulkan,
+            Self::Webgpu => ComputeBackend::WebGpu,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
@@ -54,6 +86,34 @@ impl LogLevel {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelsConfig {
+    models: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: String,
+    family: String,
+    variant: String,
+    paths: ModelPaths,
+    defaults: Option<ModelDefaults>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelPaths {
+    model_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ModelDefaults {
+    max_new_tokens: Option<usize>,
+    chunk_steps: Option<usize>,
+    stream: Option<bool>,
+    profiling: Option<bool>,
+    backend: Option<CliBackend>,
+}
+
 pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
     run(Args::parse())
 }
@@ -63,37 +123,40 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let total_started = Instant::now();
     std::fs::create_dir_all(&args.output_dir)?;
 
-    let backend = parse_backend(args.backend.as_deref())?;
+    let config = load_models_config(&args.models_config)?;
+    let (service, defaults_by_model) = build_service(config)?;
+    let defaults = defaults_by_model
+        .get(&args.model_id)
+        .cloned()
+        .ok_or_else(|| format!("model_id `{}` is not defined in config", args.model_id))?;
+
+    let options = merge_options(&args, defaults);
     info!(
-        model_dir = %args.model_dir.display(),
+        models_config = %args.models_config.display(),
+        model_id = %args.model_id,
         output_dir = %args.output_dir.display(),
-        backend = %backend,
-        max_new_tokens = args.max_new_tokens,
-        chunk_steps = args.chunk_steps,
-        stream = args.stream,
-        profiling = args.profiling,
+        backend = ?options.backend,
+        max_new_tokens = options.max_new_tokens,
+        chunk_steps = options.chunk_steps,
+        stream = options.stream,
+        profiling = options.profiling,
         language = args.language.as_deref().unwrap_or("Auto"),
         speaker = args.speaker.as_deref().unwrap_or(""),
         "starting tts generation"
     );
 
-    let request = CustomVoiceRequest {
+    let request = SynthesisRequest {
         text: args.text.clone(),
         language: args.language.clone(),
         speaker: args.speaker.clone(),
     };
-    let wav_path = args.output_dir.join("0000.wav");
-    let finished = tts_qwen::run_with_backend(
-        backend,
-        &args.model_dir,
-        request,
-        default_engine_config(args.chunk_steps, args.profiling),
-        default_session_config(args.max_new_tokens, args.stream),
-    )
-    .map_err(|e| format!("tts inference failed: {e}"))?;
+    let result = service
+        .synthesize(&args.model_id, &request, &options)
+        .map_err(|error| format!("tts inference failed: {error}"))?;
 
-    tts_qwen::save_pcm_wav(&finished.waveform_pcm, &wav_path, finished.sample_rate)
-        .map_err(|e| format!("failed to save wav: {e}"))?;
+    let wav_path = args.output_dir.join("0000.wav");
+    save_pcm_wav(&result.waveform_pcm, &wav_path, result.sample_rate)
+        .map_err(|error| format!("failed to save wav: {error}"))?;
     info!(
         wav_path = %wav_path.display(),
         total_elapsed_ms = total_started.elapsed().as_millis(),
@@ -102,9 +165,74 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_backend(selected: Option<&str>) -> Result<BackendKind, Box<dyn std::error::Error>> {
-    let selected = selected.map(BackendKind::from_str).transpose()?;
-    Ok(tts_qwen::resolve_backend(selected)?)
+fn load_models_config(path: &PathBuf) -> Result<ModelsConfig, Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string(path)?;
+    let config = serde_yaml::from_str::<ModelsConfig>(&raw)?;
+    Ok(config)
+}
+
+fn build_service(
+    config: ModelsConfig,
+) -> Result<(TtsService, HashMap<String, ModelDefaults>), Box<dyn std::error::Error>> {
+    if config.models.is_empty() {
+        return Err("models config must contain at least one model entry".into());
+    }
+
+    let mut registry = ModelRegistry::new();
+    let mut defaults = HashMap::new();
+
+    for model in config.models {
+        match model.family.as_str() {
+            "qwen" => {
+                if !register_qwen_family_model(
+                    &mut registry,
+                    model.id.clone(),
+                    model.paths.model_dir,
+                    model.variant,
+                ) {
+                    return Err(format!("duplicate model id `{}` in config", model.id).into());
+                }
+                defaults.insert(model.id, model.defaults.unwrap_or_default());
+            }
+            other => {
+                return Err(
+                    format!("unsupported model family `{other}`; supported values: qwen").into(),
+                );
+            }
+        }
+    }
+
+    Ok((TtsService::new(registry), defaults))
+}
+
+fn merge_options(args: &Args, defaults: ModelDefaults) -> SynthesisOptions {
+    let base = SynthesisOptions::default();
+    SynthesisOptions {
+        max_new_tokens: args
+            .max_new_tokens
+            .or(defaults.max_new_tokens)
+            .unwrap_or(base.max_new_tokens),
+        chunk_steps: args
+            .chunk_steps
+            .or(defaults.chunk_steps)
+            .unwrap_or(base.chunk_steps),
+        sampling: base.sampling,
+        stream: if args.stream {
+            true
+        } else {
+            defaults.stream.unwrap_or(base.stream)
+        },
+        profiling: if args.profiling {
+            true
+        } else {
+            defaults.profiling.unwrap_or(base.profiling)
+        },
+        backend: args
+            .backend
+            .map(CliBackend::to_backend)
+            .or_else(|| defaults.backend.map(CliBackend::to_backend))
+            .or(base.backend),
+    }
 }
 
 fn init_logging(level: LogLevel) {
@@ -122,32 +250,34 @@ mod tests {
     fn args_parse_required_fields_with_defaults() {
         let args = Args::try_parse_from([
             "tts_cli",
-            "--model-dir",
-            "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "--models-config",
+            "models.yaml",
+            "--model-id",
+            "qwen-default",
             "--text",
             "hello",
         ])
         .expect("minimal args should parse");
 
-        assert_eq!(
-            args.model_dir,
-            PathBuf::from("Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
-        );
+        assert_eq!(args.models_config, PathBuf::from("models.yaml"));
+        assert_eq!(args.model_id, "qwen-default");
         assert_eq!(args.text, "hello");
         assert_eq!(args.output_dir, PathBuf::from("output"));
-        assert_eq!(args.max_new_tokens, 256);
-        assert_eq!(args.chunk_steps, 8);
+        assert_eq!(args.max_new_tokens, None);
+        assert_eq!(args.chunk_steps, None);
         assert!(!args.stream);
         assert!(!args.profiling);
         assert_eq!(args.log_level, LogLevel::Info);
     }
 
     #[test]
-    fn args_parse_backend_as_string() {
+    fn args_parse_backend_as_enum() {
         let args = Args::try_parse_from([
             "tts_cli",
-            "--model-dir",
-            "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "--models-config",
+            "models.yaml",
+            "--model-id",
+            "qwen-default",
             "--text",
             "hello",
             "--backend",
@@ -155,6 +285,6 @@ mod tests {
         ])
         .expect("backend arg should parse");
 
-        assert_eq!(args.backend.as_deref(), Some("flex"));
+        assert_eq!(args.backend, Some(CliBackend::Flex));
     }
 }

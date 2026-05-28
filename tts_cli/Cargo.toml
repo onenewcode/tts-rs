@@ -16,6 +16,9 @@ webgpu = ["tts_qwen/webgpu"]
 
 [dependencies]
 clap = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tts_core = { path = "../tts_core" }
 tts_qwen = { path = "../tts_qwen", default-features = false }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

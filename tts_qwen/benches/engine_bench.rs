@@ -7,7 +7,7 @@ use criterion::{
     BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main,
     measurement::WallTime,
 };
-use tts_qwen::{QwenTtsEngine, default_session_config};
+use tts_qwen::QwenTtsEngine;
 
 fn bench_engine(c: &mut Criterion) {
     let Some(model_dir) = common::require_model_dir("engine_bench") else {
@@ -145,7 +145,7 @@ where
         device,
         |engine, request| {
             let handle = engine
-                .start_session(request, default_session_config(24, false))
+                .start_session(request, common::session_config(24))
                 .expect("session should start");
             engine
                 .run_to_end(handle)

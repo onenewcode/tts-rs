@@ -21,7 +21,5 @@ pub struct PendingAudio {
 #[derive(Debug, Clone)]
 pub struct FinishedSession {
     pub sample_rate: u32,
-    pub generated_audio_steps: usize,
-    pub talker_token_count: usize,
     pub waveform_pcm: Vec<i16>,
 }

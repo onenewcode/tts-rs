@@ -1,0 +1,12 @@
+models:
+  - id: qwen-default
+    family: qwen
+    variant: qwen3-tts-12hz-0.6b-customvoice
+    paths:
+      model_dir: Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice
+    defaults:
+      max_new_tokens: 256
+      chunk_steps: 8
+      stream: false
+      profiling: false
+      backend: flex

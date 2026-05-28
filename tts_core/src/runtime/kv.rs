@@ -64,22 +64,18 @@ impl<B: Backend> AutoregressiveCache<B> {
             "updating autoregressive cache"
         );
 
-        // Lazy initialization to match input tensor DType
         if self.cache.is_none() {
-            // We use zeros to set the type, then cast if necessary.
-            // On Flex, we must be careful with types.
             self.cache = Some(
                 tensor
                     .clone()
                     .slice([0..batch_size, 0..num_heads, 0..1, 0..head_dim])
                     .repeat_dim(2, self.max_seq_len)
-                    .mul_scalar(0.0), // Zero out but keep type/device
+                    .mul_scalar(0.0),
             );
         }
-        let cache_tensor = self.cache.as_mut().unwrap();
+        let cache_tensor = self.cache.as_mut().expect("cache must be initialized");
 
         if new_seq_len > self.max_seq_len {
-            // Sliding window: discard oldest tokens
             tracing::debug!(
                 requested_seq_len = new_seq_len,
                 max_seq_len = self.max_seq_len,
@@ -132,7 +128,6 @@ impl<B: Backend> AutoregressiveCache<B> {
         ])
     }
 
-    /// Returns the cached sequence length.
     pub fn len(&self) -> usize {
         self.cur_seq_len
     }
@@ -142,7 +137,6 @@ impl<B: Backend> AutoregressiveCache<B> {
     }
 }
 
-/// Key-Value cache for a single transformer layer.
 #[derive(Debug)]
 pub struct KeyValueCache<B: Backend> {
     pub key: AutoregressiveCache<B>,

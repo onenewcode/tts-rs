@@ -1,50 +1,52 @@
 # TTS Inference Engine Architecture
 
-`tts_qwen` is now organized as an on-device inference engine instead of a one-shot
-pipeline facade. The public entrypoint is `QwenTtsEngine`, which owns model
-weights, request compilation, session state, scheduling, streaming, and
-operator-level profiling.
+The workspace is split into a reusable execution core and a model-family
+implementation:
+
+- `tts_core`: model-agnostic service/session orchestration, scheduling helpers,
+  shared sampling runtime, and output abstractions.
+- `tts_qwen`: Qwen-family inference implementation (weights, kernels, codec,
+  and provider glue).
 
 ## Runtime Flow
 
 ```text
-request -> frontend compile -> talker prefill -> step decode -> codec decode -> audio events / WAV
-                             ^                |
-                             |                v
-                         session state <-> scheduler
+request -> tts_core service -> qwen provider -> talker prefill/decode -> codec decode -> WAV
+            ^                              |
+            |                              v
+      core sampling/scheduler/kv     qwen kernels
 ```
 
 ## Public API
 
 | API | Purpose |
 |---|---|
-| `QwenTtsEngine::load()` | load weights, tokenizer, configs, profiling settings |
-| `start_session()` | compile one request and allocate a session |
-| `step()` | advance a session by one generation step |
-| `drain_events()` | read streamed codec/audio events |
-| `run_to_end()` | blocking helper that drives the session to completion |
-| `finish_session()` | decode final waveform and release the session slot |
+| `tts_core::TtsService::synthesize()` | model-agnostic orchestration entrypoint |
+| `tts_qwen::QwenFamilyAdapter` | Qwen family provider implementation |
+| `QwenTtsEngine::load()` | internal engine load for qwen provider sessions |
+| `QwenTtsEngine::{start_session,step,drain_events,finish_session}` | provider-facing incremental execution API |
 
 ## Source Layout
 
 ```text
+tts_core/src/
+  service.rs     model-agnostic orchestration entrypoint
+  runtime/       shared sampling + KV primitives
+  scheduler.rs   chunk emission scheduling helper
+
 tts_qwen/src/
-  engine/        public engine API and configuration
-  session/       request types, session state, stream events
-  scheduler/     low-latency single-session scheduling policy
-  runtime/       KV cache and sampling primitives
-  profiling/     operator timing configuration and logging helpers
-  model/         configs, weight loading, model definitions
+  provider.rs    qwen family adapter that binds core to qwen engine
+  engine/        qwen incremental engine
+  pipeline/      qwen request/session data contracts
+  model/         configs, weights, model definitions
   runners/       frontend compile, talker generation, codec decode
   kernels/       hot-path tensor operators
-  io/            tokenizer, model path helpers, WAV writing
+  io/            tokenizer and WAV helpers
 ```
 
 ## Design Rules
 
-- Session state is explicit and long-lived; hot-path decode state is never hidden
-  inside one-shot adapter functions.
-- Streaming is event-driven; WAV writing is an edge concern layered on top.
-- Operator profiling is optional and controlled by a crate feature plus runtime
-  configuration.
-- `core.rs`, `pipeline.rs`, and adapter-based orchestration were removed.
+- Core orchestration lives in `tts_core`; model crates should not reimplement
+  generic service loops or sampling logic.
+- Qwen-side code focuses on inference-only responsibilities.
+- Streaming remains event-driven; WAV writing is an edge concern.

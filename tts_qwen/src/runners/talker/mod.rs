@@ -4,10 +4,10 @@ use burn::tensor::{Bool, Int, Tensor};
 use crate::error::QwenTtsInferenceError;
 use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
+use crate::pipeline::CompiledRequest;
 use crate::profiling::record_operator;
-use crate::runtime::kv::KeyValueCache;
-use crate::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
-use crate::session::CompiledRequest;
+use tts_core::runtime::kv::KeyValueCache;
+use tts_core::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
 
 mod decode;
 mod predictor;

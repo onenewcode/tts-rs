@@ -6,8 +6,8 @@ use crate::kernels::mlp::native_linear_3d;
 use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
 use crate::model::qwen_tts::build_attention_mask;
-use crate::runtime::kv::KeyValueCache;
-use crate::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
+use tts_core::runtime::kv::KeyValueCache;
+use tts_core::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
 
 use super::validate_code_predictor_cache_layer_count;
 

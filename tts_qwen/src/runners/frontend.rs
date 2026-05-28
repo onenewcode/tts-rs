@@ -7,11 +7,11 @@ use tokenizers::Tokenizer;
 use crate::error::QwenTtsInferenceError;
 use crate::model::config::talker::Qwen3TtsTalkerConfig;
 use crate::model::load::talker::LoadedQwen3TtsTalker;
-use crate::profiling::record_operator;
-use crate::session::{
+use crate::pipeline::{
     CompiledRequest, CustomVoiceControlIds, CustomVoiceRequest, build_custom_voice_prompt,
     resolve_custom_voice_control_ids,
 };
+use crate::profiling::record_operator;
 
 pub fn compile_request<B: Backend>(
     tokenizer: &Tokenizer,

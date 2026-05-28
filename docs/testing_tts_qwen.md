@@ -41,7 +41,8 @@ writing in the same path that end users call.
 
 ```bash
 cargo run --release -p tts_cli -- \
-  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --models-config docs/models.example.yaml \
+  --model-id qwen-default \
   --text "你好，欢迎使用语音合成。" \
   --language Chinese \
   --speaker Vivian \

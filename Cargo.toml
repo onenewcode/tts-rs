@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "tts_core",
     "tts_cli",
     "tts_qwen",
 ]
@@ -16,3 +17,4 @@ clap = { version = "4.5.51", features = ["derive"] }
 tokenizers = "0.23.1"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
+serde_yaml = "0.9.34"

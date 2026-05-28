@@ -1,9 +1,9 @@
 use burn::tensor::backend::Backend;
+use tts_core::runtime::sampling::SamplingConfig;
 
+use crate::pipeline::output::{PendingAudio, StreamEvent};
+use crate::pipeline::types::CompiledRequest;
 use crate::runners::talker::TalkerGenerator;
-use crate::runtime::sampling::SamplingConfig;
-use crate::session::output::{PendingAudio, StreamEvent};
-use crate::session::types::CompiledRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamingMode {
@@ -38,7 +38,6 @@ pub enum TtsSessionState {
     Generating,
     Draining,
     Finished,
-    Failed,
 }
 
 #[derive(Debug)]
