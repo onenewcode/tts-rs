@@ -30,6 +30,5 @@ pub use profiling::ProfilingConfig;
 pub use registry::register_qwen_family_model;
 pub use tts_core::runtime::sampling::SamplingConfig;
 
-pub(crate) use arch as model;
 pub(crate) use arch::kernels;
 pub(crate) use profile::compile as frontend;

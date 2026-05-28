@@ -4,8 +4,8 @@ use burn::tensor::backend::Backend;
 
 use crate::kernels::activation::{AudioCodecLayerScale, Qwen3TtsAudioCodecEmptyModule};
 use crate::kernels::conv::AudioCodecCausalConv1d;
-use crate::model::audio_codec::decoder::Qwen3TtsAudioCodecCheckpoint;
-use crate::model::audio_codec::encoder::{
+use crate::arch::engine::components::decoder::graph::audio_codec::decoder::Qwen3TtsAudioCodecCheckpoint;
+use crate::arch::engine::components::decoder::graph::audio_codec::encoder::{
     Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
     Qwen3TtsAudioCodecEncoderBackbone, Qwen3TtsAudioCodecEncoderBackboneLayer,
     Qwen3TtsAudioCodecEncoderCodebook, Qwen3TtsAudioCodecEncoderConvLayer,
@@ -14,7 +14,7 @@ use crate::model::audio_codec::encoder::{
     Qwen3TtsAudioCodecEncoderTransformer, Qwen3TtsAudioCodecEncoderTransformerLayer,
     Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
-use crate::model::config::audio_codec::{
+use crate::arch::engine::components::decoder::import::config::{
     Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
 

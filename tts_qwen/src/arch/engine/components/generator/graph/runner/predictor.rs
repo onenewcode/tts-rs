@@ -3,9 +3,9 @@ use burn::tensor::{Int, Tensor};
 
 use crate::error::QwenTtsInferenceError;
 use crate::kernels::mlp::native_linear_3d;
-use crate::model::config::talker::Qwen3TtsTalkerConfig;
-use crate::model::load::talker::LoadedQwen3TtsTalker;
-use crate::model::qwen_tts::build_attention_mask;
+use crate::arch::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
+use crate::arch::engine::components::generator::weights::LoadedQwen3TtsTalker;
+use crate::arch::engine::components::generator::graph::model::build_attention_mask;
 use tts_core::runtime::kv::KeyValueCache;
 use tts_core::runtime::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
 

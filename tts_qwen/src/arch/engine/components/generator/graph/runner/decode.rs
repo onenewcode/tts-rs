@@ -2,8 +2,8 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
 use crate::error::QwenTtsInferenceError;
-use crate::model::config::talker::Qwen3TtsTalkerConfig;
-use crate::model::load::talker::LoadedQwen3TtsTalker;
+use crate::arch::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
+use crate::arch::engine::components::generator::weights::LoadedQwen3TtsTalker;
 use tts_core::runtime::kv::KeyValueCache;
 
 use super::{

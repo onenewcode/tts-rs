@@ -6,7 +6,7 @@ use tts_core::{
     TtsCoreError, TtsModelExecutor, TtsModelRun,
 };
 
-use crate::arch::bridge::{
+use crate::arch::engine::assembly::bridge::{
     FinishedInference, QwenEngine, QwenEngineBridge, QwenRun, QwenRunConfig, QwenRunStep,
 };
 use crate::profile::QwenRequest;

@@ -1,7 +1,7 @@
 use burn::nn::{EmbeddingConfig, LinearConfig, RmsNormConfig};
 use burn::tensor::backend::Backend;
 
-use super::qwen_tts::{
+use super::super::graph::model::{
     Qwen3TtsCheckpoint, Qwen3TtsTalker, Qwen3TtsTalkerCodePredictor,
     Qwen3TtsTalkerCodePredictorModel, Qwen3TtsTalkerModel,
 };
@@ -9,7 +9,7 @@ use crate::kernels::attention::Qwen3TtsAttention;
 use crate::kernels::layer::Qwen3TtsDecoderLayer;
 use crate::kernels::mlp::{Qwen3TtsTalkerResizeMlp, Qwen3TtsTextMlp};
 use crate::kernels::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
-use crate::model::config::talker::{
+use crate::arch::engine::components::generator::import::config::{
     Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
 };
 

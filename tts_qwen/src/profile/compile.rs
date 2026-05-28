@@ -5,8 +5,8 @@ use burn::tensor::{DType, Int, Tensor, TensorData};
 use tokenizers::Tokenizer;
 
 use crate::error::QwenTtsInferenceError;
-use crate::model::config::talker::Qwen3TtsTalkerConfig;
-use crate::model::load::talker::LoadedQwen3TtsTalker;
+use crate::arch::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
+use crate::arch::engine::components::generator::weights::LoadedQwen3TtsTalker;
 use crate::profile::QwenRequest;
 use crate::profile::base::BaseRequest;
 use crate::profile::base::config::resolve_base_control_ids;

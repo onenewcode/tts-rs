@@ -3,8 +3,8 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
 use crate::error::QwenTtsInferenceError;
-use crate::model::config::audio_codec::Qwen3TtsAudioCodecDecoderConfig;
-use crate::model::load::audio_codec::LoadedQwen3TtsAudioCodec;
+use crate::arch::engine::components::decoder::import::config::Qwen3TtsAudioCodecDecoderConfig;
+use crate::arch::engine::components::decoder::weights::LoadedQwen3TtsAudioCodec;
 use crate::profiling::record_operator;
 
 pub fn decode_waveform<B: Backend>(

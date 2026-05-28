@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use burn_store::KeyRemapper;
 
 const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(
@@ -20,4 +19,16 @@ pub fn audio_codec_load_key_remapper() -> KeyRemapper {
 pub fn audio_codec_export_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS.to_vec())
         .expect("static regex remapping must compile")
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{audio_codec_export_key_remapper, audio_codec_load_key_remapper};
+
+    #[test]
+    fn audio_codec_remappers_compile() {
+        let _ = audio_codec_load_key_remapper();
+        let _ = audio_codec_export_key_remapper();
+    }
 }

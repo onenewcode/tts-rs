@@ -4,9 +4,9 @@ use burn::tensor::backend::Backend;
 use burn_store::{ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use crate::Qwen3TtsLoadError;
-use crate::model::config::talker::Qwen3TtsConfig;
-use crate::model::load::talker_remap::talker_load_key_remapper;
-use crate::model::qwen_tts::Qwen3TtsCheckpoint;
+use crate::arch::engine::components::generator::import::config::Qwen3TtsConfig;
+use crate::arch::engine::components::generator::import::remap::talker_load_key_remapper;
+use crate::arch::engine::components::generator::graph::model::Qwen3TtsCheckpoint;
 
 #[derive(Debug)]
 pub struct LoadedQwen3TtsTalker<B: Backend> {

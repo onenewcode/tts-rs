@@ -6,18 +6,18 @@ use burn::tensor::backend::Backend;
 
 use crate::kernels::activation::{AudioCodecLayerScale, AudioCodecSnakeBeta};
 use crate::kernels::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
-use crate::model::audio_codec::decoder::{
+use crate::arch::engine::components::decoder::graph::audio_codec::decoder::{
     Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder, Qwen3TtsAudioCodecDecoderAttention,
     Qwen3TtsAudioCodecDecoderCodebook, Qwen3TtsAudioCodecDecoderMlp,
     Qwen3TtsAudioCodecDecoderQuantizer, Qwen3TtsAudioCodecDecoderResidualVectorQuantization,
     Qwen3TtsAudioCodecDecoderResidualVectorQuantizer, Qwen3TtsAudioCodecDecoderTransformer,
     Qwen3TtsAudioCodecDecoderTransformerLayer, Qwen3TtsAudioCodecDecoderVectorQuantization,
 };
-use crate::model::audio_codec::wave_decoder::{
+use crate::arch::engine::components::decoder::graph::audio_codec::wave_decoder::{
     Qwen3TtsAudioCodecWaveDecoderConvEntry, Qwen3TtsAudioCodecWaveDecoderEntry,
     Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
-use crate::model::config::audio_codec::Qwen3TtsAudioCodecDecoderConfig;
+use crate::arch::engine::components::decoder::import::config::Qwen3TtsAudioCodecDecoderConfig;
 
 impl Qwen3TtsAudioCodecDecoderConfig {
     pub(crate) fn init<B: Backend>(&self, device: &B::Device) -> Qwen3TtsAudioCodecDecoder<B> {
