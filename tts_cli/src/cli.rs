@@ -1,46 +1,85 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use clap::Parser;
-use serde::Deserialize;
+use clap::{ArgAction, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use tracing::info;
-use tts_core::{
-    ComputeBackend, ModelRegistry, SynthesisOptions, SynthesisRequest, TtsService, save_pcm_wav,
+use tts_qwen3_tts::{
+    BaseRequest, CustomVoiceRequest, LanguageSelection, Qwen3TtsBackend, Qwen3TtsEngine,
+    Qwen3TtsEngineConfig, Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions,
+    QwenRequest, SamplingConfig,
 };
-use tts_qwen::register_qwen_family_model;
 
 #[derive(Debug, Parser)]
 #[command(name = "tts_cli")]
-pub struct Args {
-    #[arg(long)]
-    pub models_config: PathBuf,
-    #[arg(long)]
-    pub model_id: String,
-    #[arg(long)]
-    pub text: String,
-    #[arg(long)]
-    pub language: Option<String>,
-    #[arg(long)]
-    pub speaker: Option<String>,
-    #[arg(long, value_enum)]
-    pub backend: Option<CliBackend>,
-    #[arg(long, default_value = "output")]
-    pub output_dir: PathBuf,
-    #[arg(long)]
-    pub max_new_tokens: Option<usize>,
-    #[arg(long)]
-    pub chunk_steps: Option<usize>,
-    #[arg(long)]
-    pub stream: bool,
-    #[arg(long)]
-    pub profiling: bool,
-    #[arg(long, value_enum, default_value_t = LogLevel::Info)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+    #[arg(long, value_enum, default_value_t = LogLevel::Info, global = true)]
     pub log_level: LogLevel,
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+pub type Args = Cli;
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    Synthesize(SynthesizeArgs),
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct SynthesizeArgs {
+    #[command(subcommand)]
+    pub profile: ProfileCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfileCommand {
+    Base(BaseSynthesizeArgs),
+    CustomVoice(CustomVoiceSynthesizeArgs),
+}
+
+#[derive(Debug, Clone, ClapArgs)]
+pub struct SharedSynthesizeArgs {
+    #[arg(long)]
+    pub package: PathBuf,
+    #[arg(long)]
+    pub text: String,
+    #[arg(long, default_value = "auto")]
+    pub language: String,
+    #[arg(long)]
+    pub output: PathBuf,
+    #[arg(long, value_enum)]
+    pub backend: Option<CliBackend>,
+    #[arg(long, default_value_t = 256)]
+    pub max_new_tokens: usize,
+    #[arg(long, value_enum, default_value_t = CliSampling::Greedy)]
+    pub sampling: CliSampling,
+    #[arg(long)]
+    pub profiling: bool,
+    #[arg(long)]
+    pub profiling_per_step: bool,
+    #[arg(long = "profiling-stage-summary", action = ArgAction::SetTrue, default_value_t = true)]
+    pub profiling_stage_summary: bool,
+    #[arg(long = "no-profiling-stage-summary", action = ArgAction::SetTrue)]
+    pub no_profiling_stage_summary: bool,
+    #[arg(long, default_value_t = 8)]
+    pub profiling_log_topk: usize,
+}
+
+#[derive(Debug, Clone, ClapArgs)]
+pub struct BaseSynthesizeArgs {
+    #[command(flatten)]
+    pub shared: SharedSynthesizeArgs,
+}
+
+#[derive(Debug, Clone, ClapArgs)]
+pub struct CustomVoiceSynthesizeArgs {
+    #[command(flatten)]
+    pub shared: SharedSynthesizeArgs,
+    #[arg(long)]
+    pub speaker: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum CliBackend {
     Flex,
     Wgpu,
@@ -52,20 +91,33 @@ pub enum CliBackend {
 }
 
 impl CliBackend {
-    fn to_backend(self) -> ComputeBackend {
+    fn to_backend(self) -> Qwen3TtsBackend {
         match self {
-            Self::Flex => ComputeBackend::Flex,
-            Self::Wgpu => ComputeBackend::Wgpu,
-            Self::Cuda => ComputeBackend::Cuda,
-            Self::Rocm => ComputeBackend::Rocm,
-            Self::Metal => ComputeBackend::Metal,
-            Self::Vulkan => ComputeBackend::Vulkan,
-            Self::Webgpu => ComputeBackend::WebGpu,
+            Self::Flex => Qwen3TtsBackend::Flex,
+            Self::Wgpu => Qwen3TtsBackend::Wgpu,
+            Self::Cuda => Qwen3TtsBackend::Cuda,
+            Self::Rocm => Qwen3TtsBackend::Rocm,
+            Self::Metal => Qwen3TtsBackend::Metal,
+            Self::Vulkan => Qwen3TtsBackend::Vulkan,
+            Self::Webgpu => Qwen3TtsBackend::WebGpu,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum CliSampling {
+    Greedy,
+}
+
+impl CliSampling {
+    fn to_sampling(self) -> SamplingConfig {
+        match self {
+            Self::Greedy => SamplingConfig::greedy(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum LogLevel {
     Error,
     Warn,
@@ -86,34 +138,6 @@ impl LogLevel {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ModelsConfig {
-    models: Vec<ModelEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelEntry {
-    id: String,
-    family: String,
-    variant: String,
-    paths: ModelPaths,
-    defaults: Option<ModelDefaults>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelPaths {
-    model_dir: PathBuf,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-struct ModelDefaults {
-    max_new_tokens: Option<usize>,
-    chunk_steps: Option<usize>,
-    stream: Option<bool>,
-    profiling: Option<bool>,
-    backend: Option<CliBackend>,
-}
-
 pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
     run(Args::parse())
 }
@@ -121,117 +145,98 @@ pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
 pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     init_logging(args.log_level);
     let total_started = Instant::now();
-    std::fs::create_dir_all(&args.output_dir)?;
 
-    let config = load_models_config(&args.models_config)?;
-    let (service, defaults_by_model) = build_service(config)?;
-    let defaults = defaults_by_model
-        .get(&args.model_id)
-        .cloned()
-        .ok_or_else(|| format!("model_id `{}` is not defined in config", args.model_id))?;
+    match args.command {
+        Command::Synthesize(command) => match command.profile {
+            ProfileCommand::Base(base) => run_synthesis(
+                &base.shared,
+                QwenRequest::Base(BaseRequest {
+                    text: base.shared.text.clone(),
+                    language: parse_language(&base.shared.language),
+                }),
+                total_started,
+            ),
+            ProfileCommand::CustomVoice(custom_voice) => run_synthesis(
+                &custom_voice.shared,
+                QwenRequest::CustomVoice(CustomVoiceRequest {
+                    text: custom_voice.shared.text.clone(),
+                    language: parse_language(&custom_voice.shared.language),
+                    speaker: custom_voice.speaker.clone(),
+                }),
+                total_started,
+            ),
+        },
+    }
+}
 
-    let options = merge_options(&args, defaults);
+fn run_synthesis(
+    shared: &SharedSynthesizeArgs,
+    request: QwenRequest,
+    total_started: Instant,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = shared.output.parent().filter(|path| !path.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let engine = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
+        package: package_source(&shared.package),
+        backend: shared
+            .backend
+            .map(CliBackend::to_backend)
+            .unwrap_or(Qwen3TtsBackend::Flex),
+        profiling: Qwen3TtsProfilingConfig {
+            enabled: shared.profiling,
+            per_step: shared.profiling_per_step,
+            stage_summary: resolve_stage_summary(shared),
+            log_topk: shared.profiling_log_topk,
+        },
+    })?;
+    let options = Qwen3TtsRunOptions {
+        max_new_tokens: shared.max_new_tokens,
+        sampling: shared.sampling.to_sampling(),
+    };
+
     info!(
-        models_config = %args.models_config.display(),
-        model_id = %args.model_id,
-        output_dir = %args.output_dir.display(),
-        backend = ?options.backend,
-        max_new_tokens = options.max_new_tokens,
-        chunk_steps = options.chunk_steps,
-        stream = options.stream,
-        profiling = options.profiling,
-        language = args.language.as_deref().unwrap_or("Auto"),
-        speaker = args.speaker.as_deref().unwrap_or(""),
+        package = %shared.package.display(),
+        output = %shared.output.display(),
+        backend = ?shared.backend,
+        max_new_tokens = shared.max_new_tokens,
+        profiling = shared.profiling,
+        language = %shared.language,
         "starting tts generation"
     );
 
-    let request = SynthesisRequest {
-        text: args.text.clone(),
-        language: args.language.clone(),
-        speaker: args.speaker.clone(),
-    };
-    let result = service
-        .synthesize(&args.model_id, &request, &options)
-        .map_err(|error| format!("tts inference failed: {error}"))?;
+    let audio = engine.synthesize(request, options)?;
+    audio.save_wav(&shared.output)?;
 
-    let wav_path = args.output_dir.join("0000.wav");
-    save_pcm_wav(&result.waveform_pcm, &wav_path, result.sample_rate)
-        .map_err(|error| format!("failed to save wav: {error}"))?;
     info!(
-        wav_path = %wav_path.display(),
+        wav_path = %shared.output.display(),
         total_elapsed_ms = total_started.elapsed().as_millis(),
         "saved wav"
     );
     Ok(())
 }
 
-fn load_models_config(path: &PathBuf) -> Result<ModelsConfig, Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path)?;
-    let config = serde_yaml::from_str::<ModelsConfig>(&raw)?;
-    Ok(config)
+fn package_source(path: &Path) -> Qwen3TtsPackageSource {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("yaml" | "yml") => Qwen3TtsPackageSource::ManifestPath(path.to_path_buf()),
+        _ => Qwen3TtsPackageSource::PackageDir(path.to_path_buf()),
+    }
 }
 
-fn build_service(
-    config: ModelsConfig,
-) -> Result<(TtsService, HashMap<String, ModelDefaults>), Box<dyn std::error::Error>> {
-    if config.models.is_empty() {
-        return Err("models config must contain at least one model entry".into());
+fn parse_language(value: &str) -> LanguageSelection {
+    if value.trim().eq_ignore_ascii_case("auto") {
+        LanguageSelection::Auto
+    } else {
+        LanguageSelection::Named(value.trim().to_string())
     }
-
-    let mut registry = ModelRegistry::new();
-    let mut defaults = HashMap::new();
-
-    for model in config.models {
-        match model.family.as_str() {
-            "qwen" => {
-                if !register_qwen_family_model(
-                    &mut registry,
-                    model.id.clone(),
-                    model.paths.model_dir,
-                    model.variant,
-                ) {
-                    return Err(format!("duplicate model id `{}` in config", model.id).into());
-                }
-                defaults.insert(model.id, model.defaults.unwrap_or_default());
-            }
-            other => {
-                return Err(
-                    format!("unsupported model family `{other}`; supported values: qwen").into(),
-                );
-            }
-        }
-    }
-
-    Ok((TtsService::new(registry), defaults))
 }
 
-fn merge_options(args: &Args, defaults: ModelDefaults) -> SynthesisOptions {
-    let base = SynthesisOptions::default();
-    SynthesisOptions {
-        max_new_tokens: args
-            .max_new_tokens
-            .or(defaults.max_new_tokens)
-            .unwrap_or(base.max_new_tokens),
-        chunk_steps: args
-            .chunk_steps
-            .or(defaults.chunk_steps)
-            .unwrap_or(base.chunk_steps),
-        sampling: base.sampling,
-        stream: if args.stream {
-            true
-        } else {
-            defaults.stream.unwrap_or(base.stream)
-        },
-        profiling: if args.profiling {
-            true
-        } else {
-            defaults.profiling.unwrap_or(base.profiling)
-        },
-        backend: args
-            .backend
-            .map(CliBackend::to_backend)
-            .or_else(|| defaults.backend.map(CliBackend::to_backend))
-            .or(base.backend),
+fn resolve_stage_summary(shared: &SharedSynthesizeArgs) -> bool {
+    if shared.no_profiling_stage_summary {
+        false
+    } else {
+        shared.profiling_stage_summary
     }
 }
 
@@ -250,41 +255,72 @@ mod tests {
     fn args_parse_required_fields_with_defaults() {
         let args = Args::try_parse_from([
             "tts_cli",
-            "--models-config",
-            "models.yaml",
-            "--model-id",
-            "qwen-default",
+            "synthesize",
+            "base",
+            "--package",
+            "package-dir",
             "--text",
             "hello",
+            "--output",
+            "out.wav",
         ])
         .expect("minimal args should parse");
 
-        assert_eq!(args.models_config, PathBuf::from("models.yaml"));
-        assert_eq!(args.model_id, "qwen-default");
-        assert_eq!(args.text, "hello");
-        assert_eq!(args.output_dir, PathBuf::from("output"));
-        assert_eq!(args.max_new_tokens, None);
-        assert_eq!(args.chunk_steps, None);
-        assert!(!args.stream);
-        assert!(!args.profiling);
-        assert_eq!(args.log_level, LogLevel::Info);
+        match args.command {
+            Command::Synthesize(command) => match command.profile {
+                ProfileCommand::Base(base) => {
+                    assert_eq!(base.shared.package, PathBuf::from("package-dir"));
+                    assert_eq!(base.shared.text, "hello");
+                    assert_eq!(base.shared.language, "auto");
+                    assert_eq!(base.shared.output, PathBuf::from("out.wav"));
+                    assert_eq!(base.shared.max_new_tokens, 256);
+                }
+                ProfileCommand::CustomVoice(_) => panic!("expected base command"),
+            },
+        }
     }
 
     #[test]
     fn args_parse_backend_as_enum() {
         let args = Args::try_parse_from([
             "tts_cli",
-            "--models-config",
-            "models.yaml",
-            "--model-id",
-            "qwen-default",
+            "synthesize",
+            "custom-voice",
+            "--package",
+            "package-dir",
             "--text",
             "hello",
+            "--language",
+            "zh",
+            "--speaker",
+            "Chelsie",
+            "--output",
+            "out.wav",
             "--backend",
             "flex",
         ])
-        .expect("backend arg should parse");
+        .expect("backend should parse as enum");
 
-        assert_eq!(args.backend, Some(CliBackend::Flex));
+        match args.command {
+            Command::Synthesize(command) => match command.profile {
+                ProfileCommand::CustomVoice(custom_voice) => {
+                    assert_eq!(custom_voice.shared.backend, Some(CliBackend::Flex));
+                    assert_eq!(custom_voice.speaker.as_deref(), Some("Chelsie"));
+                }
+                ProfileCommand::Base(_) => panic!("expected custom-voice command"),
+            },
+        }
+    }
+
+    #[test]
+    fn package_source_uses_manifest_extension() {
+        assert!(matches!(
+            package_source(Path::new("package.yaml")),
+            Qwen3TtsPackageSource::ManifestPath(_)
+        ));
+        assert!(matches!(
+            package_source(Path::new("package-dir")),
+            Qwen3TtsPackageSource::PackageDir(_)
+        ));
     }
 }

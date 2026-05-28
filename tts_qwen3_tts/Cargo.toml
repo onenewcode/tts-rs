@@ -1,0 +1,30 @@
+[package]
+name = "tts_qwen3_tts"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+bench = false
+
+[features]
+default = ["flex", "fusion"]
+fusion = ["burn/fusion"]
+flex = ["burn/flex"]
+wgpu = ["burn/wgpu"]
+cuda = ["burn/cuda"]
+rocm = ["burn/rocm"]
+metal = ["burn/metal"]
+vulkan = ["burn/vulkan"]
+webgpu = ["burn/webgpu"]
+operator-profiling = []
+
+[dependencies]
+burn = { workspace = true, default-features = false, features = ["std"] }
+burn-store = { workspace = true, features = ["std", "pytorch", "safetensors"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+tokenizers = { workspace = true }
+tts_infer = { path = "../tts_infer" }
+tracing = { workspace = true }

@@ -1,17 +1,18 @@
 # Testing Target For The Qwen3-TTS Refactor
 
-This repository is moving away from the legacy `tts_core` + `tts_qwen`
-architecture. Until code lands, this document defines the intended validation
-shape for the new design so later Goal-mode implementation can wire tests to the
-correct seams.
-
-## Target Crates
-
-The target workspace is:
+This repository now validates the refactored three-crate layout:
 
 - `tts_infer`
 - `tts_qwen3_tts`
 - `tts_cli`
+
+Use these commands as the default fast verification set:
+
+```bash
+cargo test -p tts_infer
+cargo test -p tts_qwen3_tts
+cargo test -p tts_cli
+```
 
 ## Service-Layer Validation
 
@@ -45,7 +46,7 @@ These should cover:
 - request validation for `BaseRequest` and `CustomVoiceRequest`
 - compiler loading profile config once at engine load
 - prompt recipe behavior
-- `SessionSeed<B>` construction
+- session startup through `start_session + step + finish`
 - session finalization into `PcmAudio`
 
 ## CLI Validation
@@ -78,12 +79,13 @@ Expected artifact properties:
 - 16-bit PCM
 - non-zero frame count
 
-## Legacy Test Debt To Remove
+## Model-Backed Optional Check
 
-When the code migration starts, tests tied only to the deleted architecture
-should be removed or rewritten:
+When local model assets are available, run the ignored real-model smoke test:
 
-- tests centered on `tts_core`
-- tests centered on public release/variant routing
-- tests that assume `tts_qwen/src/arch`
-- tests for fake streaming/chunk policy behavior from the old service loop
+```bash
+cargo test -p tts_qwen3_tts --test real_model -- --ignored --nocapture
+```
+
+This should confirm that package-first loading and in-crate runtime execution
+produce mono, 24 kHz, 16-bit PCM output.

@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "tts_core",
     "tts_cli",
-    "tts_qwen",
+    "tts_infer",
+    "tts_qwen3_tts",
 ]
 
 resolver = "2"

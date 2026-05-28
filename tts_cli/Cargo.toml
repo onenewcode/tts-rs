@@ -5,23 +5,20 @@ edition = "2024"
 
 [features]
 default = ["flex", "fusion"]
-fusion = ["tts_qwen/fusion"]
-flex = ["tts_qwen/flex"]
-wgpu = ["tts_qwen/wgpu"]
-cuda = ["tts_qwen/cuda"]
-rocm = ["tts_qwen/rocm"]
-metal = ["tts_qwen/metal"]
-vulkan = ["tts_qwen/vulkan"]
-webgpu = ["tts_qwen/webgpu"]
+fusion = ["tts_qwen3_tts/fusion"]
+flex = ["tts_qwen3_tts/flex"]
+wgpu = ["tts_qwen3_tts/wgpu"]
+cuda = ["tts_qwen3_tts/cuda"]
+rocm = ["tts_qwen3_tts/rocm"]
+metal = ["tts_qwen3_tts/metal"]
+vulkan = ["tts_qwen3_tts/vulkan"]
+webgpu = ["tts_qwen3_tts/webgpu"]
 
 [dependencies]
 clap = { workspace = true }
-serde = { workspace = true }
-serde_yaml = { workspace = true }
-tts_core = { path = "../tts_core" }
-tts_qwen = { path = "../tts_qwen", default-features = false }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tts_qwen3_tts = { path = "../tts_qwen3_tts", default-features = false }
 
 [[bin]]
 name = "tts_cli"

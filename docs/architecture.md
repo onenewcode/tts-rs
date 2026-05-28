@@ -1,27 +1,22 @@
 # TTS Refactor Architecture
 
-This repository is in the middle of a planned architecture reset. The current
-source tree still contains the legacy `tts_core` + `tts_qwen` split, but that
-layout is no longer the target design.
-
-The implementation target is now:
+This repository now uses the refactored three-crate layout:
 
 - `tts_infer`: a thin inference-service crate that owns lifecycle orchestration,
   `PcmAudio`, and the internal session contract.
 - `tts_qwen3_tts`: the concrete model crate for the current Qwen3-TTS model.
 - `tts_cli`: a thin command-line entrypoint over `tts_qwen3_tts`.
 
-The old design elements below are intended to be removed during implementation:
+Key boundaries:
 
-- the `tts_core` crate
-- the public `variant/release` layer
-- `tts_qwen/src/arch`
-- fake-generic request types such as `text/language/speaker` in a shared core
-- the old registry/executor facade path
+- `tts_infer` owns only service-level session orchestration and audio output.
+- `tts_qwen3_tts` owns package parsing, request semantics, backend selection,
+  compiler behavior, resident model state, and run-time session execution.
+- `tts_cli` stays thin: parse package-first commands, map inputs into the model
+  API, and write WAV output.
 
-Use the refactor documents under `docs/refactor/` as the source of truth for
-implementation. They are intentionally written as target-state documents for
-Goal-mode automation, not as descriptions of the current code.
+The refactor planning documents under `docs/refactor/` remain useful as the
+design record for how this layout was reached.
 
 ## Refactor Document Set
 
