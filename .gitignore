@@ -1,4 +1,4 @@
-Qwen/
+/Qwen
 target/
 .DS_Store
 *.json

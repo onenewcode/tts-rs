@@ -4,19 +4,22 @@ use burn::tensor::backend::Backend;
 use tokenizers::Tokenizer;
 use tts_core::runtime::sampling::SamplingConfig;
 
-use crate::engine::config::EngineConfig;
 use crate::error::{QwenTtsError, QwenTtsInferenceError};
-use crate::frontend::{
-    CustomVoiceGenerationConfig, CustomVoiceRequest, compile_request,
-    load_custom_voice_generation_config,
-};
 use crate::io::tokenizer::load_qwen3_tts_tokenizer;
-use crate::model::load::audio_codec::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
-use crate::model::load::talker::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
-use crate::model::variant::QwenTtsVariant;
 use crate::profiling::{configure, with_session_context};
-use crate::runners::codec::{decode_waveform, waveform_to_pcm};
-use crate::runners::talker::{TalkerGenerationOutput, TalkerGenerator};
+use crate::profile::QwenRequest;
+use crate::profile::model_config::GenerationConfig;
+use crate::profile::compile::{CompiledRequest, compile_request};
+use crate::releases::QwenReleaseManifest;
+use crate::runtime::types::EngineConfig;
+
+use super::audio::{decode_waveform, waveform_to_pcm};
+use super::load::audio_codec::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
+use super::load::talker::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
+use super::runner::{TalkerGenerationOutput, TalkerGenerator};
+
+#[derive(Debug, Clone)]
+pub(crate) struct QwenEngineBridge;
 
 #[derive(Debug, Clone)]
 pub(crate) struct QwenRunConfig {
@@ -43,41 +46,39 @@ pub(crate) struct QwenRun<B: Backend> {
 }
 
 #[derive(Debug)]
-pub struct QwenTtsEngine<B: Backend>
+pub(crate) struct QwenEngine<B: Backend>
 where
     B::Device: Clone,
 {
     model_dir: PathBuf,
+    release: &'static QwenReleaseManifest,
     talker: LoadedQwen3TtsTalker<B>,
     audio_codec: LoadedQwen3TtsAudioCodec<B>,
     tokenizer: Tokenizer,
-    generation_config: CustomVoiceGenerationConfig,
+    generation_config: GenerationConfig,
     device: B::Device,
 }
 
-impl<B> QwenTtsEngine<B>
-where
-    B: Backend,
-    B::Device: Clone,
-{
-    pub fn load(
+impl QwenEngineBridge {
+    pub(crate) fn load_engine<B: Backend>(
         model_dir: impl AsRef<Path>,
+        release: &'static QwenReleaseManifest,
         device: &B::Device,
-        variant: QwenTtsVariant,
         config: EngineConfig,
-    ) -> Result<Self, QwenTtsError> {
+    ) -> Result<QwenEngine<B>, QwenTtsError>
+    where
+        B::Device: Clone,
+    {
         configure(&config.profiling);
-        match variant {
-            QwenTtsVariant::Qwen3Tts12Hz06BCustomVoice => {}
-        }
         let model_dir = model_dir.as_ref().to_path_buf();
         let talker = load_qwen3_tts_talker_for_inference::<B>(&model_dir, device)?;
         let audio_codec = load_qwen3_tts_audio_codec::<B>(&model_dir, device)?;
         let tokenizer =
             load_qwen3_tts_tokenizer(&model_dir).map_err(QwenTtsInferenceError::from)?;
-        let generation_config = load_custom_voice_generation_config(&model_dir)?;
-        Ok(Self {
+        let generation_config = (release.architecture.load_generation_config)(&model_dir, release.profile)?;
+        Ok(QwenEngine {
             model_dir,
+            release,
             talker,
             audio_codec,
             tokenizer,
@@ -85,13 +86,20 @@ where
             device: device.clone(),
         })
     }
+}
 
-    pub fn start_run(
+impl<B> QwenEngine<B>
+where
+    B: Backend,
+    B::Device: Clone,
+{
+    pub(crate) fn start_run(
         &self,
-        request: CustomVoiceRequest,
+        request: QwenRequest,
         config: QwenRunConfig,
     ) -> Result<QwenRun<B>, QwenTtsError> {
-        let compiled = compile_request(
+        let compiled: CompiledRequest<B> = compile_request(
+            self.release,
             &self.tokenizer,
             &self.model_dir,
             &self.talker.config.talker_config,
@@ -111,7 +119,7 @@ where
         Ok(QwenRun { id: 0, talker })
     }
 
-    pub fn step_run(&self, run: &mut QwenRun<B>) -> Result<QwenRunStep, QwenTtsError> {
+    pub(crate) fn step_run(&self, run: &mut QwenRun<B>) -> Result<QwenRunStep, QwenTtsError> {
         let step_idx = run.talker.step_idx();
         let step_result = with_session_context(run.id, step_idx, || run.talker.step(&self.talker))?;
         match step_result {
@@ -126,11 +134,11 @@ where
         }
     }
 
-    pub fn snapshot_audio(&self, run: &QwenRun<B>) -> Result<FinishedInference, QwenTtsError> {
+    pub(crate) fn snapshot_audio(&self, run: &QwenRun<B>) -> Result<FinishedInference, QwenTtsError> {
         self.decode_finished_talker(&run.talker)
     }
 
-    pub fn finish_run(&self, run: QwenRun<B>) -> Result<FinishedInference, QwenTtsError> {
+    pub(crate) fn finish_run(&self, run: QwenRun<B>) -> Result<FinishedInference, QwenTtsError> {
         self.decode_finished_talker(&run.talker)
     }
 

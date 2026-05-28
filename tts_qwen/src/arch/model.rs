@@ -117,6 +117,7 @@ impl<B> Qwen3TtsTalkerCodePredictor<B>
 where
     B: Backend,
 {
+    #[allow(dead_code)]
     pub fn predict(
         &self,
         inputs_embeds: Tensor<B, 3>,

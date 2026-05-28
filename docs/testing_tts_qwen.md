@@ -3,7 +3,7 @@
 ## Test Layers
 
 The workspace separates fast Rust-only validation from model-backed synthesis
-checks around the engine/session API and the CLI wrapper.
+checks around the Qwen runtime, profile compiler, and the CLI wrapper.
 
 ## Fast Validation
 
@@ -15,15 +15,14 @@ cargo test -p tts_qwen --test backend_api
 cargo test -p tts_qwen --tests --no-run
 ```
 
-These cover the new engine/session module graph, CLI parsing, and integration
+These cover release routing, profile-facing APIs, CLI parsing, and integration
 binary compilation without requiring local model weights.
 
 ## Model-Backed Integration Tests
 
 The integration tests under `tts_qwen/tests/` still require
-`QWEN_TTS_MODEL_DIR`. These tests are useful for
-API-level debugging, but the most representative synthesis check is the CLI
-smoke run shown below.
+`QWEN_TTS_MODEL_DIR`. These tests are useful for API-level debugging, but the
+most representative synthesis check is the CLI smoke run shown below.
 
 Useful runs:
 
@@ -36,8 +35,8 @@ cargo test -p tts_qwen --test pipeline -- --nocapture
 ## Preferred CLI End-to-End Smoke
 
 Use the CLI for end-to-end synthesis validation. This exercises backend
-selection, engine/session setup, token generation, codec decode, and WAV
-writing in the same path that end users call.
+selection, release routing, profile compilation, arch execution, codec decode,
+and WAV writing in the same path that end users call.
 
 ```bash
 cargo run --release -p tts_cli -- \
@@ -56,7 +55,7 @@ This writes `0000.wav` in the current directory.
 Why these arguments matter:
 
 - `--language Chinese` and `--speaker Vivian` produce a stable reference path
-  for the current local model.
+  for the current local custom-voice model.
 - `--max-new-tokens 64` avoids extremely long generations and trailing silence
   on short prompts.
 - `--output-dir .` makes it obvious where the artifact landed when doing manual

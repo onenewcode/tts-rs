@@ -2,14 +2,14 @@
 
 ## Project Structure & Module Organization
 
-This workspace has two Rust crates: `tts_qwen/` for inference and `tts_cli/` for the CLI wrapper. Core inference code in `tts_qwen/src/` is organized around `engine/`, `io/`, `model/`, `profiling/`, `runners/`, `runtime/`, and `session/`. Public orchestration now lives in `tts_qwen/src/lib.rs` and `tts_qwen/src/backend.rs`; `tts_cli/` should remain a thin adapter over that API surface. Integration tests live in `tts_qwen/tests/`; focused unit tests sit beside implementation files. See `docs/architecture.md` and `docs/testing_tts_qwen.md` for deeper notes.
+This workspace has two Rust crates: `tts_qwen/` for inference and `tts_cli/` for the CLI wrapper. Core inference code in `tts_qwen/src/` is organized around `arch/`, `profile/`, `runtime/`, `io/`, and `profiling/`. Public orchestration now lives in `tts_qwen/src/lib.rs` and `tts_qwen/src/backend.rs`; `tts_cli/` should remain a thin adapter over that API surface. Integration tests live in `tts_qwen/tests/`; focused unit tests sit beside implementation files. See `docs/architecture.md` and `docs/testing_tts_qwen.md` for deeper notes.
 
 ## Architecture Overview
 
 ```text
 text -> frontend runner -> talker/model -> codec tokens -> audio codec -> WAV
                         ^                                              |
-                        +-------- engine/session/backend facade --------+
+                        +------ runtime/backend family facade --------+
 ```
 
 Keep `tts_cli/` thin: parse args, choose backend, call the `tts_qwen` facade, and write output.

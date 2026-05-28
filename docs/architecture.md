@@ -1,20 +1,20 @@
 # TTS Inference Engine Architecture
 
-The workspace is split into a reusable execution core and a model-family
-implementation:
+The workspace is split into a reusable execution core and a Qwen-specific
+model crate:
 
 - `tts_core`: model-agnostic execution kernel, scheduling helpers, shared
   sampling runtime, and output abstractions.
-- `tts_qwen`: Qwen-family executor implementation (weights, kernels, request
-  compilation, talker forward, and codec decode).
+- `tts_qwen`: Qwen-family runtime, release routing, request profiles, shared
+  Qwen architectures, tokenizer loading, and WAV output helpers.
 
 ## Runtime Flow
 
 ```text
- request -> tts_core runtime -> qwen executor -> talker prefill/decode -> codec decode -> WAV
-            ^                               |
-            |                               v
-     core session/events/chunking      qwen kernels
+request -> tts_core runtime -> qwen release router -> qwen profile compiler -> qwen arch runner -> codec -> WAV
+           ^                                                                 |
+           |                                                                 v
+    core session/events/chunking                                  backend + model lifecycle glue
 ```
 
 ## Public API
@@ -22,8 +22,8 @@ implementation:
 | API | Purpose |
 |---|---|
 | `tts_core::TtsService::synthesize()` | model-agnostic runtime entrypoint |
-| `tts_qwen::register_qwen_family_model()` | register the Qwen family executor into the core registry |
-| `tts_qwen::engine::QwenTtsEngine` | internal loaded model bundle for the Qwen executor |
+| `tts_qwen::register_qwen_family_model()` | register a Qwen release into the core registry |
+| `tts_qwen::CustomVoiceRequest` | public request type for the exported custom-voice Qwen profile |
 
 ## Source Layout
 
@@ -35,20 +35,22 @@ tts_core/src/
   scheduler.rs   chunk emission scheduling helper
 
 tts_qwen/src/
-  executor.rs    qwen family executor and backend dispatch
-  engine/        loaded qwen model bundle + per-request run state
-  frontend.rs    qwen request types, prompt/config loading, and request compilation
-  model/         configs, weights, model definitions
-  runners/       talker generation and codec decode
-  kernels/       hot-path tensor operators
+  arch/          shared qwen-family model structure, loaders, runners, and kernels
+  profile/       request semantics, prompt rules, and request compilation
+  releases.rs    family release metadata and release-to-architecture/profile routing
+  runtime/       crate-local executor glue and runtime-local types
   io/            tokenizer and WAV helpers
+  profiling/     profiling toggles and operator instrumentation
+  registry.rs    qwen family registration entrypoint
 ```
 
 ## Design Rules
 
 - Core orchestration lives in `tts_core`; model crates should not reimplement
   generic runtime loops, chunk scheduling, or event policy.
-- Qwen-side code is limited to request compilation, model forward, and audio
-  decode for the Qwen family.
-- Runtime-facing state machines stay in core; family crates own only the
-  minimal per-request model state they need to advance inference.
+- Release selection is metadata-driven: a release resolves to one architecture
+  runner plus one request profile.
+- Architecture modules own model structure, weights, state, and forward paths.
+- Profile modules own request semantics, prompt rules, and request compilation.
+- Runtime modules own backend setup and run lifecycle; they must not absorb
+  Qwen prompt or model-shape logic.

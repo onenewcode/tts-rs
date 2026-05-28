@@ -414,6 +414,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
 
     /// Convenience: single-time-step decoder forward.
     /// `codec_ids`: [batch, num_quantizers] — reshaped to [batch, num_quantizers, 1].
+    #[allow(dead_code)]
     pub fn forward_single_step(
         &self,
         codec_ids: Tensor<B, 2, Int>,

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use burn_store::KeyRemapper;
 
 const TALKER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(r"(.*)norm\.weight$", "${1}norm.gamma")];

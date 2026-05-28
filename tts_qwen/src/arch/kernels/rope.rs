@@ -153,6 +153,7 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
     /// Apply multimodal rotary encoding to a tensor.
     /// x: [batch_size, num_heads, seq_len, head_dim]
     /// position_ids: [modalities, batch_size, seq_len]
+    #[allow(dead_code)]
     pub fn forward(
         &self,
         x: Tensor<B, 4>,
@@ -165,6 +166,7 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
     let [_, _, _, head_dim] = x.dims();
     let half_dim = head_dim / 2;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use burn_store::KeyRemapper;
 
 const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(
