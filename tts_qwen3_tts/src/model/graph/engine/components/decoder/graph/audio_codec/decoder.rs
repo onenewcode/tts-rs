@@ -1,20 +1,3 @@
-//! # Audio Codec Decoder
-//!
-//! Converts quantized codec token IDs to audio waveform through:
-//!
-//! ```text
-//! codec_ids [B, num_quantizers, T]
-//!   → Quantizer (RVQ codebook lookup, 16 layers)
-//!   → pre_conv (CausalConv1d)
-//!   → Decoder Transformer (8-layer, RoPE, SwiGLU)
-//!   → Upsample stages (CausalTransConv + ConvNeXt, ×4 time)
-//!   → Wave Decoder (4× UpsampleStage + SnakeBeta + output conv)
-//!   → waveform [B, 1, total_samples]
-//! ```
-//!
-//! Total time expansion: upsampling_ratios × upsample_rates = 2×2 × 8×5×4×3 = 1920×.
-//! For 12.5 Hz codec input this produces 24 kHz audio.
-
 use burn::module::{Module, Param};
 use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear, RmsNorm, RotaryEncoding};
@@ -235,7 +218,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformerLayer<B> {
         let residual = x.clone();
 
         // Self-attention with pre-norm + layer scale
-        let normed = rms_norm_3d(&self.input_layernorm, x);
+        let normed = self.input_layernorm.forward(x);
         let attn_out =
             self.self_attn
                 .forward(normed, num_heads, num_kv_heads, head_dim, rope, mask);
@@ -244,7 +227,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformerLayer<B> {
 
         // MLP with pre-norm + layer scale
         let residual = x.clone();
-        let normed = rms_norm_3d(&self.post_attention_layernorm, x);
+        let normed = self.post_attention_layernorm.forward(x);
         let mlp_out = self.mlp.forward(normed);
         let mlp_out = self.mlp_layer_scale.forward(mlp_out);
         residual + mlp_out
@@ -274,7 +257,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         }
 
         // Final RMS norm
-        let h_normed = rms_norm_3d(&self.norm, h);
+        let h_normed = self.norm.forward(h);
         let [b, s, hs] = h_normed.dims();
         let h2d = h_normed.reshape([b * s, hs]);
         let out = self.output_proj.forward(h2d); // [b*s, latent]
@@ -411,30 +394,6 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         }
         h.clamp_min(-1.0).clamp_max(1.0)
     }
-
-    /// Convenience: single-time-step decoder forward.
-    /// `codec_ids`: [batch, num_quantizers] — reshaped to [batch, num_quantizers, 1].
-    #[allow(dead_code)]
-    pub fn forward_single_step(
-        &self,
-        codec_ids: Tensor<B, 2, Int>,
-        num_semantic_quantizers: usize,
-        num_heads: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-        rope: &RotaryEncoding<B>,
-    ) -> Tensor<B, 3> {
-        let [batch, num_q] = codec_ids.dims();
-        let codec_3d = codec_ids.reshape([batch, num_q, 1]);
-        self.forward(
-            codec_3d,
-            num_semantic_quantizers,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            rope,
-        )
-    }
 }
 
 // -- Helpers -------------------------------------------------------------------
@@ -453,10 +412,3 @@ fn repeat_kv<B: Backend>(x: Tensor<B, 4>, n_rep: usize) -> Tensor<B, 4> {
     ])
 }
 
-/// RMS normalization on 3D tensor [batch, seq, channels].
-fn rms_norm_3d<B: Backend>(norm: &RmsNorm<B>, x: Tensor<B, 3>) -> Tensor<B, 3> {
-    let [batch, seq, channels] = x.dims();
-    let x2d = x.reshape([batch * seq, channels]);
-    let out2d = norm.forward(x2d);
-    out2d.reshape([batch, seq, channels])
-}

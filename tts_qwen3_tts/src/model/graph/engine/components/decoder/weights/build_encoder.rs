@@ -17,11 +17,11 @@ use crate::model::graph::engine::components::decoder::graph::audio_codec::encode
 use crate::model::graph::engine::components::decoder::import::config::{
     Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
-
+/// TODO 为什么需要写死
 const ENCODER_BACKBONE_LEN: usize = 15;
 const ENCODER_RESIDUAL_POSITIONS: [usize; 4] = [1, 4, 7, 10];
 const ENCODER_DOWNSAMPLE_POSITIONS: [usize; 4] = [3, 6, 9, 12];
-
+/// TODO 整个构建太过繁琐，需要进行优化
 pub(crate) fn derive_encoder_downsample_factor(
     input_sample_rate: usize,
     encode_downsample_rate: usize,

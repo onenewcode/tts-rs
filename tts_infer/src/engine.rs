@@ -25,7 +25,7 @@ where
     pub fn new(model: M) -> Self {
         Self { model }
     }
-
+    /// TODO 设置合理吗，会一直空转吗
     pub fn synthesize(
         &self,
         request: M::Request,

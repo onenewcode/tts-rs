@@ -1,8 +1,7 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Tensor, s};
 
-/// Custom Qwen3-specific Multimodal Rotary Positional Encoding.
-/// It encapsulates the complex frequency interleaving logic for different modalities.
+/// TODO 你的rope应该抽取一个公共的特征
 #[derive(burn::module::Module, Debug)]
 pub struct Qwen3RotaryEncoding<B: Backend> {
     inv_freq: Tensor<B, 1>,
@@ -148,62 +147,5 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
                 .cast(dtype)
                 .unsqueeze_dim::<4>(1),
         )
-    }
-
-    /// Apply multimodal rotary encoding to a tensor.
-    /// x: [batch_size, num_heads, seq_len, head_dim]
-    /// position_ids: [modalities, batch_size, seq_len]
-    #[allow(dead_code)]
-    pub fn forward(
-        &self,
-        x: Tensor<B, 4>,
-        position_ids: Tensor<B, 3, burn::tensor::Int>,
-    ) -> Tensor<B, 4> {
-        let (cos, sin) = self.get_cos_sin(position_ids, x.dtype());
-
-        // 3. Apply rotation
-        (x.clone() * cos) + (rotate_half(x) * sin)
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {
-    let [_, _, _, head_dim] = x.dims();
-    let half_dim = head_dim / 2;
-    let first = x.clone().slice(s![.., .., .., 0..half_dim]);
-    let second = x.slice(s![.., .., .., half_dim..head_dim]);
-    Tensor::cat(vec![-second, first], 3)
-}
-
-#[cfg(all(test, feature = "flex"))]
-mod tests {
-    use super::*;
-    use burn::backend::Flex;
-
-    #[test]
-    fn test_mrope_numerical_golden_value() {
-        type TestBackend = Flex;
-        let device = Default::default();
-
-        // Setup a small case: head_dim=4, 3 modalities, seq_len=1
-        let rope = Qwen3RotaryEncoding::<TestBackend>::new(4, 10000.0, vec![1, 1, 1], &device);
-
-        // Input x: [batch=1, heads=1, seq=1, dim=4]
-        let x = Tensor::<TestBackend, 4>::from_data([[[[1.0, 2.0, 3.0, 4.0]]]], &device);
-
-        // Position IDs: [3 modalities, batch=1, seq=1]
-        let pos =
-            Tensor::<TestBackend, 3, burn::tensor::Int>::from_data([[[1]], [[2]], [[3]]], &device);
-
-        let out = rope.forward(x, pos);
-        let data = out.into_data();
-
-        // We check the output shape and a few key values to ensure interleaving logic is intact.
-        assert_eq!(data.shape.as_slice(), &[1, 1, 1, 4]);
-
-        // Simplified check: since logic is operator-based, if shape and sum match, it's highly likely correct.
-        // In a real scenario, we'd copy-paste the exact 4 floats here.
-        let values = data.convert::<f32>().into_vec::<f32>().unwrap();
-        assert!(values.iter().all(|v| v.is_finite()));
     }
 }

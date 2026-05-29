@@ -5,7 +5,6 @@ use burn::tensor::{Bool, Tensor};
 
 use super::attention::{AttentionPosition, Qwen3TtsAttention};
 use super::mlp::Qwen3TtsTextMlp;
-use super::norm::qwen_rms_norm;
 use crate::profiling::record_operator;
 use crate::runtime::kv::KeyValueCache;
 
@@ -33,19 +32,14 @@ where
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let residual = x.clone();
-        let x = record_operator("layer.input_rms_norm", || {
-            qwen_rms_norm(&self.input_layernorm, x)
-        });
-        let attn_out = record_operator("layer.self_attn", || {
+        let x = self.input_layernorm.forward(x);
+        let attn_out =
             self.self_attn
-                .forward(x, num_heads, num_kv_heads, head_dim, position, mask, cache)
-        });
+                .forward(x, num_heads, num_kv_heads, head_dim, position, mask, cache);
         let x = residual + attn_out;
 
         let residual = x.clone();
-        let x = record_operator("layer.post_attn_rms_norm", || {
-            qwen_rms_norm(&self.post_attention_layernorm, x)
-        });
+        let x = self.post_attention_layernorm.forward(x);
         residual + record_operator("layer.mlp", || self.mlp.forward(x))
     }
 }

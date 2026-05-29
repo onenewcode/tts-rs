@@ -6,7 +6,6 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Tensor};
 
 use super::mlp::native_linear_3d;
-use super::norm::qwen_rms_norm;
 use crate::profiling::record_operator;
 use crate::runtime::kv::KeyValueCache;
 
@@ -30,7 +29,7 @@ pub struct Qwen3TtsAttention<B: Backend> {
     pub q_norm: RmsNorm<B>,
     pub k_norm: RmsNorm<B>,
 }
-
+/// TODO 优化整体效率 减少clone和计算
 impl<B: Backend> Qwen3TtsAttention<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn forward(
@@ -45,30 +44,20 @@ impl<B: Backend> Qwen3TtsAttention<B> {
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
 
-        let q = record_operator("attention.q_proj", || {
-            native_linear_3d(&self.q_proj, x.clone())
-        });
-        let k = record_operator("attention.k_proj", || {
-            native_linear_3d(&self.k_proj, x.clone())
-        });
-        let v = record_operator("attention.v_proj", || native_linear_3d(&self.v_proj, x));
+        let q = native_linear_3d(&self.q_proj, x.clone());
+        let k = native_linear_3d(&self.k_proj, x.clone());
+        let v = native_linear_3d(&self.v_proj, x);
 
-        let q = record_operator("attention.q_norm", || {
-            qwen_rms_norm(
-                &self.q_norm,
-                q.reshape([batch_size, seq_len, num_heads, head_dim]),
-            )
+        let q = self
+            .q_norm
+            .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
             .swap_dims(1, 2)
-            .clone()
-        });
-        let k = record_operator("attention.k_norm", || {
-            qwen_rms_norm(
-                &self.k_norm,
-                k.reshape([batch_size, seq_len, num_kv_heads, head_dim]),
-            )
+            .clone();
+        let k = self
+            .k_norm
+            .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
             .swap_dims(1, 2)
-            .clone()
-        });
+            .clone();
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2)

@@ -5,7 +5,7 @@ use burn::tensor::{Tensor, backend::Backend};
 
 use crate::kernels::activation::{AudioCodecLayerScale, Qwen3TtsAudioCodecEmptyModule};
 use crate::kernels::conv::AudioCodecCausalConv1d;
-
+/// TODO 实现全部不正确
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecEncoder<B: Backend> {
     pub encoder: Qwen3TtsAudioCodecEncoderBackbone<B>,
@@ -85,7 +85,7 @@ pub struct Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B: Backend> {
     pub output_proj: Conv1d<B>,
     pub layers: Vec<Qwen3TtsAudioCodecEncoderVectorQuantization<B>>,
 }
-
+/// TODO 为什么要无意义的套一层
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecEncoderVectorQuantization<B: Backend> {
     pub codebook: Qwen3TtsAudioCodecEncoderCodebook<B>,

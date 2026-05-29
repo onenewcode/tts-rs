@@ -8,10 +8,10 @@ use crate::kernels::attention::AttentionPosition;
 use crate::kernels::layer::Qwen3TtsDecoderLayer;
 use crate::kernels::mlp::Qwen3TtsTalkerResizeMlp;
 use crate::kernels::mlp::native_linear_3d;
-use crate::kernels::norm::qwen_rms_norm;
+
 use crate::kernels::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
 use crate::runtime::kv::KeyValueCache;
-
+/// TODO为什么还要进行一层不必要的封装
 #[derive(Module, Debug)]
 pub struct Qwen3TtsCheckpoint<B: Backend> {
     pub talker: Qwen3TtsTalker<B>,
@@ -30,6 +30,7 @@ impl<B> Qwen3TtsTalker<B>
 where
     B: Backend,
 {
+    /// TODO 这里应该明确为forward 因为infer是整体的流程，包括缓存管理和mask构建等
     #[allow(clippy::too_many_arguments)]
     pub fn infer(
         &self,
@@ -44,6 +45,7 @@ where
         let [batch_size, seq_len, _] = inputs_embeds.dims();
         let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
         let device = inputs_embeds.device();
+        //  TODO 应该在最后一层构建避免重复传递
         let final_mask = build_attention_mask(batch_size, seq_len, key_len, mask, &device);
 
         let hidden_states = self.model.run_layers(
@@ -56,7 +58,7 @@ where
             final_mask,
             cache,
         );
-        let logits = native_linear_3d(&self.codec_head, hidden_states.clone());
+        let logits= self.codec_head.forward(hidden_states.clone()) ;
         (hidden_states, logits)
     }
 }
@@ -73,6 +75,7 @@ impl<B> Qwen3TtsTalkerModel<B>
 where
     B: Backend,
 {
+     /// TODO 这里应该明确为forward 
     #[allow(clippy::too_many_arguments)]
     pub fn run_layers(
         &self,
@@ -89,6 +92,7 @@ where
 
         let mut x = inputs_embeds;
         for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
+            // TODO  为什么每次都要clone cos和sin？是否可以在外面构建好后传递引用进去或者更加高效的实践
             x = layer.forward(
                 x,
                 num_heads,
@@ -103,7 +107,7 @@ where
             );
         }
 
-        qwen_rms_norm(&self.norm, x)
+        self.norm.forward(x)
     }
 }
 
@@ -217,10 +221,10 @@ where
                 c,
             );
         }
-        qwen_rms_norm(&self.norm, x)
+        self.norm.forward(x)
     }
 }
-
+/// TODO 是否可以参考burn的实现，
 pub(crate) fn build_attention_mask<B: Backend>(
     batch_size: usize,
     query_len: usize,

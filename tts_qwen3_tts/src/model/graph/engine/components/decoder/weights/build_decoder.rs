@@ -18,7 +18,7 @@ use crate::model::graph::engine::components::decoder::graph::audio_codec::wave_d
     Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
 use crate::model::graph::engine::components::decoder::import::config::Qwen3TtsAudioCodecDecoderConfig;
-
+/// TODO 整个构建太过繁琐，需要进行优化
 impl Qwen3TtsAudioCodecDecoderConfig {
     pub(crate) fn init<B: Backend>(&self, device: &B::Device) -> Qwen3TtsAudioCodecDecoder<B> {
         let mut wave_decoder: Vec<Qwen3TtsAudioCodecWaveDecoderEntry<B>> =

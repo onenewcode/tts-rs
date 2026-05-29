@@ -14,12 +14,12 @@ pub enum Qwen3TtsAudioCodecWaveDecoderEntry<B: Backend> {
     OutputActivation(AudioCodecSnakeBeta<B>),
     OutputConv(Qwen3TtsAudioCodecWaveDecoderConvEntry<B>),
 }
-
+/// TODO 无意义的嵌套
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecWaveDecoderConvEntry<B: Backend> {
     pub conv: Conv1d<B>,
 }
-
+/// TODO 该结构体设计有缺陷需要纠正
 #[derive(Module, Debug)]
 #[allow(clippy::type_complexity)]
 pub struct Qwen3TtsAudioCodecWaveDecoderUpsampleStage<B: Backend> {
@@ -47,7 +47,7 @@ impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderConvEntry<B> {
         self.conv.forward(x)
     }
 }
-
+/// TODO 经行优化
 impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderResidualUnit<B> {
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let residual = x.clone();
@@ -58,7 +58,7 @@ impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderResidualUnit<B> {
         residual + h
     }
 }
-
+/// TODO 经行优化
 impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderUpsampleStage<B> {
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let h = self.block.0.forward(x);

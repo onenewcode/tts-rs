@@ -56,6 +56,7 @@ impl<B> TalkerGenerator<B>
 where
     B: Backend,
 {
+    /// TODO 所有的推理因该是forward函数，infer是整体流程
     pub fn start(
         config: &Qwen3TtsTalkerConfig,
         loaded: &LoadedQwen3TtsTalker<B>,
@@ -420,7 +421,7 @@ pub(crate) fn validate_cache_lengths<B: Backend>(
     }
     Ok(expected)
 }
-
+///  TODO 不需多余的检查
 pub(crate) fn validate_talker_input(
     name: &str,
     input_dims: [usize; 3],
