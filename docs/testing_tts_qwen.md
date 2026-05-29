@@ -89,3 +89,73 @@ cargo test -p tts_qwen3_tts --test real_model -- --ignored --nocapture
 
 This should confirm that package-first loading and in-crate runtime execution
 produce mono, 24 kHz, 16-bit PCM output.
+
+
+## Base / CustomVoice Validation Status
+
+Current repo-level validation status:
+
+- `CustomVoice`
+  - local smoke baseline exists for `text + language + speaker`
+  - `instruct` support is planned and must be re-smoked after implementation
+- `Base`
+  - voice-clone support is planned
+  - repo-level Base smoke has not been completed yet
+  - until local Base smoke passes, Base must be reported as `unverified` or `experimental`
+
+## Additional Smoke Acceptance
+
+### CustomVoice
+
+After `instruct` lands, the implementation is only accepted when:
+
+- CLI path can synthesize with `--speaker`
+- CLI path can synthesize with `--speaker` + `--instruct`
+- output WAV is mono, 24 kHz, 16-bit PCM, and non-empty
+
+### Base
+
+Base support is only accepted as repo-verified when all of the following are true:
+
+- local Base weights load through `Qwen3TtsEngine::load(...)`
+- local reference WAV can be consumed through the new Base clone path
+- `ref_audio + ref_text` synthesis produces a non-empty WAV
+- `--x-vector-only` synthesis also runs successfully at least once
+- output WAV is mono, 24 kHz, 16-bit PCM, and non-empty
+
+Until that happens, Base should be treated as implemented-but-unverified rather than complete.
+
+
+## Verification Checklist
+
+Use this checklist before reporting completion.
+
+### CustomVoice checklist
+
+- request/API path supports `instruct`
+- CLI path supports `--instruct`
+- existing `speaker` path still works
+- ignored smoke or manual smoke produces a non-empty WAV
+- output WAV is mono / 24 kHz / 16-bit PCM
+
+### Base checklist
+
+- request/API path supports clone input or prepared prompt
+- CLI path supports `--ref-audio`
+- CLI path supports `--ref-text`
+- CLI path supports `--x-vector-only`
+- local WAV preprocessing works
+- create prompt helper works
+- `ref_audio + ref_text` synthesis succeeds
+- `--x-vector-only` synthesis succeeds
+- output WAV is mono / 24 kHz / 16-bit PCM
+- Base status is not reported as verified unless both smoke paths pass
+
+## Verification Report Minimum
+
+Any completion report for this work should include at least:
+
+- exact commands run
+- pass/fail result for each command
+- whether Base is `unverified`, `implemented-but-unverified`, or `repo-verified`
+- generated artifact paths for successful smoke runs
