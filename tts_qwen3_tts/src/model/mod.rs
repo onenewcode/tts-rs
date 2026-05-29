@@ -24,7 +24,6 @@ pub(crate) mod graph;
 
 #[derive(Debug)]
 pub(crate) struct Qwen3TtsModelInner<B: Backend> {
-    pub(crate) package: Qwen3TtsPackage,
     pub(crate) device: B::Device,
     pub(crate) compiler: Qwen3TtsRequestCompiler,
     pub(crate) talker: LoadedQwen3TtsTalker<B>,
@@ -238,19 +237,33 @@ impl LoadedModel for Qwen3TtsLoadedModel {
     ) -> Result<Self::Session, Self::Error> {
         match self {
             #[cfg(feature = "flex")]
-            Self::Flex(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::Flex),
+            Self::Flex(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::Flex)
+            }
             #[cfg(feature = "wgpu")]
-            Self::Wgpu(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::Wgpu),
+            Self::Wgpu(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::Wgpu)
+            }
             #[cfg(feature = "cuda")]
-            Self::Cuda(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::Cuda),
+            Self::Cuda(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::Cuda)
+            }
             #[cfg(feature = "rocm")]
-            Self::Rocm(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::Rocm),
+            Self::Rocm(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::Rocm)
+            }
             #[cfg(feature = "metal")]
-            Self::Metal(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::Metal),
+            Self::Metal(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::Metal)
+            }
             #[cfg(feature = "vulkan")]
-            Self::Vulkan(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::Vulkan),
+            Self::Vulkan(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::Vulkan)
+            }
             #[cfg(feature = "webgpu")]
-            Self::WebGpu(inner) => start_backend_session(inner, request, options).map(Qwen3TtsSession::WebGpu),
+            Self::WebGpu(inner) => {
+                start_backend_session(inner, request, options).map(Qwen3TtsSession::WebGpu)
+            }
         }
     }
 }
@@ -439,7 +452,6 @@ where
         device,
     )?;
     Ok(Arc::new(Qwen3TtsModelInner {
-        package,
         device: device.clone(),
         compiler,
         talker,
@@ -459,7 +471,6 @@ fn map_sampling(sampling: &crate::SamplingConfig) -> RuntimeSamplingConfig {
         temperature: sampling.temperature,
         top_k: sampling.top_k,
         top_p: sampling.top_p,
-        seed: sampling.seed,
         repetition_penalty: sampling.repetition_penalty,
     }
 }

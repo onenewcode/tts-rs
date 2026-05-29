@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct Qwen3TtsPackageManifest {
     pub format: String,
     pub name: String,
     pub artifacts: Qwen3TtsArtifactsManifest,
-    pub profiles: Qwen3TtsProfilesManifest,
+    pub generation_config: Qwen3TtsGenerationConfigManifest,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -19,14 +19,12 @@ pub struct Qwen3TtsArtifactsManifest {
     pub codec_weights: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct Qwen3TtsProfilesManifest {
-    pub base: Option<Qwen3TtsProfileManifest>,
-    pub custom_voice: Option<Qwen3TtsProfileManifest>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct Qwen3TtsProfileManifest {
-    pub generation_config: PathBuf,
-    pub control_config: PathBuf,
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Qwen3TtsGenerationConfigManifest {
+    pub do_sample: bool,
+    pub repetition_penalty: Option<f32>,
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: usize,
+    pub max_new_tokens: usize,
 }

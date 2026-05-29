@@ -1,4 +1,5 @@
 pub mod components;
+#[cfg(test)]
 pub mod spec;
 
 #[cfg(test)]
@@ -6,13 +7,14 @@ mod tests {
     use burn::backend::Flex;
 
     use super::components::{
-        decoder::{graph::Waveform, lowering::DecoderLowering},
+        decoder::{graph::Waveform, lowering::DecoderLowering, spec::decoder_component_spec},
         generator::{
             import::config::{
                 Qwen3TtsConfig, Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig,
                 Qwen3TtsTalkerRopeScalingConfig,
             },
             lowering::GeneratorLowering,
+            spec::generator_component_spec,
             weights::LoadedQwen3TtsTalker,
         },
     };
@@ -25,27 +27,49 @@ mod tests {
     #[test]
     fn engine_spec_expresses_session_seed_generator_decoder_contracts() {
         let spec = qwen_engine_spec();
-        assert_eq!(spec.facts.dag_nodes, ["acoustic_generator", "audio_decoder"]);
-        assert_eq!(spec.facts.protocols, ["SessionSeed", "CodecTokenTensor", "Waveform"]);
+        assert_eq!(
+            spec.facts.dag_nodes,
+            ["acoustic_generator", "audio_decoder"]
+        );
+        assert_eq!(
+            spec.facts.protocols,
+            ["SessionSeed", "CodecTokenTensor", "Waveform"]
+        );
         assert!(spec.policies.contains(&EnginePolicy::PrepareFirst));
         assert!(spec.policies.contains(&EnginePolicy::SequenceBoundary));
         assert!(spec.policies.contains(&EnginePolicy::AssemblyOverRegistry));
-        assert!(spec.policies.contains(&EnginePolicy::EdgeDeviceResourcePriority));
+        assert!(
+            spec.policies
+                .contains(&EnginePolicy::EdgeDeviceResourcePriority)
+        );
         assert_eq!(spec.resource_contract.workspace, "fixed_capacity");
     }
 
     #[test]
     fn component_specs_capture_seed_and_tensor_boundaries() {
         let spec = qwen_engine_spec();
-        let generator = spec.component(ComponentKind::AcousticGenerator).unwrap();
+        let generator = generator_component_spec();
         assert_eq!(generator.execution_boundary.accepts, "SessionSeed");
         assert_eq!(generator.execution_boundary.executes_on, "TalkerGenerator");
         assert_eq!(generator.execution_boundary.produces, "CodecTokenTensor");
+        assert_eq!(generator.kind, ComponentKind::AcousticGenerator);
+        assert!(std::ptr::eq(
+            generator,
+            spec.component(ComponentKind::AcousticGenerator).unwrap()
+        ));
 
-        let decoder = spec.component(ComponentKind::AudioDecoder).unwrap();
+        let decoder = decoder_component_spec();
         assert_eq!(decoder.execution_boundary.accepts, "CodecTokenTensor");
-        assert_eq!(decoder.execution_boundary.executes_on, "DecoderExecutionForm");
+        assert_eq!(
+            decoder.execution_boundary.executes_on,
+            "DecoderExecutionForm"
+        );
         assert_eq!(decoder.execution_boundary.produces, "Waveform");
+        assert_eq!(decoder.kind, ComponentKind::AudioDecoder);
+        assert!(std::ptr::eq(
+            decoder,
+            spec.component(ComponentKind::AudioDecoder).unwrap()
+        ));
     }
 
     #[test]
@@ -65,13 +89,9 @@ mod tests {
             codec_eos_token_id: 8,
         };
 
-        let execution = GeneratorLowering::lower(
-            &prepared,
-            &talker.config.talker_config,
-            &talker,
-            &device,
-        )
-        .unwrap();
+        let execution =
+            GeneratorLowering::lower(&prepared, &talker.config.talker_config, &talker, &device)
+                .unwrap();
         assert_eq!(execution.batch_size(), 1);
         assert!(execution.sequence_len() > 0);
         assert_eq!(execution.into_compiled().codec_eos_token_id, 8);
@@ -80,7 +100,8 @@ mod tests {
     #[test]
     fn decoder_lowering_requires_complete_codec_token_tensors() {
         let device = Default::default();
-        let execution = DecoderLowering::lower::<TestBackend>(vec![1, 2, 3, 4], 1, 2, 2, &device).unwrap();
+        let execution =
+            DecoderLowering::lower::<TestBackend>(vec![1, 2, 3, 4], 1, 2, 2, &device).unwrap();
         assert_eq!(execution.batch_size(), 1);
         assert_eq!(execution.num_quantizers(), 2);
         assert_eq!(execution.time_steps(), 2);

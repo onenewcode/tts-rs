@@ -131,10 +131,6 @@ impl<B: Backend> AutoregressiveCache<B> {
     pub fn len(&self) -> usize {
         self.cur_seq_len
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.cur_seq_len == 0
-    }
 }
 
 #[derive(Debug)]
@@ -171,9 +167,5 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn len(&self) -> usize {
         self.key.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.key.is_empty()
     }
 }

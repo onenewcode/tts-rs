@@ -2,9 +2,6 @@ mod manifest;
 mod normalize;
 
 pub use manifest::{
-    Qwen3TtsArtifactsManifest, Qwen3TtsPackageManifest, Qwen3TtsProfileManifest,
-    Qwen3TtsProfilesManifest,
+    Qwen3TtsArtifactsManifest, Qwen3TtsGenerationConfigManifest, Qwen3TtsPackageManifest,
 };
-pub use normalize::{
-    Qwen3TtsPackage, Qwen3TtsPackageProfiles, Qwen3TtsPackageSource, Qwen3TtsProfilePackage,
-};
+pub use normalize::{Qwen3TtsGenerationConfigSource, Qwen3TtsPackage, Qwen3TtsPackageSource};

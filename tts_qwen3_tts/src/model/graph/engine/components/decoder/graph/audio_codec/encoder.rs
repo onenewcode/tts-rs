@@ -20,6 +20,7 @@ pub struct Qwen3TtsAudioCodecEncoderBackbone<B: Backend> {
 }
 
 #[derive(Module, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Qwen3TtsAudioCodecEncoderBackboneLayer<B: Backend> {
     InputConv(Qwen3TtsAudioCodecEncoderConvLayer<B>),
     Resnet(Qwen3TtsAudioCodecEncoderResnetLayer<B>),

@@ -1,5 +1,5 @@
-mod compiler;
 mod backend;
+mod compiler;
 mod error;
 mod io;
 mod model;
@@ -17,9 +17,8 @@ use model::Qwen3TtsLoadedModel;
 pub use backend::{Qwen3TtsBackend, available_backends, resolve_backend};
 pub use error::{Qwen3TtsError, Qwen3TtsInferenceError, Qwen3TtsLoadError};
 pub use package::{
-    Qwen3TtsArtifactsManifest, Qwen3TtsPackage, Qwen3TtsPackageManifest, Qwen3TtsPackageProfiles,
-    Qwen3TtsPackageSource, Qwen3TtsProfileManifest, Qwen3TtsProfilePackage,
-    Qwen3TtsProfilesManifest,
+    Qwen3TtsArtifactsManifest, Qwen3TtsGenerationConfigManifest, Qwen3TtsGenerationConfigSource,
+    Qwen3TtsPackage, Qwen3TtsPackageManifest, Qwen3TtsPackageSource,
 };
 pub use profiling::Qwen3TtsProfilingConfig;
 pub use request::{BaseRequest, CustomVoiceRequest, LanguageSelection, QwenRequest};
@@ -80,7 +79,9 @@ impl Qwen3TtsEngine {
         request: QwenRequest,
         options: Qwen3TtsRunOptions,
     ) -> Result<PcmAudio, Qwen3TtsError> {
-        self.inner.synthesize(request, options).map_err(Qwen3TtsError::from)
+        self.inner
+            .synthesize(request, options)
+            .map_err(Qwen3TtsError::from)
     }
 
     pub fn package(&self) -> &Qwen3TtsPackage {

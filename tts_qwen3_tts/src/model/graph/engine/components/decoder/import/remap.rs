@@ -21,7 +21,6 @@ pub fn audio_codec_export_key_remapper() -> KeyRemapper {
         .expect("static regex remapping must compile")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{audio_codec_export_key_remapper, audio_codec_load_key_remapper};

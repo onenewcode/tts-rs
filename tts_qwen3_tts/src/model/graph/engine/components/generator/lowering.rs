@@ -1,11 +1,9 @@
 use burn::tensor::backend::Backend;
 
 use crate::compiler::session_seed::{SessionSeed, materialize_session_seed};
+use crate::error::QwenTtsInferenceError;
 use crate::model::graph::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
 use crate::model::graph::engine::components::generator::weights::LoadedQwen3TtsTalker;
-use crate::error::QwenTtsInferenceError;
-
-use super::graph::runner::TalkerGenerationOutput;
 
 #[derive(Debug)]
 pub(crate) struct GeneratorExecutionForm<B: Backend> {
@@ -40,27 +38,5 @@ impl GeneratorLowering {
     ) -> Result<GeneratorExecutionForm<B>, QwenTtsInferenceError> {
         let compiled = materialize_session_seed(prepared, talker_config, talker, device)?;
         Ok(GeneratorExecutionForm { compiled })
-    }
-
-    pub(crate) fn lift_output<B: Backend>(
-        output: TalkerGenerationOutput<B>,
-        num_code_groups: usize,
-    ) -> Result<burn::tensor::TensorData, QwenTtsInferenceError> {
-        let dims = output.codec_token_ids.dims();
-        let [_batch_size, quantizers, time_steps] = dims;
-        let token_ids = output.codec_token_ids.into_data();
-        if quantizers != num_code_groups {
-            return Err(QwenTtsInferenceError::InvalidInput {
-                message: format!(
-                    "codec token sequence quantizer mismatch: expected {num_code_groups}, got {quantizers}"
-                ),
-            });
-        }
-        if time_steps == 0 {
-            return Err(QwenTtsInferenceError::InvalidInput {
-                message: "codec token sequence time dimension must be non-zero".to_string(),
-            });
-        }
-        Ok(token_ids)
     }
 }

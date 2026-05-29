@@ -32,6 +32,7 @@ pub struct Qwen3TtsAttention<B: Backend> {
 }
 
 impl<B: Backend> Qwen3TtsAttention<B> {
+    #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &self,
         x: Tensor<B, 3>,
@@ -96,6 +97,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_attention(
         &self,
         batch_size: usize,

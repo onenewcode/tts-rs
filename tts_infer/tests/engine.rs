@@ -116,7 +116,9 @@ fn synthesize_runs_session_until_finish_and_returns_pcm_audio() {
     let model = MockLoadedModel::new(2);
     let engine = Engine::new(model.clone());
 
-    let audio = engine.synthesize("hello", 1).expect("session should finish");
+    let audio = engine
+        .synthesize("hello", 1)
+        .expect("session should finish");
 
     assert_eq!(model.starts(), 1);
     assert_eq!(audio.pcm_i16, vec![5]);
@@ -131,7 +133,9 @@ fn session_step_rejects_calls_after_terminal_state() {
     let mut session = engine.start_session("hi", 1).expect("session should start");
 
     assert_eq!(session.step().unwrap(), SessionStep::Finished);
-    let error = session.step().expect_err("terminal session should reject more steps");
+    let error = session
+        .step()
+        .expect_err("terminal session should reject more steps");
 
     assert_eq!(error, InferError::Service(ServiceError::StepAfterTerminal));
 }
@@ -142,9 +146,14 @@ fn session_finish_rejects_calls_before_terminal_state() {
     let engine = Engine::new(model);
     let session = engine.start_session("hi", 1).expect("session should start");
 
-    let error = session.finish().expect_err("non-terminal session should reject finish");
+    let error = session
+        .finish()
+        .expect_err("non-terminal session should reject finish");
 
-    assert_eq!(error, InferError::Service(ServiceError::FinishBeforeTerminal));
+    assert_eq!(
+        error,
+        InferError::Service(ServiceError::FinishBeforeTerminal)
+    );
 }
 
 #[test]
@@ -163,7 +172,9 @@ fn session_finish_returns_audio_after_terminal_state() {
 fn model_step_errors_are_wrapped() {
     let engine = Engine::new(FailingLoadedModel);
 
-    let error = engine.synthesize((), ()).expect_err("step failure should bubble up");
+    let error = engine
+        .synthesize((), ())
+        .expect_err("step failure should bubble up");
 
     assert_eq!(error, InferError::Model("step failed"));
 }

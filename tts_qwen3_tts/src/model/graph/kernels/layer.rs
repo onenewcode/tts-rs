@@ -21,6 +21,7 @@ impl<B> Qwen3TtsDecoderLayer<B>
 where
     B: Backend,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &self,
         x: Tensor<B, 3>,

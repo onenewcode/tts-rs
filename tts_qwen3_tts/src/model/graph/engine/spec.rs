@@ -130,5 +130,4 @@ pub(crate) const fn qwen_engine_spec() -> EngineSpec {
     }
 }
 
-
 pub(crate) static QWEN_ENGINE_SPEC: EngineSpec = qwen_engine_spec();

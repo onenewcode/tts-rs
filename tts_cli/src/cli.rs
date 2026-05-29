@@ -39,8 +39,14 @@ pub enum ProfileCommand {
 
 #[derive(Debug, Clone, ClapArgs)]
 pub struct SharedSynthesizeArgs {
-    #[arg(long)]
-    pub package: PathBuf,
+    #[arg(long, required_unless_present = "manifest")]
+    pub model_dir: Option<PathBuf>,
+    #[arg(
+        long,
+        conflicts_with = "model_dir",
+        required_unless_present = "model_dir"
+    )]
+    pub manifest: Option<PathBuf>,
     #[arg(long)]
     pub text: String,
     #[arg(long, default_value = "auto")]
@@ -174,12 +180,17 @@ fn run_synthesis(
     request: QwenRequest,
     total_started: Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = shared.output.parent().filter(|path| !path.as_os_str().is_empty()) {
+    if let Some(parent) = shared
+        .output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)?;
     }
 
+    let package_source = package_source(shared)?;
     let engine = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
-        package: package_source(&shared.package),
+        package: package_source,
         backend: shared
             .backend
             .map(CliBackend::to_backend)
@@ -197,7 +208,7 @@ fn run_synthesis(
     };
 
     info!(
-        package = %shared.package.display(),
+        source = %input_source_display(shared).display(),
         output = %shared.output.display(),
         backend = ?shared.backend,
         max_new_tokens = shared.max_new_tokens,
@@ -217,11 +228,27 @@ fn run_synthesis(
     Ok(())
 }
 
-fn package_source(path: &Path) -> Qwen3TtsPackageSource {
-    match path.extension().and_then(|extension| extension.to_str()) {
-        Some("yaml" | "yml") => Qwen3TtsPackageSource::ManifestPath(path.to_path_buf()),
-        _ => Qwen3TtsPackageSource::PackageDir(path.to_path_buf()),
+fn package_source(shared: &SharedSynthesizeArgs) -> Result<Qwen3TtsPackageSource, std::io::Error> {
+    match (&shared.model_dir, &shared.manifest) {
+        (Some(path), None) => Ok(Qwen3TtsPackageSource::ModelDir(path.clone())),
+        (None, Some(path)) => Ok(Qwen3TtsPackageSource::ManifestPath(path.clone())),
+        (None, None) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "pass either --model-dir or --manifest",
+        )),
+        (Some(_), Some(_)) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "pass only one of --model-dir or --manifest",
+        )),
     }
+}
+
+fn input_source_display(shared: &SharedSynthesizeArgs) -> &Path {
+    shared
+        .model_dir
+        .as_deref()
+        .or(shared.manifest.as_deref())
+        .expect("clap requires one input source")
 }
 
 fn parse_language(value: &str) -> LanguageSelection {
@@ -257,8 +284,8 @@ mod tests {
             "tts_cli",
             "synthesize",
             "base",
-            "--package",
-            "package-dir",
+            "--model-dir",
+            "model-dir",
             "--text",
             "hello",
             "--output",
@@ -269,7 +296,8 @@ mod tests {
         match args.command {
             Command::Synthesize(command) => match command.profile {
                 ProfileCommand::Base(base) => {
-                    assert_eq!(base.shared.package, PathBuf::from("package-dir"));
+                    assert_eq!(base.shared.model_dir, Some(PathBuf::from("model-dir")));
+                    assert_eq!(base.shared.manifest, None);
                     assert_eq!(base.shared.text, "hello");
                     assert_eq!(base.shared.language, "auto");
                     assert_eq!(base.shared.output, PathBuf::from("out.wav"));
@@ -286,8 +314,8 @@ mod tests {
             "tts_cli",
             "synthesize",
             "custom-voice",
-            "--package",
-            "package-dir",
+            "--manifest",
+            "package.yaml",
             "--text",
             "hello",
             "--language",
@@ -305,6 +333,10 @@ mod tests {
             Command::Synthesize(command) => match command.profile {
                 ProfileCommand::CustomVoice(custom_voice) => {
                     assert_eq!(custom_voice.shared.backend, Some(CliBackend::Flex));
+                    assert_eq!(
+                        custom_voice.shared.manifest,
+                        Some(PathBuf::from("package.yaml"))
+                    );
                     assert_eq!(custom_voice.speaker.as_deref(), Some("Chelsie"));
                 }
                 ProfileCommand::Base(_) => panic!("expected custom-voice command"),
@@ -313,14 +345,52 @@ mod tests {
     }
 
     #[test]
-    fn package_source_uses_manifest_extension() {
+    fn package_source_prefers_model_dir_and_manifest_flags() {
+        let model_dir_args = SharedSynthesizeArgs {
+            model_dir: Some(PathBuf::from("model-dir")),
+            manifest: None,
+            text: "hello".to_string(),
+            language: "auto".to_string(),
+            output: PathBuf::from("out.wav"),
+            backend: None,
+            max_new_tokens: 256,
+            sampling: CliSampling::Greedy,
+            profiling: false,
+            profiling_per_step: false,
+            profiling_stage_summary: true,
+            no_profiling_stage_summary: false,
+            profiling_log_topk: 8,
+        };
         assert!(matches!(
-            package_source(Path::new("package.yaml")),
+            package_source(&model_dir_args).unwrap(),
+            Qwen3TtsPackageSource::ModelDir(_)
+        ));
+
+        let manifest_args = SharedSynthesizeArgs {
+            model_dir: None,
+            manifest: Some(PathBuf::from("package.yaml")),
+            ..model_dir_args
+        };
+        assert!(matches!(
+            package_source(&manifest_args).unwrap(),
             Qwen3TtsPackageSource::ManifestPath(_)
         ));
-        assert!(matches!(
-            package_source(Path::new("package-dir")),
-            Qwen3TtsPackageSource::PackageDir(_)
-        ));
+    }
+
+    #[test]
+    fn args_reject_missing_input_source() {
+        let error = Args::try_parse_from([
+            "tts_cli",
+            "synthesize",
+            "base",
+            "--text",
+            "hello",
+            "--output",
+            "out.wav",
+        ])
+        .expect_err("input source should be required");
+
+        let message = error.to_string();
+        assert!(message.contains("--model-dir") || message.contains("--manifest"));
     }
 }

@@ -15,7 +15,6 @@ pub fn talker_export_key_remapper() -> KeyRemapper {
         .expect("static regex remapping must compile")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{talker_export_key_remapper, talker_load_key_remapper};

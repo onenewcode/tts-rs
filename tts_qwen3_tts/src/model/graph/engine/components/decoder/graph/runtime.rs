@@ -2,9 +2,9 @@ use burn::nn::RotaryEncodingConfig;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
+use crate::error::QwenTtsInferenceError;
 use crate::model::graph::engine::components::decoder::import::config::Qwen3TtsAudioCodecDecoderConfig;
 use crate::model::graph::engine::components::decoder::weights::LoadedQwen3TtsAudioCodec;
-use crate::error::QwenTtsInferenceError;
 use crate::profiling::record_operator;
 
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ impl Waveform {
                 message: "waveform sample payload must be non-empty".to_string(),
             });
         }
-        if samples.len() % (batch_size * channels) != 0 {
+        if !samples.len().is_multiple_of(batch_size * channels) {
             return Err(QwenTtsInferenceError::InvalidInput {
                 message: format!(
                     "waveform element mismatch: {} samples do not fit batch={batch_size}, channels={channels}",

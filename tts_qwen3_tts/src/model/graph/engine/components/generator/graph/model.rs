@@ -30,6 +30,7 @@ impl<B> Qwen3TtsTalker<B>
 where
     B: Backend,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn infer(
         &self,
         inputs_embeds: Tensor<B, 3>,
@@ -72,6 +73,7 @@ impl<B> Qwen3TtsTalkerModel<B>
 where
     B: Backend,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn run_layers(
         &self,
         inputs_embeds: Tensor<B, 3>,
@@ -180,6 +182,7 @@ impl<B> Qwen3TtsTalkerCodePredictorModel<B>
 where
     B: Backend,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn run_layers(
         &self,
         inputs_embeds: Tensor<B, 3>,

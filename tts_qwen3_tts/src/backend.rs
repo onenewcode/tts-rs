@@ -71,25 +71,18 @@ impl FromStr for Qwen3TtsBackend {
 }
 
 pub fn available_backends() -> Vec<Qwen3TtsBackend> {
-    #[allow(unused_mut)]
-    let mut backends = Vec::new();
-
-    #[cfg(feature = "flex")]
-    backends.push(Qwen3TtsBackend::Flex);
-    #[cfg(feature = "wgpu")]
-    backends.push(Qwen3TtsBackend::Wgpu);
-    #[cfg(feature = "cuda")]
-    backends.push(Qwen3TtsBackend::Cuda);
-    #[cfg(feature = "rocm")]
-    backends.push(Qwen3TtsBackend::Rocm);
-    #[cfg(feature = "metal")]
-    backends.push(Qwen3TtsBackend::Metal);
-    #[cfg(feature = "vulkan")]
-    backends.push(Qwen3TtsBackend::Vulkan);
-    #[cfg(feature = "webgpu")]
-    backends.push(Qwen3TtsBackend::WebGpu);
-
-    backends
+    [
+        cfg!(feature = "flex").then_some(Qwen3TtsBackend::Flex),
+        cfg!(feature = "wgpu").then_some(Qwen3TtsBackend::Wgpu),
+        cfg!(feature = "cuda").then_some(Qwen3TtsBackend::Cuda),
+        cfg!(feature = "rocm").then_some(Qwen3TtsBackend::Rocm),
+        cfg!(feature = "metal").then_some(Qwen3TtsBackend::Metal),
+        cfg!(feature = "vulkan").then_some(Qwen3TtsBackend::Vulkan),
+        cfg!(feature = "webgpu").then_some(Qwen3TtsBackend::WebGpu),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 pub fn resolve_backend(

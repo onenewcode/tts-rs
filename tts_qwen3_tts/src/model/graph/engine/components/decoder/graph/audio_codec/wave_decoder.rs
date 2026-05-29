@@ -7,6 +7,7 @@ use crate::kernels::activation::AudioCodecSnakeBeta;
 use crate::kernels::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 
 #[derive(Module, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Qwen3TtsAudioCodecWaveDecoderEntry<B: Backend> {
     InputConv(Qwen3TtsAudioCodecWaveDecoderConvEntry<B>),
     UpsampleStage(Qwen3TtsAudioCodecWaveDecoderUpsampleStage<B>),
@@ -20,6 +21,7 @@ pub struct Qwen3TtsAudioCodecWaveDecoderConvEntry<B: Backend> {
 }
 
 #[derive(Module, Debug)]
+#[allow(clippy::type_complexity)]
 pub struct Qwen3TtsAudioCodecWaveDecoderUpsampleStage<B: Backend> {
     pub block: (
         AudioCodecSnakeBeta<B>,

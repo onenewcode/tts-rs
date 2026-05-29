@@ -52,6 +52,8 @@ pub enum Qwen3TtsLoadError {
     UnavailableBackend { backend: String },
     #[error("invalid package manifest: {message}")]
     InvalidManifest { message: String },
+    #[error("invalid model directory: {message}")]
+    InvalidModelDir { message: String },
 }
 
 #[derive(Debug, Error)]

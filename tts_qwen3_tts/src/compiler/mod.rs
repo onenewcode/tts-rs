@@ -7,8 +7,8 @@ use serde::Deserialize;
 use tokenizers::Tokenizer;
 
 use crate::{
-    LanguageSelection, Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage,
-    Qwen3TtsProfilePackage, QwenRequest,
+    LanguageSelection, Qwen3TtsGenerationConfigManifest, Qwen3TtsGenerationConfigSource,
+    Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage, QwenRequest,
 };
 
 #[allow(dead_code)]
@@ -20,6 +20,9 @@ pub(crate) struct Qwen3TtsRequestCompiler {
 
 impl Qwen3TtsRequestCompiler {
     pub(crate) fn load(package: &Qwen3TtsPackage) -> Result<Self, Qwen3TtsLoadError> {
+        let generation_config = load_generation_config(&package.generation_config)?;
+        let control_config = load_control_config(&package.talker_config_path)?;
+
         Ok(Self {
             tokenizer: crate::io::tokenizer::load_qwen3_tts_tokenizer(&package.tokenizer_path)
                 .map_err(|source| Qwen3TtsLoadError::Tokenizer {
@@ -27,18 +30,20 @@ impl Qwen3TtsRequestCompiler {
                     source,
                 })?,
             profiles: Qwen3TtsCompiledProfiles {
-                base: package
-                    .profiles
-                    .base
-                    .as_ref()
-                    .map(|profile| load_profile(profile, Qwen3TtsPromptRecipe::Base))
-                    .transpose()?,
-                custom_voice: package
-                    .profiles
-                    .custom_voice
-                    .as_ref()
-                    .map(|profile| load_profile(profile, Qwen3TtsPromptRecipe::CustomVoice))
-                    .transpose()?,
+                base: Some(Qwen3TtsCompiledProfile {
+                    generation_config: generation_config.clone(),
+                    control_config: control_config.clone(),
+                    prompt_recipe: Qwen3TtsPromptRecipe::Base,
+                }),
+                custom_voice: if control_config.spk_id.is_empty() {
+                    None
+                } else {
+                    Some(Qwen3TtsCompiledProfile {
+                        generation_config,
+                        control_config,
+                        prompt_recipe: Qwen3TtsPromptRecipe::CustomVoice,
+                    })
+                },
             },
         })
     }
@@ -64,7 +69,7 @@ impl Qwen3TtsRequestCompiler {
             QwenRequest::CustomVoice(request) => {
                 let profile = self.profiles.custom_voice.as_ref().ok_or_else(|| {
                     Qwen3TtsInferenceError::InvalidInput {
-                        message: "package does not support custom_voice profile".to_string(),
+                        message: "model does not support custom-voice requests; no speakers were found in config.json".to_string(),
                     }
                 })?;
                 compile_profile_condition(
@@ -130,6 +135,19 @@ pub(crate) struct GenerationConfig {
     pub(crate) max_new_tokens: usize,
 }
 
+impl From<Qwen3TtsGenerationConfigManifest> for GenerationConfig {
+    fn from(value: Qwen3TtsGenerationConfigManifest) -> Self {
+        Self {
+            do_sample: value.do_sample,
+            repetition_penalty: value.repetition_penalty,
+            temperature: value.temperature,
+            top_p: value.top_p,
+            top_k: value.top_k,
+            max_new_tokens: value.max_new_tokens,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct Qwen3TtsControlConfig {
     pub(crate) tts_bos_token_id: i64,
@@ -146,36 +164,69 @@ pub(crate) struct Qwen3TtsControlConfig {
     pub(crate) codec_language_id: BTreeMap<String, i64>,
     #[serde(default)]
     pub(crate) spk_id: BTreeMap<String, i64>,
-    #[serde(default)]
-    pub(crate) spk_is_dialect: BTreeMap<String, DialectFlag>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-pub(crate) enum DialectFlag {
-    Bool(bool),
-    Dialect(String),
+struct Qwen3TtsControlConfigFile {
+    tts_bos_token_id: i64,
+    tts_eos_token_id: i64,
+    tts_pad_token_id: i64,
+    talker_config: Qwen3TtsControlConfigBody,
 }
 
-fn load_profile(
-    profile: &Qwen3TtsProfilePackage,
-    prompt_recipe: Qwen3TtsPromptRecipe,
-) -> Result<Qwen3TtsCompiledProfile, Qwen3TtsLoadError> {
-    Ok(Qwen3TtsCompiledProfile {
-        generation_config: load_json(&profile.generation_config_path)?,
-        control_config: load_json(&profile.control_config_path)?,
-        prompt_recipe,
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct Qwen3TtsControlConfigBody {
+    codec_bos_id: i64,
+    codec_eos_token_id: i64,
+    codec_pad_id: i64,
+    codec_think_id: i64,
+    codec_nothink_id: i64,
+    codec_think_bos_id: i64,
+    codec_think_eos_id: i64,
+    #[serde(default)]
+    codec_language_id: BTreeMap<String, i64>,
+    #[serde(default)]
+    spk_id: BTreeMap<String, i64>,
+}
+
+fn load_control_config(path: &Path) -> Result<Qwen3TtsControlConfig, Qwen3TtsLoadError> {
+    let raw: Qwen3TtsControlConfigFile = load_json(path)?;
+    Ok(Qwen3TtsControlConfig {
+        tts_bos_token_id: raw.tts_bos_token_id,
+        tts_eos_token_id: raw.tts_eos_token_id,
+        tts_pad_token_id: raw.tts_pad_token_id,
+        codec_bos_id: raw.talker_config.codec_bos_id,
+        codec_eos_token_id: raw.talker_config.codec_eos_token_id,
+        codec_pad_id: raw.talker_config.codec_pad_id,
+        codec_think_id: raw.talker_config.codec_think_id,
+        codec_nothink_id: raw.talker_config.codec_nothink_id,
+        codec_think_bos_id: raw.talker_config.codec_think_bos_id,
+        codec_think_eos_id: raw.talker_config.codec_think_eos_id,
+        codec_language_id: normalize_language_map(raw.talker_config.codec_language_id),
+        spk_id: normalize_key_map(raw.talker_config.spk_id),
     })
+}
+
+fn load_generation_config(
+    source: &Qwen3TtsGenerationConfigSource,
+) -> Result<GenerationConfig, Qwen3TtsLoadError> {
+    match source {
+        Qwen3TtsGenerationConfigSource::Path(path) => load_json(path),
+        Qwen3TtsGenerationConfigSource::Inline(config) => {
+            Ok(GenerationConfig::from(config.clone()))
+        }
+    }
 }
 
 fn load_json<T>(path: &Path) -> Result<T, Qwen3TtsLoadError>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let raw = std::fs::read_to_string(path).map_err(|source| Qwen3TtsLoadError::CompilerConfigIo {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let raw =
+        std::fs::read_to_string(path).map_err(|source| Qwen3TtsLoadError::CompilerConfigIo {
+            path: path.to_path_buf(),
+            source,
+        })?;
     serde_json::from_str(&raw).map_err(|source| Qwen3TtsLoadError::CompilerConfigParse {
         path: path.to_path_buf(),
         source,
@@ -256,15 +307,7 @@ fn resolve_custom_voice_control_ids(
     speaker: Option<&str>,
 ) -> Result<ProfileControlIds, Qwen3TtsInferenceError> {
     let speaker = speaker.map(normalize_key);
-    let mut language = language_key(language)?;
-
-    if matches!(language.as_deref(), None | Some("chinese" | "zh")) {
-        if let Some(speaker_name) = speaker.as_deref() {
-            if let Some(DialectFlag::Dialect(dialect)) = config.spk_is_dialect.get(speaker_name) {
-                language = Some(normalize_key(dialect));
-            }
-        }
-    }
+    let language = language_key(language)?;
 
     let mut codec_prefix_ids = match language {
         Some(language) => vec![
@@ -280,7 +323,10 @@ fn resolve_custom_voice_control_ids(
         ],
     };
 
-    if let Some(speaker_name) = speaker.as_deref().filter(|speaker_name| !speaker_name.is_empty()) {
+    if let Some(speaker_name) = speaker
+        .as_deref()
+        .filter(|speaker_name| !speaker_name.is_empty())
+    {
         codec_prefix_ids.push(lookup_speaker_id(config, speaker_name)?);
     }
     codec_prefix_ids.extend([config.codec_pad_id, config.codec_bos_id]);
@@ -319,7 +365,15 @@ fn lookup_language_id(
         .get(language)
         .copied()
         .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
-            message: format!("unsupported language: {language}"),
+            message: format!(
+                "unsupported language: {language}; supported languages: {}",
+                config
+                    .codec_language_id
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         })
 }
 
@@ -332,12 +386,32 @@ fn lookup_speaker_id(
         .get(speaker)
         .copied()
         .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
-            message: format!("unsupported speaker: {speaker}"),
+            message: format!(
+                "unsupported speaker: {speaker}; supported speakers: {}",
+                config
+                    .spk_id
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         })
 }
 
 fn normalize_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+fn normalize_language_map(map: BTreeMap<String, i64>) -> BTreeMap<String, i64> {
+    map.into_iter()
+        .map(|(key, value)| (normalize_key(&key), value))
+        .collect()
+}
+
+fn normalize_key_map(map: BTreeMap<String, i64>) -> BTreeMap<String, i64> {
+    map.into_iter()
+        .map(|(key, value)| (normalize_key(&key), value))
+        .collect()
 }
 
 #[cfg(test)]
@@ -346,7 +420,6 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{Qwen3TtsPackageProfiles, Qwen3TtsProfilePackage};
     use tokenizers::Tokenizer;
     use tokenizers::models::wordlevel::WordLevel;
     use tokenizers::pre_tokenizers::whitespace::WhitespaceSplit;
@@ -354,30 +427,21 @@ mod tests {
     #[test]
     fn load_uses_fixed_profile_fields_and_prompt_recipes() {
         let temp = unique_temp_dir("compiler-unit");
-        std::fs::create_dir_all(temp.join("profiles/base")).unwrap();
-        std::fs::create_dir_all(temp.join("profiles/custom_voice")).unwrap();
-        write_profile_files(&temp.join("profiles/base"));
-        write_profile_files(&temp.join("profiles/custom_voice"));
+        write_generation_config(&temp.join("generation_config.json"));
+        write_model_config(&temp.join("config.json"));
         write_tokenizer_file(&temp.join("tokenizer.json"));
 
         let package = Qwen3TtsPackage {
             package_root: temp.clone(),
             name: "unit-fixture".to_string(),
             tokenizer_path: temp.join("tokenizer.json"),
-            talker_config_path: temp.join("configs/talker.json"),
+            talker_config_path: temp.join("config.json"),
             talker_weights_path: temp.join("weights/talker.safetensors"),
+            generation_config: Qwen3TtsGenerationConfigSource::Path(
+                temp.join("generation_config.json"),
+            ),
             codec_config_path: temp.join("configs/codec.json"),
             codec_weights_path: temp.join("weights/codec.safetensors"),
-            profiles: Qwen3TtsPackageProfiles {
-                base: Some(Qwen3TtsProfilePackage {
-                    generation_config_path: temp.join("profiles/base/generation_config.json"),
-                    control_config_path: temp.join("profiles/base/control_config.json"),
-                }),
-                custom_voice: Some(Qwen3TtsProfilePackage {
-                    generation_config_path: temp.join("profiles/custom_voice/generation_config.json"),
-                    control_config_path: temp.join("profiles/custom_voice/control_config.json"),
-                }),
-            },
         };
 
         let compiler = Qwen3TtsRequestCompiler::load(&package).unwrap();
@@ -427,15 +491,35 @@ mod tests {
     }
 
     #[test]
-    fn compile_request_resolves_custom_voice_speaker_dialect() {
+    fn compile_request_accepts_case_insensitive_language_names() {
         let compiler = compiler_fixture();
 
         let condition = compiler
-            .compile_request(&crate::QwenRequest::CustomVoice(crate::CustomVoiceRequest {
-                text: "ni hao from the compiler test prompt".to_string(),
-                language: crate::LanguageSelection::Auto,
-                speaker: Some("Chelsie".to_string()),
+            .compile_request(&crate::QwenRequest::Base(crate::BaseRequest {
+                text: "hello from the compiler test prompt with enough tokens for chinese"
+                    .to_string(),
+                language: crate::LanguageSelection::Named("Chinese".to_string()),
             }))
+            .unwrap();
+
+        assert_eq!(
+            condition.controls.codec_prefix_ids,
+            vec![2050, 2052, 3001, 2053, 2049, 2048]
+        );
+    }
+
+    #[test]
+    fn compile_request_includes_custom_voice_speaker_id() {
+        let compiler = compiler_fixture();
+
+        let condition = compiler
+            .compile_request(&crate::QwenRequest::CustomVoice(
+                crate::CustomVoiceRequest {
+                    text: "ni hao from the compiler test prompt".to_string(),
+                    language: crate::LanguageSelection::Named("Chinese".to_string()),
+                    speaker: Some("Chelsie".to_string()),
+                },
+            ))
             .unwrap();
 
         assert!(condition.text_token_ids.len() >= 8);
@@ -472,49 +556,52 @@ mod tests {
 
     fn compiler_fixture() -> Qwen3TtsRequestCompiler {
         let temp = unique_temp_dir("compiler-fixture");
-        std::fs::create_dir_all(temp.join("profiles/base")).unwrap();
-        std::fs::create_dir_all(temp.join("profiles/custom_voice")).unwrap();
-        write_profile_files(&temp.join("profiles/base"));
-        write_profile_files(&temp.join("profiles/custom_voice"));
-        Qwen3TtsRequestCompiler {
-            tokenizer: test_tokenizer(),
-            profiles: Qwen3TtsCompiledProfiles {
-                base: Some(load_profile(
-                    &Qwen3TtsProfilePackage {
-                        generation_config_path: temp.join("profiles/base/generation_config.json"),
-                        control_config_path: temp.join("profiles/base/control_config.json"),
-                    },
-                    Qwen3TtsPromptRecipe::Base,
-                )
-                .unwrap()),
-                custom_voice: Some(load_profile(
-                    &Qwen3TtsProfilePackage {
-                        generation_config_path: temp.join(
-                            "profiles/custom_voice/generation_config.json",
-                        ),
-                        control_config_path: temp.join(
-                            "profiles/custom_voice/control_config.json",
-                        ),
-                    },
-                    Qwen3TtsPromptRecipe::CustomVoice,
-                )
-                .unwrap()),
-            },
-        }
+        write_generation_config(&temp.join("generation_config.json"));
+        write_model_config(&temp.join("config.json"));
+        write_tokenizer_file(&temp.join("tokenizer.json"));
+        Qwen3TtsRequestCompiler::load(&Qwen3TtsPackage {
+            package_root: temp.clone(),
+            name: "compiler-fixture".to_string(),
+            tokenizer_path: temp.join("tokenizer.json"),
+            talker_config_path: temp.join("config.json"),
+            talker_weights_path: temp.join("model.safetensors"),
+            generation_config: Qwen3TtsGenerationConfigSource::Path(
+                temp.join("generation_config.json"),
+            ),
+            codec_config_path: temp.join("speech_tokenizer/config.json"),
+            codec_weights_path: temp.join("speech_tokenizer/model.safetensors"),
+        })
+        .unwrap()
     }
 
-    fn write_profile_files(dir: &Path) {
-        std::fs::write(dir.join("generation_config.json"), GENERATION_CONFIG_JSON).unwrap();
-        std::fs::write(dir.join("control_config.json"), CONTROL_CONFIG_JSON).unwrap();
+    fn write_generation_config(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, GENERATION_CONFIG_JSON).unwrap();
+    }
+
+    fn write_model_config(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, MODEL_CONFIG_JSON).unwrap();
     }
 
     fn write_tokenizer_file(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::fs::write(path, serde_json::to_vec(&test_tokenizer()).unwrap()).unwrap();
     }
 
     fn test_tokenizer() -> Tokenizer {
         let model = WordLevel::builder()
-            .vocab(HashMap::from([(String::from("<unk>"), 0)]).into_iter().collect())
+            .vocab(
+                HashMap::from([(String::from("<unk>"), 0)])
+                    .into_iter()
+                    .collect(),
+            )
             .unk_token("<unk>".to_string())
             .build()
             .unwrap();
@@ -532,19 +619,20 @@ mod tests {
   "max_new_tokens": 8192
 }"#;
 
-    const CONTROL_CONFIG_JSON: &str = r#"{
+    const MODEL_CONFIG_JSON: &str = r#"{
   "tts_bos_token_id": 151672,
   "tts_eos_token_id": 151673,
   "tts_pad_token_id": 151671,
-  "codec_bos_id": 2048,
-  "codec_eos_token_id": 2150,
-  "codec_pad_id": 2049,
-  "codec_think_id": 2050,
-  "codec_nothink_id": 2051,
-  "codec_think_bos_id": 2052,
-  "codec_think_eos_id": 2053,
-  "codec_language_id": {"zh": 3001},
-  "spk_id": {"chelsie": 4001},
-  "spk_is_dialect": {"chelsie": "zh"}
+  "talker_config": {
+    "codec_bos_id": 2048,
+    "codec_eos_token_id": 2150,
+    "codec_pad_id": 2049,
+    "codec_think_id": 2050,
+    "codec_nothink_id": 2051,
+    "codec_think_bos_id": 2052,
+    "codec_think_eos_id": 2053,
+    "codec_language_id": {"chinese": 3001, "english": 3002},
+    "spk_id": {"chelsie": 4001}
+  }
 }"#;
 }

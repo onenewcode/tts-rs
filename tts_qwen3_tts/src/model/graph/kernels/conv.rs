@@ -34,6 +34,7 @@ impl<B: Backend> AudioCodecCausalTransConv1d<B> {
 }
 
 impl<B: Backend> AudioCodecCausalConv1d<B> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         channels_in: usize,
         channels_out: usize,
