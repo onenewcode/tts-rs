@@ -19,8 +19,10 @@ webgpu = ["burn/webgpu"]
 operator-profiling = []
 
 [dependencies]
+anyhow = "1"
 burn = { workspace = true, default-features = false, features = ["std"] }
 burn-store = { workspace = true, features = ["std", "pytorch", "safetensors"] }
+num-complex = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -28,3 +30,5 @@ thiserror = { workspace = true }
 tokenizers = { workspace = true }
 tts_infer = { path = "../tts_infer" }
 tracing = { workspace = true }
+hound = "3.5.1"
+rustfft = "6"

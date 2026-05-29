@@ -2,9 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use tts_qwen3_tts::{
-    BaseRequest, CustomVoiceRequest, LanguageSelection, Qwen3TtsBackend,
-    Qwen3TtsGenerationConfigSource, Qwen3TtsPackage, Qwen3TtsPackageSource,
-    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest, SamplingConfig,
+    BaseRequest, BaseVoiceCloneConditioning, CustomVoiceRequest, LanguageSelection,
+    Qwen3TtsBackend, Qwen3TtsGenerationConfigSource, Qwen3TtsPackage, Qwen3TtsPackageSource,
+    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
+    Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingConfig,
 };
 
 #[test]
@@ -12,6 +13,7 @@ fn base_request_defaults_language_to_auto() {
     let request = BaseRequest::new("hello");
     assert_eq!(request.text, "hello");
     assert_eq!(request.language, LanguageSelection::Auto);
+    assert_eq!(request.voice_clone, None);
 }
 
 #[test]
@@ -20,12 +22,35 @@ fn custom_voice_request_defaults_to_auto_language_and_no_speaker() {
     assert_eq!(request.text, "hello");
     assert_eq!(request.language, LanguageSelection::Auto);
     assert_eq!(request.speaker, None);
+    assert_eq!(request.instruct, None);
 }
 
 #[test]
-fn run_options_default_to_greedy_256_tokens() {
+fn voice_clone_prompt_is_reusable_across_base_requests() {
+    let prompt = Qwen3TtsVoiceClonePrompt {
+        speaker_embedding: vec![0.25; 1024],
+        ref_codec_token_ids: Some(vec![vec![11; 16], vec![12; 16]]),
+        transcript: Some("reference words".to_string()),
+        mode: Qwen3TtsVoiceClonePromptMode::Icl,
+    };
+    let first = BaseRequest {
+        text: "hello".to_string(),
+        language: LanguageSelection::Auto,
+        voice_clone: Some(BaseVoiceCloneConditioning::Prompt(prompt.clone())),
+    };
+    let second = BaseRequest {
+        text: "bonjour".to_string(),
+        language: LanguageSelection::Named("fr".to_string()),
+        voice_clone: Some(BaseVoiceCloneConditioning::Prompt(prompt)),
+    };
+
+    assert_eq!(first.voice_clone, second.voice_clone);
+}
+
+#[test]
+fn run_options_default_to_greedy_and_model_token_limit() {
     let options = Qwen3TtsRunOptions::default();
-    assert_eq!(options.max_new_tokens, 256);
+    assert_eq!(options.max_new_tokens, None);
     assert_eq!(options.sampling, SamplingConfig::greedy());
 }
 
@@ -131,12 +156,14 @@ fn request_enum_preserves_profile_specific_payloads() {
         text: "hello".to_string(),
         language: LanguageSelection::Named("zh".to_string()),
         speaker: Some("Chelsie".to_string()),
+        instruct: Some("用很开心的语气".to_string()),
     });
 
     match request {
         QwenRequest::CustomVoice(inner) => {
             assert_eq!(inner.language, LanguageSelection::Named("zh".to_string()));
             assert_eq!(inner.speaker.as_deref(), Some("Chelsie"));
+            assert_eq!(inner.instruct.as_deref(), Some("用很开心的语气"));
         }
         QwenRequest::Base(_) => panic!("expected custom voice request"),
     }

@@ -1,7 +1,7 @@
 # tts-rs
 
 Rust workspace for running Qwen3-TTS locally and writing WAV output from the
-CLI.
+CLI. The Qwen3-TTS runtime path is implemented on Burn.
 
 Workspace crates:
 
@@ -9,7 +9,8 @@ Workspace crates:
 - `tts_qwen3_tts`: Qwen3-TTS loading, request compilation, and runtime
 - `tts_cli`: command-line wrapper that writes `.wav` files
 
-The CLI writes mono, 24 kHz, 16-bit PCM WAV output.
+The CLI writes mono, 24 kHz, 16-bit PCM WAV output. Base voice cloning supports
+both `ref_audio + ref_text` ICL conditioning and `x_vector_only` conditioning.
 
 Important: run all CLI synthesis commands in release mode. Debug builds are
 much slower and can look like they are hanging during model load or generation.
@@ -24,22 +25,37 @@ much slower and can look like they are hanging during model load or generation.
 
 The normal path is: pass the model directory directly.
 
-Base model example:
+Base voice clone ICL example:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize base \
   --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-Base \
-  --text "Hello from tts-rs." \
+  --text "Hello from the Base voice clone ICL smoke path." \
   --language English \
+  --ref-audio ./out/base_reference_custom_voice.wav \
+  --ref-text "Hello from the generated reference clip." \
   --backend flex \
-  --output ./out/base.wav
+  --output ./out/base_clone_icl_release.wav
+```
+
+Base x-vector-only example:
+
+```bash
+cargo run --release -p tts_cli -- synthesize base \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --text "Hello from the Base voice clone x-vector-only smoke path." \
+  --language English \
+  --ref-audio ./out/base_reference_custom_voice.wav \
+  --x-vector-only \
+  --backend flex \
+  --output ./out/base_clone_xvector_release.wav
 ```
 
 Custom voice example:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize custom-voice \
-  --model-dir ./Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
   --text "你好，欢迎使用 tts-rs。" \
   --language Chinese \
   --speaker Vivian \
@@ -47,16 +63,17 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --output ./out/custom-voice.wav
 ```
 
-If you already built the binary:
+Custom voice instruct example:
 
 ```bash
-target/release/tts_cli synthesize custom-voice \
-  --model-dir ./Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice \
-  --text "你好，欢迎使用 tts-rs。" \
+cargo run --release -p tts_cli -- synthesize custom-voice \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "其实我真的有发现，我是一个特别善于观察别人情绪的人。" \
   --language Chinese \
   --speaker Vivian \
+  --instruct "用特别愤怒的语气说" \
   --backend flex \
-  --output ./out/custom-voice.wav
+  --output ./out/custom-voice-instruct.wav
 ```
 
 Notes:
@@ -64,9 +81,17 @@ Notes:
 - `--model-dir` should point at the model folder itself, not its parent
 - `./out/` is created automatically if it does not exist
 - `--speaker` only applies to `synthesize custom-voice`
+- `--instruct` only applies to `synthesize custom-voice`; it describes the
+  speaking style for the target text
+- `--ref-text` is the transcript of `--ref-audio`, not the target text to
+  synthesize
+- `--x-vector-only` uses only the speaker embedding from `--ref-audio` and does
+  not accept `--ref-text`
 - language names are matched case-insensitively against the model metadata, so
   `Chinese` and `chinese` both work
 - `--backend flex` is the recommended local default in this repository
+- `--max-new-tokens` is optional; when omitted, the CLI uses the model package
+  `generation_config.max_new_tokens` instead of applying a hard-coded CLI cap
 
 ## Expected Model Layout
 
@@ -89,7 +114,7 @@ already provides:
 Current repo-local examples:
 
 - `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
-- `Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice`
+- `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
 
 The CLI reads runtime control metadata directly from the model `config.json`.
 You do not need to prepare a separate `control_config.json`.
@@ -111,7 +136,7 @@ For the checked-in Qwen3 models in this repository, common values include:
 - `Spanish`
 - `Italian`
 
-The custom-voice checkpoint in `Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice`
+The custom-voice checkpoint in `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`
 contains speakers such as:
 
 - `Vivian`
@@ -159,6 +184,9 @@ generation_config:
   top_k: 50
   max_new_tokens: 8192
 ```
+
+`generation_config.max_new_tokens` is the package default used when the CLI
+does not receive an explicit `--max-new-tokens` override.
 
 Run with:
 

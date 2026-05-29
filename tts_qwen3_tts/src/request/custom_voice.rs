@@ -5,6 +5,7 @@ pub struct CustomVoiceRequest {
     pub text: String,
     pub language: LanguageSelection,
     pub speaker: Option<String>,
+    pub instruct: Option<String>,
 }
 
 impl CustomVoiceRequest {
@@ -13,6 +14,7 @@ impl CustomVoiceRequest {
             text: text.into(),
             language: LanguageSelection::Auto,
             speaker: None,
+            instruct: None,
         }
     }
 }

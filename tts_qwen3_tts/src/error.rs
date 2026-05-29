@@ -79,6 +79,8 @@ pub enum Qwen3TtsInferenceError {
     },
     #[error("failed to read tensor data: {message}")]
     TensorRead { message: String },
+    #[error("failed to decode audio input: {message}")]
+    AudioDecode { message: String },
 }
 
 #[derive(Debug, Error)]

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use burn::tensor::backend::Backend;
+use burn::tensor::{Int, Tensor, TensorData};
 use tts_infer::{LoadedModel, ModelSession, SessionStep};
 
 use crate::compiler::session_seed::{SessionSeed, materialize_session_seed};
@@ -16,11 +17,14 @@ use crate::model::graph::engine::components::generator::weights::{
 use crate::profiling::with_session_context;
 use crate::runtime::sampling::SamplingConfig as RuntimeSamplingConfig;
 use crate::{
-    Qwen3TtsBackend, Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage,
-    Qwen3TtsProfilingConfig, Qwen3TtsRequestCompiler, Qwen3TtsRunOptions, QwenRequest,
+    BaseVoiceCloneReferenceAudio, Qwen3TtsBackend, Qwen3TtsInferenceError, Qwen3TtsLoadError,
+    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRequestCompiler, Qwen3TtsRunOptions,
+    Qwen3TtsVoiceClonePrompt, QwenRequest,
 };
 
 pub(crate) mod graph;
+pub(crate) mod speaker;
+pub(crate) mod voice_clone;
 
 #[derive(Debug)]
 pub(crate) struct Qwen3TtsModelInner<B: Backend> {
@@ -28,6 +32,7 @@ pub(crate) struct Qwen3TtsModelInner<B: Backend> {
     pub(crate) compiler: Qwen3TtsRequestCompiler,
     pub(crate) talker: LoadedQwen3TtsTalker<B>,
     pub(crate) decoder: LoadedQwen3TtsAudioCodec<B>,
+    pub(crate) speaker_encoder: Option<speaker::LoadedQwen3TtsSpeakerEncoder<B>>,
 }
 
 impl<B> Qwen3TtsModelInner<B>
@@ -60,7 +65,7 @@ where
             &self.talker,
             &seed,
             map_sampling(&options.sampling),
-            options.max_new_tokens,
+            options.max_new_tokens.unwrap_or(seed.max_new_tokens),
             Some(codec_eos_token_id),
             suppress_token_ids,
         )
@@ -69,9 +74,45 @@ where
     fn finalize_audio(
         &self,
         run: &TalkerGenerator<B>,
+        reference_codec_frames: Option<&[Vec<i64>]>,
     ) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
         let generated = run.finalize()?;
-        let waveform = decode_waveform(&self.decoder, generated.codec_token_ids)?;
+        let waveform = if let Some(reference_codec_frames) = reference_codec_frames {
+            let [batch_size, num_quantizers, time_steps] = generated.codec_token_ids.dims();
+            let generated_tokens = generated
+                .codec_token_ids
+                .into_data()
+                .convert::<i32>()
+                .into_vec::<i32>()
+                .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+                    message: format!("failed to read generated codec tokens: {source}"),
+                })?;
+
+            let mut combined =
+                Vec::with_capacity(num_quantizers * (time_steps + reference_codec_frames.len()));
+            for group_idx in 0..num_quantizers {
+                combined.extend(
+                    reference_codec_frames
+                        .iter()
+                        .map(|frame| frame[group_idx] as i32),
+                );
+                let group_offset = group_idx * time_steps;
+                combined
+                    .extend_from_slice(&generated_tokens[group_offset..group_offset + time_steps]);
+            }
+            let combined_steps = time_steps + reference_codec_frames.len();
+            let codec_ids = Tensor::<B, 3, Int>::from_data(
+                TensorData::new(combined, [batch_size, num_quantizers, combined_steps]),
+                &self.device,
+            );
+            let mut waveform = decode_waveform(&self.decoder, codec_ids)?;
+            let total_samples = waveform.dims()[2];
+            let cut_samples = reference_codec_frames.len() * total_samples / combined_steps.max(1);
+            waveform = waveform.slice([0..1, 0..1, cut_samples.min(total_samples)..total_samples]);
+            waveform
+        } else {
+            decode_waveform(&self.decoder, generated.codec_token_ids)?
+        };
         let waveform =
             DecoderLowering::lift_output(self.decoder.config.output_sample_rate as u32, waveform)?;
         let pcm = waveform_to_pcm(&waveform)?;
@@ -80,6 +121,26 @@ where
             sample_rate: waveform.sample_rate(),
             channels: 1,
         })
+    }
+
+    fn create_voice_clone_prompt(
+        &self,
+        reference: &BaseVoiceCloneReferenceAudio,
+    ) -> Result<Qwen3TtsVoiceClonePrompt, Qwen3TtsInferenceError> {
+        let speaker_encoder =
+            self.speaker_encoder
+                .as_ref()
+                .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
+                    message:
+                        "voice clone prompt requires a Base model with speaker_encoder weights"
+                            .to_string(),
+                })?;
+        voice_clone::create_voice_clone_prompt(
+            &self.decoder,
+            speaker_encoder,
+            &self.device,
+            reference,
+        )
     }
 }
 
@@ -222,6 +283,28 @@ impl Qwen3TtsLoadedModel {
             }
         }
     }
+
+    pub(crate) fn create_voice_clone_prompt(
+        &self,
+        reference: &BaseVoiceCloneReferenceAudio,
+    ) -> Result<Qwen3TtsVoiceClonePrompt, Qwen3TtsInferenceError> {
+        match self {
+            #[cfg(feature = "flex")]
+            Self::Flex(inner) => inner.create_voice_clone_prompt(reference),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(inner) => inner.create_voice_clone_prompt(reference),
+            #[cfg(feature = "cuda")]
+            Self::Cuda(inner) => inner.create_voice_clone_prompt(reference),
+            #[cfg(feature = "rocm")]
+            Self::Rocm(inner) => inner.create_voice_clone_prompt(reference),
+            #[cfg(feature = "metal")]
+            Self::Metal(inner) => inner.create_voice_clone_prompt(reference),
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan(inner) => inner.create_voice_clone_prompt(reference),
+            #[cfg(feature = "webgpu")]
+            Self::WebGpu(inner) => inner.create_voice_clone_prompt(reference),
+        }
+    }
 }
 
 impl LoadedModel for Qwen3TtsLoadedModel {
@@ -332,6 +415,7 @@ impl ModelSession for Qwen3TtsSession {
 pub(crate) struct SessionImpl<B: Backend> {
     inner: Arc<Qwen3TtsModelInner<B>>,
     run: TalkerGenerator<B>,
+    reference_codec_frames: Option<Vec<Vec<i64>>>,
     session_id: usize,
 }
 
@@ -346,10 +430,12 @@ where
 {
     let inner = Arc::clone(inner);
     let seed = inner.compile_session_seed(request)?;
+    let reference_codec_frames = seed.reference_codec_frames.clone();
     let run = inner.start_generator(seed, options)?;
     Ok(SessionImpl {
         inner,
         run,
+        reference_codec_frames,
         session_id: 0,
     })
 }
@@ -375,7 +461,9 @@ where
     B: Backend,
     B::Device: Clone,
 {
-    session.inner.finalize_audio(&session.run)
+    session
+        .inner
+        .finalize_audio(&session.run, session.reference_codec_frames.as_deref())
 }
 
 #[cfg(any(
@@ -446,6 +534,11 @@ where
         &package.talker_weights_path,
         device,
     )?;
+    let speaker_encoder = speaker::LoadedQwen3TtsSpeakerEncoder::load(
+        &package.talker_config_path,
+        &package.talker_weights_path,
+        device,
+    )?;
     let decoder = load_qwen3_tts_audio_codec::<B>(
         &package.codec_config_path,
         &package.codec_weights_path,
@@ -456,6 +549,7 @@ where
         compiler,
         talker,
         decoder,
+        speaker_encoder,
     }))
 }
 

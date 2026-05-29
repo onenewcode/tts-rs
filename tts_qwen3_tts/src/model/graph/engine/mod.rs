@@ -53,10 +53,20 @@ mod tests {
         assert_eq!(generator.execution_boundary.executes_on, "TalkerGenerator");
         assert_eq!(generator.execution_boundary.produces, "CodecTokenTensor");
         assert_eq!(generator.kind, ComponentKind::AcousticGenerator);
-        assert!(std::ptr::eq(
-            generator,
-            spec.component(ComponentKind::AcousticGenerator).unwrap()
-        ));
+        let generator_from_spec = spec.component(ComponentKind::AcousticGenerator).unwrap();
+        assert_eq!(generator_from_spec.kind, generator.kind);
+        assert_eq!(
+            generator_from_spec.execution_boundary.accepts,
+            generator.execution_boundary.accepts
+        );
+        assert_eq!(
+            generator_from_spec.execution_boundary.executes_on,
+            generator.execution_boundary.executes_on
+        );
+        assert_eq!(
+            generator_from_spec.execution_boundary.produces,
+            generator.execution_boundary.produces
+        );
 
         let decoder = decoder_component_spec();
         assert_eq!(decoder.execution_boundary.accepts, "CodecTokenTensor");
@@ -66,10 +76,20 @@ mod tests {
         );
         assert_eq!(decoder.execution_boundary.produces, "Waveform");
         assert_eq!(decoder.kind, ComponentKind::AudioDecoder);
-        assert!(std::ptr::eq(
-            decoder,
-            spec.component(ComponentKind::AudioDecoder).unwrap()
-        ));
+        let decoder_from_spec = spec.component(ComponentKind::AudioDecoder).unwrap();
+        assert_eq!(decoder_from_spec.kind, decoder.kind);
+        assert_eq!(
+            decoder_from_spec.execution_boundary.accepts,
+            decoder.execution_boundary.accepts
+        );
+        assert_eq!(
+            decoder_from_spec.execution_boundary.executes_on,
+            decoder.execution_boundary.executes_on
+        );
+        assert_eq!(
+            decoder_from_spec.execution_boundary.produces,
+            decoder.execution_boundary.produces
+        );
     }
 
     #[test]
@@ -78,6 +98,8 @@ mod tests {
         let talker = synthetic_loaded_talker::<TestBackend>(&device);
         let prepared = SemanticRequestCondition {
             text_token_ids: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            instruct_token_ids: None,
+            voice_clone: None,
             controls: ProfileControlIds {
                 tts_bos_token_id: 1,
                 tts_eos_token_id: 2,
@@ -86,7 +108,9 @@ mod tests {
                 codec_pad_id: 5,
                 codec_prefix_ids: vec![4, 6, 7],
             },
+            max_new_tokens: 8192,
             codec_eos_token_id: 8,
+            prompt_recipe: crate::compiler::Qwen3TtsPromptRecipe::BasePlain,
         };
 
         let execution =
@@ -95,6 +119,51 @@ mod tests {
         assert_eq!(execution.batch_size(), 1);
         assert!(execution.sequence_len() > 0);
         assert_eq!(execution.into_compiled().codec_eos_token_id, 8);
+    }
+
+    #[test]
+    fn generator_lowering_prepends_custom_voice_instruct_tokens() {
+        let device = Default::default();
+        let talker = synthetic_loaded_talker::<TestBackend>(&device);
+        let base_text_ids = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+        let plain = SemanticRequestCondition {
+            text_token_ids: base_text_ids.clone(),
+            instruct_token_ids: None,
+            voice_clone: None,
+            controls: ProfileControlIds {
+                tts_bos_token_id: 1,
+                tts_eos_token_id: 2,
+                tts_pad_token_id: 3,
+                codec_bos_id: 4,
+                codec_pad_id: 5,
+                codec_prefix_ids: vec![4, 6, 7, 8],
+            },
+            max_new_tokens: 8192,
+            codec_eos_token_id: 8,
+            prompt_recipe: crate::compiler::Qwen3TtsPromptRecipe::CustomVoicePlain,
+        };
+        let instructed = SemanticRequestCondition {
+            text_token_ids: base_text_ids,
+            instruct_token_ids: Some(vec![20, 21, 22, 23]),
+            voice_clone: None,
+            controls: plain.controls.clone(),
+            max_new_tokens: plain.max_new_tokens,
+            codec_eos_token_id: plain.codec_eos_token_id,
+            prompt_recipe: crate::compiler::Qwen3TtsPromptRecipe::CustomVoiceInstructed,
+        };
+
+        let plain_execution =
+            GeneratorLowering::lower(&plain, &talker.config.talker_config, &talker, &device)
+                .unwrap();
+        let instructed_execution =
+            GeneratorLowering::lower(&instructed, &talker.config.talker_config, &talker, &device)
+                .unwrap();
+
+        assert_eq!(
+            instructed_execution.sequence_len(),
+            plain_execution.sequence_len() + 4
+        );
     }
 
     #[test]

@@ -4,9 +4,10 @@ use std::time::Instant;
 use clap::{ArgAction, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use tracing::info;
 use tts_qwen3_tts::{
-    BaseRequest, CustomVoiceRequest, LanguageSelection, Qwen3TtsBackend, Qwen3TtsEngine,
-    Qwen3TtsEngineConfig, Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions,
-    QwenRequest, SamplingConfig,
+    BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
+    LanguageSelection, Qwen3TtsBackend, Qwen3TtsEngine, Qwen3TtsEngineConfig,
+    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest,
+    SamplingConfig,
 };
 
 #[derive(Debug, Parser)]
@@ -55,8 +56,8 @@ pub struct SharedSynthesizeArgs {
     pub output: PathBuf,
     #[arg(long, value_enum)]
     pub backend: Option<CliBackend>,
-    #[arg(long, default_value_t = 256)]
-    pub max_new_tokens: usize,
+    #[arg(long)]
+    pub max_new_tokens: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliSampling::Greedy)]
     pub sampling: CliSampling,
     #[arg(long)]
@@ -75,6 +76,12 @@ pub struct SharedSynthesizeArgs {
 pub struct BaseSynthesizeArgs {
     #[command(flatten)]
     pub shared: SharedSynthesizeArgs,
+    #[arg(long)]
+    pub ref_audio: Option<PathBuf>,
+    #[arg(long, requires = "ref_audio")]
+    pub ref_text: Option<String>,
+    #[arg(long, requires = "ref_audio", conflicts_with = "ref_text")]
+    pub x_vector_only: bool,
 }
 
 #[derive(Debug, Clone, ClapArgs)]
@@ -82,7 +89,9 @@ pub struct CustomVoiceSynthesizeArgs {
     #[command(flatten)]
     pub shared: SharedSynthesizeArgs,
     #[arg(long)]
-    pub speaker: Option<String>,
+    pub speaker: String,
+    #[arg(long)]
+    pub instruct: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -154,25 +163,58 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     match args.command {
         Command::Synthesize(command) => match command.profile {
-            ProfileCommand::Base(base) => run_synthesis(
-                &base.shared,
-                QwenRequest::Base(BaseRequest {
-                    text: base.shared.text.clone(),
-                    language: parse_language(&base.shared.language),
-                }),
-                total_started,
-            ),
-            ProfileCommand::CustomVoice(custom_voice) => run_synthesis(
-                &custom_voice.shared,
-                QwenRequest::CustomVoice(CustomVoiceRequest {
-                    text: custom_voice.shared.text.clone(),
-                    language: parse_language(&custom_voice.shared.language),
-                    speaker: custom_voice.speaker.clone(),
-                }),
-                total_started,
-            ),
+            ProfileCommand::Base(base) => {
+                let request = build_base_request(&base)?;
+                run_synthesis(&base.shared, request, total_started)
+            }
+            ProfileCommand::CustomVoice(custom_voice) => {
+                let request = build_custom_voice_request(&custom_voice);
+                run_synthesis(&custom_voice.shared, request, total_started)
+            }
         },
     }
+}
+
+fn build_base_request(args: &BaseSynthesizeArgs) -> Result<QwenRequest, std::io::Error> {
+    let voice_clone = match (&args.ref_audio, args.x_vector_only) {
+        (None, _) => {
+            if args.ref_text.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "`--ref-text` requires `--ref-audio`",
+                ));
+            }
+            None
+        }
+        (Some(_), false) if args.ref_text.is_none() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "`--ref-text` is required when `--ref-audio` is used without `--x-vector-only`",
+            ));
+        }
+        (Some(path), x_vector_only) => Some(BaseVoiceCloneConditioning::ReferenceAudio(
+            BaseVoiceCloneReferenceAudio {
+                path: path.clone(),
+                transcript: args.ref_text.clone(),
+                x_vector_only,
+            },
+        )),
+    };
+
+    Ok(QwenRequest::Base(BaseRequest {
+        text: args.shared.text.clone(),
+        language: parse_language(&args.shared.language),
+        voice_clone,
+    }))
+}
+
+fn build_custom_voice_request(args: &CustomVoiceSynthesizeArgs) -> QwenRequest {
+    QwenRequest::CustomVoice(CustomVoiceRequest {
+        text: args.shared.text.clone(),
+        language: parse_language(&args.shared.language),
+        speaker: Some(args.speaker.clone()),
+        instruct: args.instruct.clone(),
+    })
 }
 
 fn run_synthesis(
@@ -211,7 +253,7 @@ fn run_synthesis(
         source = %input_source_display(shared).display(),
         output = %shared.output.display(),
         backend = ?shared.backend,
-        max_new_tokens = shared.max_new_tokens,
+        max_new_tokens = ?shared.max_new_tokens,
         profiling = shared.profiling,
         language = %shared.language,
         "starting tts generation"
@@ -301,7 +343,10 @@ mod tests {
                     assert_eq!(base.shared.text, "hello");
                     assert_eq!(base.shared.language, "auto");
                     assert_eq!(base.shared.output, PathBuf::from("out.wav"));
-                    assert_eq!(base.shared.max_new_tokens, 256);
+                    assert_eq!(base.shared.max_new_tokens, None);
+                    assert_eq!(base.ref_audio, None);
+                    assert_eq!(base.ref_text, None);
+                    assert!(!base.x_vector_only);
                 }
                 ProfileCommand::CustomVoice(_) => panic!("expected base command"),
             },
@@ -337,9 +382,40 @@ mod tests {
                         custom_voice.shared.manifest,
                         Some(PathBuf::from("package.yaml"))
                     );
-                    assert_eq!(custom_voice.speaker.as_deref(), Some("Chelsie"));
+                    assert_eq!(custom_voice.speaker, "Chelsie");
                 }
                 ProfileCommand::Base(_) => panic!("expected custom-voice command"),
+            },
+        }
+    }
+
+    #[test]
+    fn args_parse_base_clone_flags() {
+        let args = Args::try_parse_from([
+            "tts_cli",
+            "synthesize",
+            "base",
+            "--model-dir",
+            "model-dir",
+            "--text",
+            "hello",
+            "--ref-audio",
+            "clone.wav",
+            "--ref-text",
+            "reference speech",
+            "--output",
+            "out.wav",
+        ])
+        .expect("base clone flags should parse");
+
+        match args.command {
+            Command::Synthesize(command) => match command.profile {
+                ProfileCommand::Base(base) => {
+                    assert_eq!(base.ref_audio, Some(PathBuf::from("clone.wav")));
+                    assert_eq!(base.ref_text.as_deref(), Some("reference speech"));
+                    assert!(!base.x_vector_only);
+                }
+                ProfileCommand::CustomVoice(_) => panic!("expected base command"),
             },
         }
     }
@@ -353,7 +429,7 @@ mod tests {
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
             backend: None,
-            max_new_tokens: 256,
+            max_new_tokens: None,
             sampling: CliSampling::Greedy,
             profiling: false,
             profiling_per_step: false,
@@ -392,5 +468,91 @@ mod tests {
 
         let message = error.to_string();
         assert!(message.contains("--model-dir") || message.contains("--manifest"));
+    }
+
+    #[test]
+    fn args_reject_x_vector_only_with_ref_text() {
+        let error = Args::try_parse_from([
+            "tts_cli",
+            "synthesize",
+            "base",
+            "--model-dir",
+            "model-dir",
+            "--text",
+            "hello",
+            "--ref-audio",
+            "clone.wav",
+            "--ref-text",
+            "reference speech",
+            "--x-vector-only",
+            "--output",
+            "out.wav",
+        ])
+        .expect_err("x-vector-only should conflict with ref-text");
+
+        assert!(error.to_string().contains("--ref-text"));
+    }
+
+    #[test]
+    fn build_base_request_requires_ref_text_for_icl_mode() {
+        let error = build_base_request(&BaseSynthesizeArgs {
+            shared: SharedSynthesizeArgs {
+                model_dir: Some(PathBuf::from("model-dir")),
+                manifest: None,
+                text: "hello".to_string(),
+                language: "auto".to_string(),
+                output: PathBuf::from("out.wav"),
+                backend: None,
+                max_new_tokens: None,
+                sampling: CliSampling::Greedy,
+                profiling: false,
+                profiling_per_step: false,
+                profiling_stage_summary: true,
+                no_profiling_stage_summary: false,
+                profiling_log_topk: 8,
+            },
+            ref_audio: Some(PathBuf::from("clone.wav")),
+            ref_text: None,
+            x_vector_only: false,
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("`--ref-text` is required"));
+    }
+
+    #[test]
+    fn build_custom_voice_request_preserves_instruct() {
+        let request = build_custom_voice_request(&CustomVoiceSynthesizeArgs {
+            shared: SharedSynthesizeArgs {
+                model_dir: Some(PathBuf::from("model-dir")),
+                manifest: None,
+                text: "hello".to_string(),
+                language: "Chinese".to_string(),
+                output: PathBuf::from("out.wav"),
+                backend: Some(CliBackend::Flex),
+                max_new_tokens: Some(32),
+                sampling: CliSampling::Greedy,
+                profiling: false,
+                profiling_per_step: false,
+                profiling_stage_summary: true,
+                no_profiling_stage_summary: false,
+                profiling_log_topk: 8,
+            },
+            speaker: "Vivian".to_string(),
+            instruct: Some("用特别愤怒的语气说".to_string()),
+        });
+
+        match request {
+            QwenRequest::CustomVoice(request) => {
+                assert_eq!(request.text, "hello");
+                assert_eq!(
+                    request.language,
+                    LanguageSelection::Named("Chinese".to_string())
+                );
+                assert_eq!(request.speaker.as_deref(), Some("Vivian"));
+                assert_eq!(request.instruct.as_deref(), Some("用特别愤怒的语气说"));
+            }
+            QwenRequest::Base(_) => panic!("expected custom-voice request"),
+        }
     }
 }

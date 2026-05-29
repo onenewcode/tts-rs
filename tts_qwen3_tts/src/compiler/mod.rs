@@ -7,8 +7,10 @@ use serde::Deserialize;
 use tokenizers::Tokenizer;
 
 use crate::{
-    LanguageSelection, Qwen3TtsGenerationConfigManifest, Qwen3TtsGenerationConfigSource,
-    Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage, QwenRequest,
+    BaseVoiceCloneConditioning, CustomVoiceRequest, LanguageSelection,
+    Qwen3TtsGenerationConfigManifest, Qwen3TtsGenerationConfigSource, Qwen3TtsInferenceError,
+    Qwen3TtsLoadError, Qwen3TtsPackage, Qwen3TtsVoiceClonePrompt, Qwen3TtsVoiceClonePromptMode,
+    QwenRequest,
 };
 
 #[allow(dead_code)]
@@ -22,6 +24,22 @@ impl Qwen3TtsRequestCompiler {
     pub(crate) fn load(package: &Qwen3TtsPackage) -> Result<Self, Qwen3TtsLoadError> {
         let generation_config = load_generation_config(&package.generation_config)?;
         let control_config = load_control_config(&package.talker_config_path)?;
+        let model_kind = detect_model_kind(package, &control_config);
+
+        let base = match model_kind {
+            Qwen3TtsModelKind::Base => Some(Qwen3TtsCompiledProfile {
+                generation_config: generation_config.clone(),
+                control_config: control_config.clone(),
+            }),
+            Qwen3TtsModelKind::CustomVoice => None,
+        };
+        let custom_voice = match model_kind {
+            Qwen3TtsModelKind::Base => None,
+            Qwen3TtsModelKind::CustomVoice => Some(Qwen3TtsCompiledProfile {
+                generation_config,
+                control_config,
+            }),
+        };
 
         Ok(Self {
             tokenizer: crate::io::tokenizer::load_qwen3_tts_tokenizer(&package.tokenizer_path)
@@ -29,22 +47,7 @@ impl Qwen3TtsRequestCompiler {
                     path: package.tokenizer_path.clone(),
                     source,
                 })?,
-            profiles: Qwen3TtsCompiledProfiles {
-                base: Some(Qwen3TtsCompiledProfile {
-                    generation_config: generation_config.clone(),
-                    control_config: control_config.clone(),
-                    prompt_recipe: Qwen3TtsPromptRecipe::Base,
-                }),
-                custom_voice: if control_config.spk_id.is_empty() {
-                    None
-                } else {
-                    Some(Qwen3TtsCompiledProfile {
-                        generation_config,
-                        control_config,
-                        prompt_recipe: Qwen3TtsPromptRecipe::CustomVoice,
-                    })
-                },
-            },
+            profiles: Qwen3TtsCompiledProfiles { base, custom_voice },
         })
     }
 
@@ -56,30 +59,44 @@ impl Qwen3TtsRequestCompiler {
             QwenRequest::Base(request) => {
                 let profile = self.profiles.base.as_ref().ok_or_else(|| {
                     Qwen3TtsInferenceError::InvalidInput {
-                        message: "package does not support base profile".to_string(),
+                        message: "model does not support base requests".to_string(),
                     }
                 })?;
+                let (prompt_recipe, prompt, ref_prompt, voice_clone) =
+                    resolve_base_prompt_recipe(request)?;
                 compile_profile_condition(
                     &self.tokenizer,
-                    &build_prompt(&request.text),
+                    &prompt,
+                    None,
+                    voice_clone,
+                    ref_prompt.as_deref(),
+                    prompt_recipe,
                     resolve_base_control_ids(&profile.control_config, &request.language)?,
+                    profile.generation_config.max_new_tokens,
                     profile.control_config.codec_eos_token_id as usize,
                 )
             }
             QwenRequest::CustomVoice(request) => {
                 let profile = self.profiles.custom_voice.as_ref().ok_or_else(|| {
                     Qwen3TtsInferenceError::InvalidInput {
-                        message: "model does not support custom-voice requests; no speakers were found in config.json".to_string(),
+                        message: "model does not support custom-voice requests".to_string(),
                     }
                 })?;
+                let (prompt_recipe, prompt, instruct_prompt) =
+                    resolve_custom_voice_prompt_recipe(request)?;
                 compile_profile_condition(
                     &self.tokenizer,
-                    &build_prompt(&request.text),
+                    &prompt,
+                    instruct_prompt.as_deref(),
+                    None,
+                    None,
+                    prompt_recipe,
                     resolve_custom_voice_control_ids(
                         &profile.control_config,
                         &request.language,
                         request.speaker.as_deref(),
                     )?,
+                    profile.generation_config.max_new_tokens,
                     profile.control_config.codec_eos_token_id as usize,
                 )
             }
@@ -99,20 +116,39 @@ pub(crate) struct Qwen3TtsCompiledProfiles {
 pub(crate) struct Qwen3TtsCompiledProfile {
     pub(crate) generation_config: GenerationConfig,
     pub(crate) control_config: Qwen3TtsControlConfig,
-    pub(crate) prompt_recipe: Qwen3TtsPromptRecipe,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Qwen3TtsPromptRecipe {
-    Base,
-    CustomVoice,
+    BasePlain,
+    BaseVoiceCloneIcl,
+    BaseVoiceCloneXVectorOnly,
+    CustomVoicePlain,
+    CustomVoiceInstructed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SemanticRequestCondition {
     pub(crate) text_token_ids: Vec<i64>,
+    pub(crate) instruct_token_ids: Option<Vec<i64>>,
+    pub(crate) voice_clone: Option<CompiledVoiceCloneCondition>,
     pub(crate) controls: ProfileControlIds,
+    pub(crate) max_new_tokens: usize,
     pub(crate) codec_eos_token_id: usize,
+    pub(crate) prompt_recipe: Qwen3TtsPromptRecipe,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CompiledVoiceCloneCondition {
+    pub(crate) speaker_embedding: Vec<f32>,
+    pub(crate) ref_codec_token_ids: Option<Vec<Vec<i64>>>,
+    pub(crate) ref_text_token_ids: Option<Vec<i64>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Qwen3TtsModelKind {
+    Base,
+    CustomVoice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,26 +269,174 @@ where
     })
 }
 
-fn build_prompt(text: &str) -> String {
+fn detect_model_kind(
+    package: &Qwen3TtsPackage,
+    control_config: &Qwen3TtsControlConfig,
+) -> Qwen3TtsModelKind {
+    let package_name = normalize_key(&package.name);
+    if package_name.contains("customvoice") || package_name.contains("custom_voice") {
+        return Qwen3TtsModelKind::CustomVoice;
+    }
+    if package_name.contains("base") {
+        return Qwen3TtsModelKind::Base;
+    }
+    if control_config.spk_id.is_empty() {
+        Qwen3TtsModelKind::Base
+    } else {
+        Qwen3TtsModelKind::CustomVoice
+    }
+}
+
+fn build_assistant_prompt(text: &str) -> String {
     format!(
         "<|im_start|>assistant\n{}<|im_end|>\n<|im_start|>assistant\n",
         text
     )
 }
 
+fn build_ref_prompt(text: &str) -> String {
+    format!("<|im_start|>assistant\n{}<|im_end|>\n", text)
+}
+
+fn build_instruct_prompt(text: &str) -> String {
+    format!("<|im_start|>user\n{}<|im_end|>\n", text)
+}
+
+fn resolve_base_prompt_recipe(
+    request: &crate::BaseRequest,
+) -> Result<
+    (
+        Qwen3TtsPromptRecipe,
+        String,
+        Option<String>,
+        Option<CompiledVoiceCloneCondition>,
+    ),
+    Qwen3TtsInferenceError,
+> {
+    match request.voice_clone.as_ref() {
+        None => Ok((
+            Qwen3TtsPromptRecipe::BasePlain,
+            build_assistant_prompt(&request.text),
+            None,
+            None,
+        )),
+        Some(BaseVoiceCloneConditioning::ReferenceAudio(_)) => {
+            Err(Qwen3TtsInferenceError::InvalidInput {
+                message: "reference-audio voice clone inputs must be prepared before compilation"
+                    .to_string(),
+            })
+        }
+        Some(BaseVoiceCloneConditioning::Prompt(prompt)) => {
+            validate_voice_clone_prompt(prompt)?;
+            match prompt.mode {
+                Qwen3TtsVoiceClonePromptMode::Icl => Ok((
+                    Qwen3TtsPromptRecipe::BaseVoiceCloneIcl,
+                    build_assistant_prompt(&request.text),
+                    Some(build_ref_prompt(
+                        prompt.transcript.as_deref().unwrap_or_default(),
+                    )),
+                    Some(CompiledVoiceCloneCondition {
+                        speaker_embedding: prompt.speaker_embedding.clone(),
+                        ref_codec_token_ids: prompt.ref_codec_token_ids.clone(),
+                        ref_text_token_ids: None,
+                    }),
+                )),
+                Qwen3TtsVoiceClonePromptMode::XVectorOnly => Ok((
+                    Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly,
+                    build_assistant_prompt(&request.text),
+                    None,
+                    Some(CompiledVoiceCloneCondition {
+                        speaker_embedding: prompt.speaker_embedding.clone(),
+                        ref_codec_token_ids: None,
+                        ref_text_token_ids: None,
+                    }),
+                )),
+            }
+        }
+    }
+}
+
+fn resolve_custom_voice_prompt_recipe(
+    request: &CustomVoiceRequest,
+) -> Result<(Qwen3TtsPromptRecipe, String, Option<String>), Qwen3TtsInferenceError> {
+    validate_custom_voice_request(request)?;
+    let instruct = request
+        .instruct
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match instruct {
+        Some(instruct) => Ok((
+            Qwen3TtsPromptRecipe::CustomVoiceInstructed,
+            build_assistant_prompt(&request.text),
+            Some(build_instruct_prompt(instruct)),
+        )),
+        None => Ok((
+            Qwen3TtsPromptRecipe::CustomVoicePlain,
+            build_assistant_prompt(&request.text),
+            None,
+        )),
+    }
+}
+
+fn validate_custom_voice_request(
+    request: &CustomVoiceRequest,
+) -> Result<(), Qwen3TtsInferenceError> {
+    let speaker = request
+        .speaker
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if speaker.is_none() {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "custom-voice requests require a non-empty speaker".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_voice_clone_prompt(
+    prompt: &Qwen3TtsVoiceClonePrompt,
+) -> Result<(), Qwen3TtsInferenceError> {
+    if prompt.speaker_embedding.is_empty() {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "voice clone prompt must contain a non-empty speaker embedding".to_string(),
+        });
+    }
+    if matches!(prompt.mode, Qwen3TtsVoiceClonePromptMode::Icl)
+        && (prompt
+            .transcript
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+            || prompt
+                .ref_codec_token_ids
+                .as_ref()
+                .map(|codes| codes.is_empty())
+                .unwrap_or(true))
+    {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message:
+                "voice clone prompt in ICL mode requires both non-empty transcript and ref codec frames"
+                    .to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn compile_profile_condition(
     tokenizer: &Tokenizer,
     prompt: &str,
+    instruct_prompt: Option<&str>,
+    mut voice_clone: Option<CompiledVoiceCloneCondition>,
+    ref_prompt: Option<&str>,
+    prompt_recipe: Qwen3TtsPromptRecipe,
     controls: ProfileControlIds,
+    max_new_tokens: usize,
     codec_eos_token_id: usize,
 ) -> Result<SemanticRequestCondition, Qwen3TtsInferenceError> {
-    let text_token_ids = tokenizer
-        .encode(prompt, false)
-        .map_err(|source| Qwen3TtsInferenceError::Tokenizer { source })?
-        .get_ids()
-        .iter()
-        .map(|id| i64::from(*id))
-        .collect::<Vec<_>>();
+    let text_token_ids = tokenize_prompt(tokenizer, prompt)?;
     if text_token_ids.len() < 8 {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: format!(
@@ -261,35 +445,59 @@ fn compile_profile_condition(
             ),
         });
     }
+    if let Some(voice_clone) = voice_clone.as_mut() {
+        if matches!(prompt_recipe, Qwen3TtsPromptRecipe::BaseVoiceCloneIcl) {
+            let ref_prompt = ref_prompt.ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
+                message: "voice clone ICL recipe requires a tokenizable ref prompt".to_string(),
+            })?;
+            voice_clone.ref_text_token_ids = Some(tokenize_prompt(tokenizer, ref_prompt)?);
+        }
+    }
 
     Ok(SemanticRequestCondition {
         text_token_ids,
+        instruct_token_ids: instruct_prompt
+            .map(|prompt| tokenize_prompt(tokenizer, prompt))
+            .transpose()?,
+        voice_clone,
         controls,
+        max_new_tokens,
         codec_eos_token_id,
+        prompt_recipe,
     })
+}
+
+fn tokenize_prompt(
+    tokenizer: &Tokenizer,
+    prompt: &str,
+) -> Result<Vec<i64>, Qwen3TtsInferenceError> {
+    Ok(tokenizer
+        .encode(prompt, false)
+        .map_err(|source| Qwen3TtsInferenceError::Tokenizer { source })?
+        .get_ids()
+        .iter()
+        .map(|id| i64::from(*id))
+        .collect::<Vec<_>>())
 }
 
 fn resolve_base_control_ids(
     config: &Qwen3TtsControlConfig,
     language: &LanguageSelection,
 ) -> Result<ProfileControlIds, Qwen3TtsInferenceError> {
-    let codec_prefix_ids = match language_key(language)? {
+    let mut codec_prefix_ids = match language_key(language)? {
         None => vec![
             config.codec_nothink_id,
             config.codec_think_bos_id,
             config.codec_think_eos_id,
-            config.codec_pad_id,
-            config.codec_bos_id,
         ],
         Some(language) => vec![
             config.codec_think_id,
             config.codec_think_bos_id,
             lookup_language_id(config, &language)?,
             config.codec_think_eos_id,
-            config.codec_pad_id,
-            config.codec_bos_id,
         ],
     };
+    codec_prefix_ids.extend([config.codec_pad_id, config.codec_bos_id]);
 
     Ok(ProfileControlIds {
         tts_bos_token_id: config.tts_bos_token_id,
@@ -425,15 +633,15 @@ mod tests {
     use tokenizers::pre_tokenizers::whitespace::WhitespaceSplit;
 
     #[test]
-    fn load_uses_fixed_profile_fields_and_prompt_recipes() {
+    fn load_detects_model_kind_from_package_name() {
         let temp = unique_temp_dir("compiler-unit");
         write_generation_config(&temp.join("generation_config.json"));
         write_model_config(&temp.join("config.json"));
         write_tokenizer_file(&temp.join("tokenizer.json"));
 
-        let package = Qwen3TtsPackage {
+        let base_package = Qwen3TtsPackage {
             package_root: temp.clone(),
-            name: "unit-fixture".to_string(),
+            name: "Qwen3-TTS-12Hz-0.6B-Base".to_string(),
             tokenizer_path: temp.join("tokenizer.json"),
             talker_config_path: temp.join("config.json"),
             talker_weights_path: temp.join("weights/talker.safetensors"),
@@ -443,24 +651,20 @@ mod tests {
             codec_config_path: temp.join("configs/codec.json"),
             codec_weights_path: temp.join("weights/codec.safetensors"),
         };
+        let custom_voice_package = Qwen3TtsPackage {
+            name: "Qwen3-TTS-12Hz-0.6B-CustomVoice".to_string(),
+            ..base_package.clone()
+        };
 
-        let compiler = Qwen3TtsRequestCompiler::load(&package).unwrap();
+        let base_compiler = Qwen3TtsRequestCompiler::load(&base_package).unwrap();
+        let custom_voice_compiler = Qwen3TtsRequestCompiler::load(&custom_voice_package).unwrap();
 
+        assert!(base_compiler.profiles.base.is_some());
+        assert!(base_compiler.profiles.custom_voice.is_none());
+        assert!(custom_voice_compiler.profiles.base.is_none());
+        assert!(custom_voice_compiler.profiles.custom_voice.is_some());
         assert_eq!(
-            compiler.profiles.base.as_ref().unwrap().prompt_recipe,
-            Qwen3TtsPromptRecipe::Base
-        );
-        assert_eq!(
-            compiler
-                .profiles
-                .custom_voice
-                .as_ref()
-                .unwrap()
-                .prompt_recipe,
-            Qwen3TtsPromptRecipe::CustomVoice
-        );
-        assert_eq!(
-            compiler
+            custom_voice_compiler
                 .profiles
                 .custom_voice
                 .as_ref()
@@ -474,7 +678,7 @@ mod tests {
 
     #[test]
     fn compile_request_uses_base_prompt_and_auto_controls() {
-        let compiler = compiler_fixture();
+        let compiler = base_compiler_fixture();
 
         let condition = compiler
             .compile_request(&crate::QwenRequest::Base(crate::BaseRequest::new(
@@ -483,6 +687,8 @@ mod tests {
             .unwrap();
 
         assert!(condition.text_token_ids.len() >= 8);
+        assert!(condition.instruct_token_ids.is_none());
+        assert_eq!(condition.prompt_recipe, Qwen3TtsPromptRecipe::BasePlain);
         assert_eq!(
             condition.controls.codec_prefix_ids,
             vec![2051, 2052, 2053, 2049, 2048]
@@ -492,13 +698,14 @@ mod tests {
 
     #[test]
     fn compile_request_accepts_case_insensitive_language_names() {
-        let compiler = compiler_fixture();
+        let compiler = base_compiler_fixture();
 
         let condition = compiler
             .compile_request(&crate::QwenRequest::Base(crate::BaseRequest {
                 text: "hello from the compiler test prompt with enough tokens for chinese"
                     .to_string(),
                 language: crate::LanguageSelection::Named("Chinese".to_string()),
+                voice_clone: None,
             }))
             .unwrap();
 
@@ -509,8 +716,47 @@ mod tests {
     }
 
     #[test]
+    fn compile_request_uses_voice_clone_prompt_recipe_and_tokens() {
+        let compiler = base_compiler_fixture();
+
+        let condition = compiler
+            .compile_request(&crate::QwenRequest::Base(crate::BaseRequest {
+                text: "hello from the compiler clone prompt test".to_string(),
+                language: crate::LanguageSelection::Named("Chinese".to_string()),
+                voice_clone: Some(crate::BaseVoiceCloneConditioning::Prompt(
+                    crate::Qwen3TtsVoiceClonePrompt {
+                        speaker_embedding: vec![0.1; 1024],
+                        ref_codec_token_ids: Some(vec![vec![7101; 16], vec![7102; 16]]),
+                        transcript: Some("reference words".to_string()),
+                        mode: crate::Qwen3TtsVoiceClonePromptMode::Icl,
+                    },
+                )),
+            }))
+            .unwrap();
+
+        assert_eq!(
+            condition.prompt_recipe,
+            Qwen3TtsPromptRecipe::BaseVoiceCloneIcl
+        );
+        assert_eq!(
+            condition.controls.codec_prefix_ids,
+            vec![2050, 2052, 3001, 2053, 2049, 2048]
+        );
+        assert!(condition.voice_clone.is_some());
+        assert!(
+            condition
+                .voice_clone
+                .as_ref()
+                .unwrap()
+                .ref_text_token_ids
+                .as_ref()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn compile_request_includes_custom_voice_speaker_id() {
-        let compiler = compiler_fixture();
+        let compiler = custom_voice_compiler_fixture();
 
         let condition = compiler
             .compile_request(&crate::QwenRequest::CustomVoice(
@@ -518,11 +764,17 @@ mod tests {
                     text: "ni hao from the compiler test prompt".to_string(),
                     language: crate::LanguageSelection::Named("Chinese".to_string()),
                     speaker: Some("Chelsie".to_string()),
+                    instruct: None,
                 },
             ))
             .unwrap();
 
         assert!(condition.text_token_ids.len() >= 8);
+        assert!(condition.instruct_token_ids.is_none());
+        assert_eq!(
+            condition.prompt_recipe,
+            Qwen3TtsPromptRecipe::CustomVoicePlain
+        );
         assert_eq!(
             condition.controls.codec_prefix_ids,
             vec![2050, 2052, 3001, 2053, 4001, 2049, 2048]
@@ -530,17 +782,89 @@ mod tests {
     }
 
     #[test]
+    fn compile_request_marks_custom_voice_instructed_recipe() {
+        let compiler = custom_voice_compiler_fixture();
+
+        let condition = compiler
+            .compile_request(&crate::QwenRequest::CustomVoice(
+                crate::CustomVoiceRequest {
+                    text: "ni hao from the compiler instructed prompt".to_string(),
+                    language: crate::LanguageSelection::Auto,
+                    speaker: Some("Chelsie".to_string()),
+                    instruct: Some("请用很生气的语气".to_string()),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(
+            condition.prompt_recipe,
+            Qwen3TtsPromptRecipe::CustomVoiceInstructed
+        );
+        assert!(condition.instruct_token_ids.is_some());
+        assert!(condition.text_token_ids.len() >= 8);
+        assert_ne!(
+            condition.text_token_ids,
+            condition.instruct_token_ids.clone().unwrap()
+        );
+    }
+
+    #[test]
     fn compile_request_rejects_unsupported_language() {
-        let compiler = compiler_fixture();
+        let compiler = base_compiler_fixture();
 
         let error = compiler
             .compile_request(&crate::QwenRequest::Base(crate::BaseRequest {
                 text: "hello".to_string(),
                 language: crate::LanguageSelection::Named("fr".to_string()),
+                voice_clone: None,
             }))
             .unwrap_err();
 
         assert!(error.to_string().contains("unsupported language"));
+    }
+
+    #[test]
+    fn compile_request_rejects_missing_custom_voice_speaker() {
+        let compiler = custom_voice_compiler_fixture();
+
+        let error = compiler
+            .compile_request(&crate::QwenRequest::CustomVoice(
+                crate::CustomVoiceRequest::new("hello"),
+            ))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("require a non-empty speaker"));
+    }
+
+    #[test]
+    fn compile_request_rejects_profile_mismatch() {
+        let base_compiler = base_compiler_fixture();
+        let custom_voice_compiler = custom_voice_compiler_fixture();
+
+        let base_error = base_compiler
+            .compile_request(&crate::QwenRequest::CustomVoice(
+                crate::CustomVoiceRequest {
+                    text: "hello".to_string(),
+                    language: crate::LanguageSelection::Auto,
+                    speaker: Some("Chelsie".to_string()),
+                    instruct: None,
+                },
+            ))
+            .unwrap_err();
+        assert!(
+            base_error
+                .to_string()
+                .contains("does not support custom-voice")
+        );
+
+        let custom_voice_error = custom_voice_compiler
+            .compile_request(&crate::QwenRequest::Base(crate::BaseRequest::new("hello")))
+            .unwrap_err();
+        assert!(
+            custom_voice_error
+                .to_string()
+                .contains("does not support base")
+        );
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -554,14 +878,22 @@ mod tests {
         ))
     }
 
-    fn compiler_fixture() -> Qwen3TtsRequestCompiler {
+    fn base_compiler_fixture() -> Qwen3TtsRequestCompiler {
+        compiler_fixture("Qwen3-TTS-12Hz-0.6B-Base")
+    }
+
+    fn custom_voice_compiler_fixture() -> Qwen3TtsRequestCompiler {
+        compiler_fixture("Qwen3-TTS-12Hz-0.6B-CustomVoice")
+    }
+
+    fn compiler_fixture(name: &str) -> Qwen3TtsRequestCompiler {
         let temp = unique_temp_dir("compiler-fixture");
         write_generation_config(&temp.join("generation_config.json"));
         write_model_config(&temp.join("config.json"));
         write_tokenizer_file(&temp.join("tokenizer.json"));
         Qwen3TtsRequestCompiler::load(&Qwen3TtsPackage {
             package_root: temp.clone(),
-            name: "compiler-fixture".to_string(),
+            name: name.to_string(),
             tokenizer_path: temp.join("tokenizer.json"),
             talker_config_path: temp.join("config.json"),
             talker_weights_path: temp.join("model.safetensors"),

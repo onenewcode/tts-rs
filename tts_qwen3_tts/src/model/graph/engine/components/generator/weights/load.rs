@@ -55,16 +55,16 @@ fn load_qwen3_tts_talker_with_adapter<B: Backend, A: ModuleAdapter + 'static>(
             source,
         })?;
 
-    if !apply_result.unused.is_empty() {
-        return Err(Qwen3TtsLoadError::UnusedTensors {
-            unused: apply_result.unused.len(),
-        });
-    }
-
     let applied = apply_result.applied.len();
     let skipped = apply_result.skipped.len();
     let missing = apply_result.missing.len();
     let unused = apply_result.unused.len();
+    if unused != 0 {
+        tracing::warn!(
+            unused,
+            "qwen3 tts talker weights left tensors unused during load"
+        );
+    }
     tracing::info!(
         applied,
         skipped,
