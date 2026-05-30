@@ -14,6 +14,11 @@ Read these documents in order when planning or reviewing architectural work.
 - [testing_tts_qwen.md](/Volumes/mian/code/rs/tts-rs/docs/testing_tts_qwen.md)
   test layering, verification commands, and smoke-test policy
 
+## VibeVoice Documents
+
+- [vibevoice/README.md](/Volumes/mian/code/rs/tts-rs/docs/vibevoice/README.md)
+  architecture and implementation document set for landing `tts_vibevoice`
+
 ## Refactor Documents
 
 - [01-current-state-audit.md](/Volumes/mian/code/rs/tts-rs/docs/refactor/01-current-state-audit.md)
@@ -34,6 +39,7 @@ Use these documents as follows:
 - use `04-api-spec.md` to answer "what is the intended public contract"
 - use `03-migration-plan.md` to answer "what order should we change things in"
 - use `testing_tts_qwen.md` to answer "how do we verify each stage"
+- use `vibevoice/README.md` to answer "how should VibeVoice land in the framework"
 
 ## Acceptance Checklist
 
@@ -45,4 +51,4 @@ This documentation set is complete only when:
 - the target architecture exists
 - the migration plan exists
 - the API baseline exists
-
+- the VibeVoice integration document set exists
