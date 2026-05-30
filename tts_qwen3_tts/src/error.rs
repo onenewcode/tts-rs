@@ -11,13 +11,13 @@ pub enum Qwen3TtsLoadError {
         #[source]
         source: burn::config::ConfigError,
     },
-    #[error("failed to read checkpoint from {path}: {source}")]
+    #[error("failed to read model weights from {path}: {source}")]
     Store {
         path: PathBuf,
         #[source]
         source: burn_store::SafetensorsStoreError,
     },
-    #[error("checkpoint loaded but {unused} tensors were left unused")]
+    #[error("model weights loaded but {unused} tensors were left unused")]
     UnusedTensors { unused: usize },
     #[error("failed to read package manifest {path}: {source}")]
     Io {
@@ -115,7 +115,7 @@ impl From<Qwen3TtsLoadError> for DiagnosticError {
             ),
             Qwen3TtsLoadError::UnusedTensors { unused } => DiagnosticError::invalid_argument(
                 "qwen3.load.unused_tensors",
-                format!("checkpoint loaded but {unused} tensors were left unused"),
+                format!("model weights loaded but {unused} tensors were left unused"),
             )
             .with_context("unused", unused.to_string()),
             Qwen3TtsLoadError::Io { path, source } => io_artifact(

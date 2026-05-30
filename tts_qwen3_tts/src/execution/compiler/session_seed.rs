@@ -1,11 +1,11 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 
-use crate::Qwen3TtsInferenceError;
 use crate::execution::compiler::SemanticRequestCondition;
-use crate::model::graph::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
-use crate::model::graph::engine::components::generator::weights::LoadedQwen3TtsTalker;
-use crate::profiling::record_operator;
+use crate::execution::profiling::record_operator;
+use crate::model::talker::config::Qwen3TtsTalkerConfig;
+use crate::model::talker::weights::LoadedQwen3TtsTalker;
+use crate::Qwen3TtsInferenceError;
 
 #[derive(Debug)]
 pub(crate) struct SessionSeed<B: Backend> {
@@ -129,7 +129,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
         max_new_tokens: condition.max_new_tokens,
         codec_eos_token_id: condition.codec_eos_token_id,
         suppress_token_ids: build_suppress_token_ids(
-            talker.config.talker_config.vocab_size,
+            talker.config.vocab_size,
             condition.codec_eos_token_id,
         ),
     })
@@ -433,7 +433,7 @@ fn sum_ref_codec_embeddings<B: Backend>(
             message: "reference codec frame list must be non-empty".to_string(),
         });
     }
-    let num_groups = talker.config.talker_config.num_code_groups;
+    let num_groups = talker.config.num_code_groups;
     if frames.iter().any(|frame| frame.len() != num_groups) {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: format!("reference codec frames must all contain {num_groups} groups"),

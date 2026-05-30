@@ -1,11 +1,14 @@
+pub mod backend;
 mod request;
+
+use self::backend::Qwen3TtsBackend;
 
 use std::any::type_name;
 
+use tts_core::driver::DriverFactory;
 use tts_core::DriverDescriptor;
 use tts_core::DriverRegistry;
 use tts_core::PcmAudio;
-use tts_core::driver::DriverFactory;
 use tts_error::DiagnosticError;
 
 pub use crate::loading::package::{
@@ -24,7 +27,7 @@ pub const DRIVER_ID: &str = "qwen3_tts";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Qwen3TtsEngineConfig {
     pub package: Qwen3TtsPackageSource,
-    pub backend: crate::Qwen3TtsBackend,
+    pub backend: Qwen3TtsBackend,
     pub profiling: crate::Qwen3TtsProfilingConfig,
 }
 
@@ -89,7 +92,7 @@ impl Qwen3TtsEngine {
         self.instance.package()
     }
 
-    pub fn backend(&self) -> crate::Qwen3TtsBackend {
+    pub fn backend(&self) -> Qwen3TtsBackend {
         self.instance.backend()
     }
 
@@ -165,7 +168,11 @@ mod tests {
         let mut seen = Vec::new();
         let error = synthesize_batch_with([1, 2, 3], |value| {
             seen.push(value);
-            if value == 2 { Err("boom") } else { Ok(value) }
+            if value == 2 {
+                Err("boom")
+            } else {
+                Ok(value)
+            }
         })
         .unwrap_err();
 

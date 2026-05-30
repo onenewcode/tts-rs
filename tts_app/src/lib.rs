@@ -1,13 +1,16 @@
+mod backend;
+
 use std::path::PathBuf;
 
 use thiserror::Error;
 use tts_core::{DriverRegistry, ModelManager, SynthesisResult};
 use tts_qwen3_tts::{
-    BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
-    LanguageSelection, Qwen3TtsEngineConfig, Qwen3TtsHandleExt, Qwen3TtsPackageSource,
-    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest, register_driver, resolve_backend,
+    register_driver, BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio,
+    CustomVoiceRequest, LanguageSelection, Qwen3TtsEngineConfig, Qwen3TtsHandleExt,
+    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest,
 };
 
+pub use self::backend::{available_backends, resolve_backend};
 pub use tts_qwen3_tts::{Qwen3TtsBackend, SamplingConfig};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,8 +125,7 @@ impl QwenAppService {
     pub fn prepare_base(input: BaseSynthesisInput) -> Result<PreparedSynthesis, AppError> {
         let stage_summary = resolve_stage_summary(&input.shared);
         let output = input.shared.output.clone();
-        let backend =
-            resolve_backend(input.shared.backend).map_err(tts_qwen3_tts::Qwen3TtsError::from)?;
+        let backend = resolve_backend(input.shared.backend)?;
         Ok(PreparedSynthesis {
             package_source: package_source(&input.shared)?,
             backend,
@@ -147,8 +149,7 @@ impl QwenAppService {
     ) -> Result<PreparedSynthesis, AppError> {
         let stage_summary = resolve_stage_summary(&input.shared);
         let output = input.shared.output.clone();
-        let backend =
-            resolve_backend(input.shared.backend).map_err(tts_qwen3_tts::Qwen3TtsError::from)?;
+        let backend = resolve_backend(input.shared.backend)?;
         Ok(PreparedSynthesis {
             package_source: package_source(&input.shared)?,
             backend,

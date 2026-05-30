@@ -1,8 +1,11 @@
 use std::time::Instant;
 
 pub(crate) mod compiler;
-pub(crate) mod engine;
+pub(crate) mod conditioning;
 pub(crate) mod error;
+pub(crate) mod profiling;
+pub(crate) mod reference_audio;
+pub(crate) mod run;
 pub(crate) mod session;
 
 use tts_core::driver::ErasedLoadedModel;
@@ -15,7 +18,7 @@ use crate::{
     Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt, QwenRequest,
 };
 
-use self::engine::Engine;
+use self::run::Engine;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Qwen3LoadedModelInstance {
