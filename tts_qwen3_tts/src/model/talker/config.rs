@@ -72,9 +72,99 @@ fn default_rope_type() -> String {
     "default".to_string()
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelConfigWithTalker {
+    talker_config: Qwen3TtsTalkerConfig,
+}
+
 impl Qwen3TtsTalkerConfig {
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, Qwen3TtsLoadError> {
         let path = path.as_ref().to_path_buf();
-        Self::load(&path).map_err(|source| Qwen3TtsLoadError::Config { path, source })
+        let raw = std::fs::read_to_string(&path).map_err(|source| {
+            Qwen3TtsLoadError::CompilerConfigIo {
+                path: path.clone(),
+                source,
+            }
+        })?;
+
+        // Official Qwen3-TTS package configs place talker runtime fields under
+        // the top-level `talker_config` key, so we load only that on-disk shape.
+        serde_json::from_str::<ModelConfigWithTalker>(&raw)
+            .map(|wrapped| wrapped.talker_config)
+            .map_err(|source| Qwen3TtsLoadError::CompilerConfigParse { path, source })
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::Qwen3TtsTalkerConfig;
+
+    #[test]
+    fn load_from_path_reads_nested_talker_config() {
+        let path = unique_temp_path("talker-config.json");
+        std::fs::write(&path, TALKER_CONFIG_JSON).expect("test config should be writable");
+
+        let config =
+            Qwen3TtsTalkerConfig::load_from_path(&path).expect("nested talker config should load");
+
+        assert_eq!(config.hidden_size, 1024);
+        assert_eq!(config.code_predictor_config.hidden_size, 1024);
+        assert_eq!(config.num_code_groups, 16);
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tts-rs-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be valid")
+                .as_nanos()
+        ))
+    }
+
+    const TALKER_CONFIG_JSON: &str = r#"{
+  "tts_bos_token_id": 151672,
+  "tts_eos_token_id": 151673,
+  "tts_pad_token_id": 151671,
+  "talker_config": {
+    "attention_bias": false,
+    "code_predictor_config": {
+      "attention_bias": false,
+      "head_dim": 128,
+      "hidden_act": "silu",
+      "hidden_size": 1024,
+      "intermediate_size": 3072,
+      "max_position_embeddings": 65536,
+      "num_attention_heads": 16,
+      "num_code_groups": 16,
+      "num_hidden_layers": 5,
+      "num_key_value_heads": 8,
+      "rms_norm_eps": 1e-06,
+      "rope_theta": 1000000,
+      "vocab_size": 2048
+    },
+    "head_dim": 128,
+    "hidden_act": "silu",
+    "hidden_size": 1024,
+    "intermediate_size": 3072,
+    "max_position_embeddings": 32768,
+    "num_attention_heads": 16,
+    "num_code_groups": 16,
+    "num_hidden_layers": 28,
+    "num_key_value_heads": 8,
+    "rms_norm_eps": 1e-06,
+    "rope_scaling": {
+      "interleaved": true,
+      "mrope_section": [24, 20, 20],
+      "rope_type": "default"
+    },
+    "rope_theta": 1000000,
+    "text_hidden_size": 2048,
+    "text_vocab_size": 151936,
+    "vocab_size": 3072
+  }
+}"#;
 }

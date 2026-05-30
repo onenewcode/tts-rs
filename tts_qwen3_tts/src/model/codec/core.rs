@@ -30,11 +30,15 @@ pub struct Qwen3TtsAudioCodecEncoderBackbone<B: Backend> {
     pub layers: Vec<Qwen3TtsAudioCodecEncoderBackboneLayer<B>>,
 }
 
+#[derive(Module, Debug, Clone)]
+pub struct Qwen3TtsAudioCodecEncoderActivation;
+
 #[derive(Module, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum Qwen3TtsAudioCodecEncoderBackboneLayer<B: Backend> {
     InputConv(Qwen3TtsAudioCodecEncoderConvLayer<B>),
     Resnet(Qwen3TtsAudioCodecEncoderResnetLayer<B>),
+    Activation(Qwen3TtsAudioCodecEncoderActivation),
     DownsampleConv(Qwen3TtsAudioCodecEncoderConvLayer<B>),
     OutputConv(Qwen3TtsAudioCodecEncoderConvLayer<B>),
 }
@@ -247,14 +251,21 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderBackbone<B> {
                 Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(layer) => {
                     streamable_conv1d(&layer.conv, hidden, ConvPadMode::Constant)
                 }
+                Qwen3TtsAudioCodecEncoderBackboneLayer::Resnet(layer) => layer.forward(hidden),
+                Qwen3TtsAudioCodecEncoderBackboneLayer::Activation(layer) => layer.forward(hidden),
                 Qwen3TtsAudioCodecEncoderBackboneLayer::DownsampleConv(layer)
                 | Qwen3TtsAudioCodecEncoderBackboneLayer::OutputConv(layer) => {
-                    streamable_conv1d(&layer.conv, elu(hidden, 1.0), ConvPadMode::Constant)
+                    streamable_conv1d(&layer.conv, hidden, ConvPadMode::Constant)
                 }
-                Qwen3TtsAudioCodecEncoderBackboneLayer::Resnet(layer) => layer.forward(hidden),
             };
         }
         hidden
+    }
+}
+
+impl Qwen3TtsAudioCodecEncoderActivation {
+    pub fn forward<B: Backend>(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
+        elu(hidden, 1.0)
     }
 }
 

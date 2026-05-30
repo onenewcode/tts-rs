@@ -23,25 +23,46 @@ use crate::model::codec::core::{
     Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
 use crate::model::codec::core::{
-    Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderAttention,
-    Qwen3TtsAudioCodecEncoderBackbone, Qwen3TtsAudioCodecEncoderBackboneLayer,
-    Qwen3TtsAudioCodecEncoderCodebook, Qwen3TtsAudioCodecEncoderConvLayer,
-    Qwen3TtsAudioCodecEncoderMlp, Qwen3TtsAudioCodecEncoderQuantizer,
-    Qwen3TtsAudioCodecEncoderResidualVectorQuantizer, Qwen3TtsAudioCodecEncoderResnetLayer,
-    Qwen3TtsAudioCodecEncoderTransformer, Qwen3TtsAudioCodecEncoderTransformerLayer,
-    Qwen3TtsAudioCodecEncoderVectorQuantization,
+    Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderActivation,
+    Qwen3TtsAudioCodecEncoderAttention, Qwen3TtsAudioCodecEncoderBackbone,
+    Qwen3TtsAudioCodecEncoderBackboneLayer, Qwen3TtsAudioCodecEncoderCodebook,
+    Qwen3TtsAudioCodecEncoderConvLayer, Qwen3TtsAudioCodecEncoderMlp,
+    Qwen3TtsAudioCodecEncoderQuantizer, Qwen3TtsAudioCodecEncoderResidualVectorQuantizer,
+    Qwen3TtsAudioCodecEncoderResnetLayer, Qwen3TtsAudioCodecEncoderTransformer,
+    Qwen3TtsAudioCodecEncoderTransformerLayer, Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
 use crate::Qwen3TtsLoadError;
 
-const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(
-    r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.weight$",
-    "${1}.gamma",
-)];
+// Keep the runtime structs readable and localize official PyTorch naming quirks here.
+const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 3] = [
+    (
+        r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.weight$",
+        "${1}.gamma",
+    ),
+    (
+        r"^encoder\.encoder\.layers\.(\d+)\.block\.1\.conv\.(weight|bias)$",
+        "encoder.encoder.layers.${1}.conv_in.conv.${2}",
+    ),
+    (
+        r"^encoder\.encoder\.layers\.(\d+)\.block\.3\.conv\.(weight|bias)$",
+        "encoder.encoder.layers.${1}.conv_out.conv.${2}",
+    ),
+];
 #[cfg(test)]
-const SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS: [(&str, &str); 1] = [(
-    r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.gamma$",
-    "${1}.weight",
-)];
+const SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS: [(&str, &str); 3] = [
+    (
+        r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.gamma$",
+        "${1}.weight",
+    ),
+    (
+        r"^encoder\.encoder\.layers\.(\d+)\.conv_in\.conv\.(weight|bias)$",
+        "encoder.encoder.layers.${1}.block.1.conv.${2}",
+    ),
+    (
+        r"^encoder\.encoder\.layers\.(\d+)\.conv_out\.conv\.(weight|bias)$",
+        "encoder.encoder.layers.${1}.block.3.conv.${2}",
+    ),
+];
 
 fn audio_codec_load_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
@@ -168,7 +189,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
         &self,
         device: &B::Device,
     ) -> Qwen3TtsAudioCodecEncoderBackbone<B> {
-        let mut layers = Vec::with_capacity(self.upsampling_ratios.len() * 2 + 3);
+        let mut layers = Vec::with_capacity(self.upsampling_ratios.len() * 3 + 3);
         layers.push(Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(
             Qwen3TtsAudioCodecEncoderConvLayer {
                 conv: Conv1dConfig::new(self.audio_channels, self.num_filters, self.kernel_size)
@@ -206,6 +227,9 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                 },
             ));
 
+            layers.push(Qwen3TtsAudioCodecEncoderBackboneLayer::Activation(
+                Qwen3TtsAudioCodecEncoderActivation,
+            ));
             layers.push(Qwen3TtsAudioCodecEncoderBackboneLayer::DownsampleConv(
                 Qwen3TtsAudioCodecEncoderConvLayer {
                     conv: Conv1dConfig::new(current_scale, current_scale * 2, ratio * 2)
@@ -217,6 +241,9 @@ impl Qwen3TtsAudioCodecEncoderConfig {
             scaling *= 2;
         }
 
+        layers.push(Qwen3TtsAudioCodecEncoderBackboneLayer::Activation(
+            Qwen3TtsAudioCodecEncoderActivation,
+        ));
         layers.push(Qwen3TtsAudioCodecEncoderBackboneLayer::OutputConv(
             Qwen3TtsAudioCodecEncoderConvLayer {
                 conv: Conv1dConfig::new(
