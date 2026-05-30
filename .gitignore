@@ -5,3 +5,4 @@ target/
 *.wav
 /openmoss
 /dir
+/.worktrees
