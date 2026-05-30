@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor, TensorData};
-use tts_infer::{LoadedModel, ModelSession, SessionStep};
 
-use crate::compiler::session_seed::{SessionSeed, materialize_session_seed};
+use crate::execution::compiler::Qwen3TtsRequestCompiler;
+use crate::execution::compiler::session_seed::{SessionSeed, materialize_session_seed};
+use crate::execution::engine::LoadedModel;
+use crate::execution::session::{ModelSession, SessionStep};
 use crate::model::graph::engine::components::decoder::graph::{decode_waveform, waveform_to_pcm};
 use crate::model::graph::engine::components::decoder::lowering::DecoderLowering;
 use crate::model::graph::engine::components::decoder::weights::{
@@ -18,8 +20,8 @@ use crate::profiling::with_session_context;
 use crate::runtime::sampling::SamplingConfig as RuntimeSamplingConfig;
 use crate::{
     BaseVoiceCloneReferenceAudio, Qwen3TtsBackend, Qwen3TtsInferenceError, Qwen3TtsLoadError,
-    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRequestCompiler, Qwen3TtsRunOptions,
-    Qwen3TtsVoiceClonePrompt, QwenRequest,
+    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
+    QwenRequest,
 };
 
 pub(crate) mod graph;
@@ -75,7 +77,7 @@ where
         &self,
         run: &TalkerGenerator<B>,
         reference_codec_frames: Option<&[Vec<i64>]>,
-    ) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
+    ) -> Result<tts_core::PcmAudio, Qwen3TtsInferenceError> {
         let generated = run.finalize()?;
         let waveform = if let Some(reference_codec_frames) = reference_codec_frames {
             let [batch_size, num_quantizers, time_steps] = generated.codec_token_ids.dims();
@@ -116,7 +118,7 @@ where
         let waveform =
             DecoderLowering::lift_output(self.decoder.config.output_sample_rate as u32, waveform)?;
         let pcm = waveform_to_pcm(&waveform)?;
-        Ok(tts_infer::PcmAudio {
+        Ok(tts_core::PcmAudio {
             pcm_i16: pcm,
             sample_rate: waveform.sample_rate(),
             channels: 1,
@@ -303,6 +305,32 @@ impl Qwen3TtsLoadedModel {
             Self::Vulkan(inner) => inner.create_voice_clone_prompt(reference),
             #[cfg(feature = "webgpu")]
             Self::WebGpu(inner) => inner.create_voice_clone_prompt(reference),
+            #[allow(unreachable_patterns)]
+            _ => Err(Qwen3TtsInferenceError::RuntimeLoad {
+                message: "no compiled backend is available for voice clone prompt creation"
+                    .to_string(),
+            }),
+        }
+    }
+
+    pub(crate) fn supports_voice_clone(&self) -> bool {
+        match self {
+            #[cfg(feature = "flex")]
+            Self::Flex(inner) => inner.speaker_encoder.is_some(),
+            #[cfg(feature = "wgpu")]
+            Self::Wgpu(inner) => inner.speaker_encoder.is_some(),
+            #[cfg(feature = "cuda")]
+            Self::Cuda(inner) => inner.speaker_encoder.is_some(),
+            #[cfg(feature = "rocm")]
+            Self::Rocm(inner) => inner.speaker_encoder.is_some(),
+            #[cfg(feature = "metal")]
+            Self::Metal(inner) => inner.speaker_encoder.is_some(),
+            #[cfg(feature = "vulkan")]
+            Self::Vulkan(inner) => inner.speaker_encoder.is_some(),
+            #[cfg(feature = "webgpu")]
+            Self::WebGpu(inner) => inner.speaker_encoder.is_some(),
+            #[allow(unreachable_patterns)]
+            _ => false,
         }
     }
 }
@@ -347,6 +375,10 @@ impl LoadedModel for Qwen3TtsLoadedModel {
             Self::WebGpu(inner) => {
                 start_backend_session(inner, request, options).map(Qwen3TtsSession::WebGpu)
             }
+            #[allow(unreachable_patterns)]
+            _ => Err(Qwen3TtsInferenceError::RuntimeLoad {
+                message: "no compiled backend is available for session start".to_string(),
+            }),
         }
     }
 }
@@ -388,10 +420,14 @@ impl ModelSession for Qwen3TtsSession {
             Self::Vulkan(session) => step_impl(session),
             #[cfg(feature = "webgpu")]
             Self::WebGpu(session) => step_impl(session),
+            #[allow(unreachable_patterns)]
+            _ => Err(Qwen3TtsInferenceError::RuntimeLoad {
+                message: "no compiled backend is available for session stepping".to_string(),
+            }),
         }
     }
 
-    fn finish(self) -> Result<tts_infer::PcmAudio, Self::Error> {
+    fn finish(self) -> Result<tts_core::PcmAudio, Self::Error> {
         match self {
             #[cfg(feature = "flex")]
             Self::Flex(session) => finish_impl(session),
@@ -407,6 +443,10 @@ impl ModelSession for Qwen3TtsSession {
             Self::Vulkan(session) => finish_impl(session),
             #[cfg(feature = "webgpu")]
             Self::WebGpu(session) => finish_impl(session),
+            #[allow(unreachable_patterns)]
+            _ => Err(Qwen3TtsInferenceError::RuntimeLoad {
+                message: "no compiled backend is available for session finish".to_string(),
+            }),
         }
     }
 }
@@ -456,7 +496,7 @@ where
     }
 }
 
-fn finish_impl<B>(session: SessionImpl<B>) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError>
+fn finish_impl<B>(session: SessionImpl<B>) -> Result<tts_core::PcmAudio, Qwen3TtsInferenceError>
 where
     B: Backend,
     B::Device: Clone,

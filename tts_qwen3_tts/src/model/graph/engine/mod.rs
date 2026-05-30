@@ -19,8 +19,8 @@ mod tests {
         },
     };
     use super::spec::{ComponentKind, EnginePolicy, qwen_engine_spec};
-    use crate::compiler::ProfileControlIds;
-    use crate::compiler::SemanticRequestCondition;
+    use crate::execution::compiler::ProfileControlIds;
+    use crate::execution::compiler::SemanticRequestCondition;
 
     type TestBackend = Flex;
 
@@ -110,7 +110,7 @@ mod tests {
             },
             max_new_tokens: 8192,
             codec_eos_token_id: 8,
-            prompt_recipe: crate::compiler::Qwen3TtsPromptRecipe::BasePlain,
+            prompt_recipe: crate::execution::compiler::Qwen3TtsPromptRecipe::BasePlain,
         };
 
         let execution =
@@ -141,7 +141,7 @@ mod tests {
             },
             max_new_tokens: 8192,
             codec_eos_token_id: 8,
-            prompt_recipe: crate::compiler::Qwen3TtsPromptRecipe::CustomVoicePlain,
+            prompt_recipe: crate::execution::compiler::Qwen3TtsPromptRecipe::CustomVoicePlain,
         };
         let instructed = SemanticRequestCondition {
             text_token_ids: base_text_ids,
@@ -150,7 +150,7 @@ mod tests {
             controls: plain.controls.clone(),
             max_new_tokens: plain.max_new_tokens,
             codec_eos_token_id: plain.codec_eos_token_id,
-            prompt_recipe: crate::compiler::Qwen3TtsPromptRecipe::CustomVoiceInstructed,
+            prompt_recipe: crate::execution::compiler::Qwen3TtsPromptRecipe::CustomVoiceInstructed,
         };
 
         let plain_execution =

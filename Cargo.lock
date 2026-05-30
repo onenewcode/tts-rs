@@ -5749,17 +5749,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tts_app"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tts_core",
+ "tts_error",
+ "tts_qwen3_tts",
+]
+
+[[package]]
 name = "tts_cli"
 version = "0.1.0"
 dependencies = [
  "clap",
  "tracing",
  "tracing-subscriber",
- "tts_qwen3_tts",
+ "tts_app",
 ]
 
 [[package]]
-name = "tts_infer"
+name = "tts_core"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "thiserror 2.0.18",
+ "tts_error",
+]
+
+[[package]]
+name = "tts_error"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
@@ -5781,7 +5800,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokenizers 0.23.1",
  "tracing",
- "tts_infer",
+ "tts_core",
+ "tts_error",
 ]
 
 [[package]]

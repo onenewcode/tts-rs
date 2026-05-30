@@ -1,6 +1,5 @@
 use burn::module::Module;
 use burn::nn::Linear;
-use burn::tensor::DType;
 use burn::tensor::Tensor;
 use burn::tensor::activation;
 use burn::tensor::backend::Backend;

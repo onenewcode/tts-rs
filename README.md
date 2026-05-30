@@ -5,9 +5,11 @@ CLI. The Qwen3-TTS runtime path is implemented on Burn.
 
 Workspace crates:
 
-- `tts_infer`: thin inference/session layer
-- `tts_qwen3_tts`: Qwen3-TTS loading, request compilation, and runtime
-- `tts_cli`: command-line wrapper that writes `.wav` files
+- `tts_core` (`tts_infer/`): framework core for lifecycle, session/audio primitives, and loaded-instance management
+- `tts_error`: shared diagnostics foundation
+- `tts_qwen3_tts`: Qwen3-TTS driver crate
+- `tts_app`: application-service orchestration for local frontends
+- `tts_cli`: command-line shell that writes `.wav` files through `tts_app`
 
 The CLI writes mono, 24 kHz, 16-bit PCM WAV output. Base voice cloning supports
 both `ref_audio + ref_text` ICL conditioning and `x_vector_only` conditioning.

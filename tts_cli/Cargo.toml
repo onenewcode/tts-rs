@@ -5,20 +5,20 @@ edition = "2024"
 
 [features]
 default = ["flex", "fusion"]
-fusion = ["tts_qwen3_tts/fusion"]
-flex = ["tts_qwen3_tts/flex"]
-wgpu = ["tts_qwen3_tts/wgpu"]
-cuda = ["tts_qwen3_tts/cuda"]
-rocm = ["tts_qwen3_tts/rocm"]
-metal = ["tts_qwen3_tts/metal"]
-vulkan = ["tts_qwen3_tts/vulkan"]
-webgpu = ["tts_qwen3_tts/webgpu"]
+fusion = ["tts_app/fusion"]
+flex = ["tts_app/flex"]
+wgpu = ["tts_app/wgpu"]
+cuda = ["tts_app/cuda"]
+rocm = ["tts_app/rocm"]
+metal = ["tts_app/metal"]
+vulkan = ["tts_app/vulkan"]
+webgpu = ["tts_app/webgpu"]
 
 [dependencies]
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tts_qwen3_tts = { path = "../tts_qwen3_tts", default-features = false }
+tts_app = { workspace = true }
 
 [[bin]]
 name = "tts_cli"

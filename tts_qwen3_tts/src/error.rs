@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use thiserror::Error;
+use tts_error::DiagnosticError;
 
 #[derive(Debug, Error)]
 pub enum Qwen3TtsLoadError {
@@ -86,11 +87,110 @@ pub enum Qwen3TtsInferenceError {
 #[derive(Debug, Error)]
 pub enum Qwen3TtsError {
     #[error(transparent)]
+    Framework(#[from] DiagnosticError),
+    #[error(transparent)]
     Load(#[from] Qwen3TtsLoadError),
     #[error(transparent)]
-    Infer(#[from] tts_infer::InferError<Qwen3TtsInferenceError>),
+    Infer(#[from] crate::execution::error::InferError<Qwen3TtsInferenceError>),
     #[error(transparent)]
     Inference(#[from] Qwen3TtsInferenceError),
 }
 
 pub type QwenTtsInferenceError = Qwen3TtsInferenceError;
+
+impl From<Qwen3TtsLoadError> for DiagnosticError {
+    fn from(value: Qwen3TtsLoadError) -> Self {
+        match value {
+            Qwen3TtsLoadError::Config { path, source } => invalid_artifact(
+                "qwen3.load.config",
+                "failed to load runtime config",
+                path,
+                source.to_string(),
+            ),
+            Qwen3TtsLoadError::Store { path, source } => invalid_artifact(
+                "qwen3.load.store",
+                "failed to read safetensors weights",
+                path,
+                source.to_string(),
+            ),
+            Qwen3TtsLoadError::UnusedTensors { unused } => DiagnosticError::invalid_argument(
+                "qwen3.load.unused_tensors",
+                format!("checkpoint loaded but {unused} tensors were left unused"),
+            )
+            .with_context("unused", unused.to_string()),
+            Qwen3TtsLoadError::Io { path, source } => io_artifact(
+                "qwen3.load.manifest_io",
+                "failed to read package manifest",
+                path,
+                source,
+            ),
+            Qwen3TtsLoadError::ManifestParse { path, source } => invalid_artifact(
+                "qwen3.load.manifest_parse",
+                "failed to parse package manifest",
+                path,
+                source.to_string(),
+            ),
+            Qwen3TtsLoadError::CompilerConfigIo { path, source } => io_artifact(
+                "qwen3.load.compiler_config_io",
+                "failed to read compiler config",
+                path,
+                source,
+            ),
+            Qwen3TtsLoadError::CompilerConfigParse { path, source } => invalid_artifact(
+                "qwen3.load.compiler_config_parse",
+                "failed to parse compiler config",
+                path,
+                source.to_string(),
+            ),
+            Qwen3TtsLoadError::Tokenizer { path, source } => invalid_artifact(
+                "qwen3.load.tokenizer",
+                "failed to load tokenizer",
+                path,
+                source.to_string(),
+            ),
+            Qwen3TtsLoadError::UnavailableBackend { backend } => DiagnosticError::unsupported(
+                "qwen3.load.backend_unavailable",
+                format!("backend `{backend}` is not compiled in"),
+            )
+            .with_context("backend", backend),
+            Qwen3TtsLoadError::InvalidManifest { message } => DiagnosticError::invalid_argument(
+                "qwen3.load.invalid_manifest",
+                format!("invalid package manifest: {message}"),
+            )
+            .with_context("message", message),
+            Qwen3TtsLoadError::InvalidModelDir { message } => DiagnosticError::invalid_argument(
+                "qwen3.load.invalid_model_dir",
+                format!("invalid model directory: {message}"),
+            )
+            .with_context("message", message),
+        }
+    }
+}
+
+fn invalid_artifact(
+    code: &'static str,
+    message: &'static str,
+    path: PathBuf,
+    source: String,
+) -> DiagnosticError {
+    DiagnosticError::invalid_argument(code, format!("{message}: {}", path.display()))
+        .with_context("path", path.display().to_string())
+        .with_context("source", source)
+}
+
+fn io_artifact(
+    code: &'static str,
+    message: &'static str,
+    path: PathBuf,
+    source: std::io::Error,
+) -> DiagnosticError {
+    let diagnostic = if source.kind() == std::io::ErrorKind::NotFound {
+        DiagnosticError::not_found(code, format!("{message}: {}", path.display()))
+    } else {
+        DiagnosticError::invalid_argument(code, format!("{message}: {}", path.display()))
+    };
+
+    diagnostic
+        .with_context("path", path.display().to_string())
+        .with_context("source", source.to_string())
+}

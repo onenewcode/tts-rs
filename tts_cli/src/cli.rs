@@ -3,11 +3,9 @@ use std::time::Instant;
 
 use clap::{ArgAction, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use tracing::info;
-use tts_qwen3_tts::{
-    BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
-    LanguageSelection, Qwen3TtsBackend, Qwen3TtsEngine, Qwen3TtsEngineConfig,
-    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest,
-    SamplingConfig,
+use tts_app::{
+    BaseSynthesisInput, CustomVoiceSynthesisInput, Qwen3TtsBackend, QwenAppService, SamplingConfig,
+    SharedSynthesisInput,
 };
 
 #[derive(Debug, Parser)]
@@ -160,128 +158,100 @@ pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
 pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     init_logging(args.log_level);
     let total_started = Instant::now();
+    let service = QwenAppService::new()?;
 
     match args.command {
         Command::Synthesize(command) => match command.profile {
-            ProfileCommand::Base(base) => {
-                let request = build_base_request(&base)?;
-                run_synthesis(&base.shared, request, total_started)
-            }
+            ProfileCommand::Base(base) => run_base_synthesis(&service, &base, total_started),
             ProfileCommand::CustomVoice(custom_voice) => {
-                let request = build_custom_voice_request(&custom_voice);
-                run_synthesis(&custom_voice.shared, request, total_started)
+                run_custom_voice_synthesis(&service, &custom_voice, total_started)
             }
         },
     }
 }
 
-fn build_base_request(args: &BaseSynthesizeArgs) -> Result<QwenRequest, std::io::Error> {
-    let voice_clone = match (&args.ref_audio, args.x_vector_only) {
-        (None, _) => {
-            if args.ref_text.is_some() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "`--ref-text` requires `--ref-audio`",
-                ));
-            }
-            None
-        }
-        (Some(_), false) if args.ref_text.is_none() => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "`--ref-text` is required when `--ref-audio` is used without `--x-vector-only`",
-            ));
-        }
-        (Some(path), x_vector_only) => Some(BaseVoiceCloneConditioning::ReferenceAudio(
-            BaseVoiceCloneReferenceAudio {
-                path: path.clone(),
-                transcript: args.ref_text.clone(),
-                x_vector_only,
-            },
-        )),
-    };
-
-    Ok(QwenRequest::Base(BaseRequest {
-        text: args.shared.text.clone(),
-        language: parse_language(&args.shared.language),
-        voice_clone,
-    }))
-}
-
-fn build_custom_voice_request(args: &CustomVoiceSynthesizeArgs) -> QwenRequest {
-    QwenRequest::CustomVoice(CustomVoiceRequest {
-        text: args.shared.text.clone(),
-        language: parse_language(&args.shared.language),
-        speaker: Some(args.speaker.clone()),
-        instruct: args.instruct.clone(),
-    })
-}
-
-fn run_synthesis(
-    shared: &SharedSynthesizeArgs,
-    request: QwenRequest,
+fn run_base_synthesis(
+    service: &QwenAppService,
+    args: &BaseSynthesizeArgs,
     total_started: Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = shared
-        .output
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let package_source = package_source(shared)?;
-    let engine = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
-        package: package_source,
-        backend: shared
-            .backend
-            .map(CliBackend::to_backend)
-            .unwrap_or(Qwen3TtsBackend::Flex),
-        profiling: Qwen3TtsProfilingConfig {
-            enabled: shared.profiling,
-            per_step: shared.profiling_per_step,
-            stage_summary: resolve_stage_summary(shared),
-            log_topk: shared.profiling_log_topk,
-        },
-    })?;
-    let options = Qwen3TtsRunOptions {
-        max_new_tokens: shared.max_new_tokens,
-        sampling: shared.sampling.to_sampling(),
-    };
-
     info!(
-        source = %input_source_display(shared).display(),
-        output = %shared.output.display(),
-        backend = ?shared.backend,
-        max_new_tokens = ?shared.max_new_tokens,
-        profiling = shared.profiling,
-        language = %shared.language,
+        source = %input_source_display(&args.shared).display(),
+        output = %args.shared.output.display(),
+        backend = ?args.shared.backend,
+        max_new_tokens = ?args.shared.max_new_tokens,
+        profiling = args.shared.profiling,
+        language = %args.shared.language,
         "starting tts generation"
     );
 
-    let audio = engine.synthesize(request, options)?;
-    audio.save_wav(&shared.output)?;
+    let prepared = QwenAppService::prepare_base(BaseSynthesisInput {
+        shared: to_shared_input(&args.shared),
+        ref_audio: args.ref_audio.clone(),
+        ref_text: args.ref_text.clone(),
+        x_vector_only: args.x_vector_only,
+    })?;
+    let saved = service.synthesize_prepared(prepared)?;
 
     info!(
-        wav_path = %shared.output.display(),
+        wav_path = %saved.output.display(),
         total_elapsed_ms = total_started.elapsed().as_millis(),
+        instance_id = saved.result.instance_id,
+        driver_id = %saved.result.driver_id,
+        synthesis_elapsed_ms = saved.result.elapsed.as_millis(),
         "saved wav"
     );
     Ok(())
 }
 
-fn package_source(shared: &SharedSynthesizeArgs) -> Result<Qwen3TtsPackageSource, std::io::Error> {
-    match (&shared.model_dir, &shared.manifest) {
-        (Some(path), None) => Ok(Qwen3TtsPackageSource::ModelDir(path.clone())),
-        (None, Some(path)) => Ok(Qwen3TtsPackageSource::ManifestPath(path.clone())),
-        (None, None) => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "pass either --model-dir or --manifest",
-        )),
-        (Some(_), Some(_)) => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "pass only one of --model-dir or --manifest",
-        )),
+fn run_custom_voice_synthesis(
+    service: &QwenAppService,
+    args: &CustomVoiceSynthesizeArgs,
+    total_started: Instant,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!(
+        source = %input_source_display(&args.shared).display(),
+        output = %args.shared.output.display(),
+        backend = ?args.shared.backend,
+        max_new_tokens = ?args.shared.max_new_tokens,
+        profiling = args.shared.profiling,
+        language = %args.shared.language,
+        "starting tts generation"
+    );
+
+    let prepared = QwenAppService::prepare_custom_voice(CustomVoiceSynthesisInput {
+        shared: to_shared_input(&args.shared),
+        speaker: args.speaker.clone(),
+        instruct: args.instruct.clone(),
+    })?;
+    let saved = service.synthesize_prepared(prepared)?;
+
+    info!(
+        wav_path = %saved.output.display(),
+        total_elapsed_ms = total_started.elapsed().as_millis(),
+        instance_id = saved.result.instance_id,
+        driver_id = %saved.result.driver_id,
+        synthesis_elapsed_ms = saved.result.elapsed.as_millis(),
+        "saved wav"
+    );
+    Ok(())
+}
+
+fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
+    SharedSynthesisInput {
+        model_dir: shared.model_dir.clone(),
+        manifest: shared.manifest.clone(),
+        text: shared.text.clone(),
+        language: shared.language.clone(),
+        output: shared.output.clone(),
+        backend: shared.backend.map(CliBackend::to_backend),
+        max_new_tokens: shared.max_new_tokens,
+        sampling: shared.sampling.to_sampling(),
+        profiling: shared.profiling,
+        profiling_per_step: shared.profiling_per_step,
+        profiling_stage_summary: shared.profiling_stage_summary,
+        no_profiling_stage_summary: shared.no_profiling_stage_summary,
+        profiling_log_topk: shared.profiling_log_topk,
     }
 }
 
@@ -291,22 +261,6 @@ fn input_source_display(shared: &SharedSynthesizeArgs) -> &Path {
         .as_deref()
         .or(shared.manifest.as_deref())
         .expect("clap requires one input source")
-}
-
-fn parse_language(value: &str) -> LanguageSelection {
-    if value.trim().eq_ignore_ascii_case("auto") {
-        LanguageSelection::Auto
-    } else {
-        LanguageSelection::Named(value.trim().to_string())
-    }
-}
-
-fn resolve_stage_summary(shared: &SharedSynthesizeArgs) -> bool {
-    if shared.no_profiling_stage_summary {
-        false
-    } else {
-        shared.profiling_stage_summary
-    }
 }
 
 fn init_logging(level: LogLevel) {
@@ -437,20 +391,18 @@ mod tests {
             no_profiling_stage_summary: false,
             profiling_log_topk: 8,
         };
-        assert!(matches!(
-            package_source(&model_dir_args).unwrap(),
-            Qwen3TtsPackageSource::ModelDir(_)
-        ));
+        let model_dir_input = to_shared_input(&model_dir_args);
+        assert_eq!(model_dir_input.model_dir, Some(PathBuf::from("model-dir")));
+        assert_eq!(model_dir_input.manifest, None);
 
         let manifest_args = SharedSynthesizeArgs {
             model_dir: None,
             manifest: Some(PathBuf::from("package.yaml")),
             ..model_dir_args
         };
-        assert!(matches!(
-            package_source(&manifest_args).unwrap(),
-            Qwen3TtsPackageSource::ManifestPath(_)
-        ));
+        let manifest_input = to_shared_input(&manifest_args);
+        assert_eq!(manifest_input.model_dir, None);
+        assert_eq!(manifest_input.manifest, Some(PathBuf::from("package.yaml")));
     }
 
     #[test]
@@ -494,65 +446,59 @@ mod tests {
     }
 
     #[test]
-    fn build_base_request_requires_ref_text_for_icl_mode() {
-        let error = build_base_request(&BaseSynthesizeArgs {
-            shared: SharedSynthesizeArgs {
-                model_dir: Some(PathBuf::from("model-dir")),
-                manifest: None,
-                text: "hello".to_string(),
-                language: "auto".to_string(),
-                output: PathBuf::from("out.wav"),
-                backend: None,
-                max_new_tokens: None,
-                sampling: CliSampling::Greedy,
-                profiling: false,
-                profiling_per_step: false,
-                profiling_stage_summary: true,
-                no_profiling_stage_summary: false,
-                profiling_log_topk: 8,
-            },
-            ref_audio: Some(PathBuf::from("clone.wav")),
-            ref_text: None,
-            x_vector_only: false,
-        })
-        .unwrap_err();
+    fn shared_args_conversion_preserves_runtime_knobs() {
+        let shared = SharedSynthesizeArgs {
+            model_dir: Some(PathBuf::from("model-dir")),
+            manifest: None,
+            text: "hello".to_string(),
+            language: "auto".to_string(),
+            output: PathBuf::from("out.wav"),
+            backend: Some(CliBackend::Flex),
+            max_new_tokens: Some(32),
+            sampling: CliSampling::Greedy,
+            profiling: true,
+            profiling_per_step: true,
+            profiling_stage_summary: true,
+            no_profiling_stage_summary: false,
+            profiling_log_topk: 3,
+        };
 
-        assert!(error.to_string().contains("`--ref-text` is required"));
+        let input = to_shared_input(&shared);
+        assert_eq!(input.backend, Some(Qwen3TtsBackend::Flex));
+        assert_eq!(input.max_new_tokens, Some(32));
+        assert_eq!(input.sampling, SamplingConfig::greedy());
+        assert!(input.profiling);
+        assert!(input.profiling_per_step);
+        assert_eq!(input.profiling_log_topk, 3);
     }
 
     #[test]
-    fn build_custom_voice_request_preserves_instruct() {
-        let request = build_custom_voice_request(&CustomVoiceSynthesizeArgs {
-            shared: SharedSynthesizeArgs {
-                model_dir: Some(PathBuf::from("model-dir")),
-                manifest: None,
-                text: "hello".to_string(),
-                language: "Chinese".to_string(),
-                output: PathBuf::from("out.wav"),
-                backend: Some(CliBackend::Flex),
-                max_new_tokens: Some(32),
-                sampling: CliSampling::Greedy,
-                profiling: false,
-                profiling_per_step: false,
-                profiling_stage_summary: true,
-                no_profiling_stage_summary: false,
-                profiling_log_topk: 8,
-            },
-            speaker: "Vivian".to_string(),
-            instruct: Some("用特别愤怒的语气说".to_string()),
-        });
+    fn custom_voice_args_keep_shell_level_fields() {
+        let args = Args::try_parse_from([
+            "tts_cli",
+            "synthesize",
+            "custom-voice",
+            "--model-dir",
+            "model-dir",
+            "--text",
+            "hello",
+            "--speaker",
+            "Vivian",
+            "--instruct",
+            "用特别愤怒的语气说",
+            "--output",
+            "out.wav",
+        ])
+        .expect("custom voice args should parse");
 
-        match request {
-            QwenRequest::CustomVoice(request) => {
-                assert_eq!(request.text, "hello");
-                assert_eq!(
-                    request.language,
-                    LanguageSelection::Named("Chinese".to_string())
-                );
-                assert_eq!(request.speaker.as_deref(), Some("Vivian"));
-                assert_eq!(request.instruct.as_deref(), Some("用特别愤怒的语气说"));
-            }
-            QwenRequest::Base(_) => panic!("expected custom-voice request"),
+        match args.command {
+            Command::Synthesize(command) => match command.profile {
+                ProfileCommand::CustomVoice(custom_voice) => {
+                    assert_eq!(custom_voice.speaker, "Vivian");
+                    assert_eq!(custom_voice.instruct.as_deref(), Some("用特别愤怒的语气说"));
+                }
+                ProfileCommand::Base(_) => panic!("expected custom-voice command"),
+            },
         }
     }
 }

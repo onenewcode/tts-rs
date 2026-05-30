@@ -1,8 +1,8 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
-use crate::compiler::session_seed::SessionSeed;
 use crate::error::QwenTtsInferenceError;
+use crate::execution::compiler::session_seed::SessionSeed;
 use crate::model::graph::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
 use crate::model::graph::engine::components::generator::weights::LoadedQwen3TtsTalker;
 use crate::profiling::record_operator;

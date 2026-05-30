@@ -1,0 +1,21 @@
+[package]
+name = "tts_app"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["flex", "fusion"]
+fusion = ["tts_qwen3_tts/fusion"]
+flex = ["tts_qwen3_tts/flex"]
+wgpu = ["tts_qwen3_tts/wgpu"]
+cuda = ["tts_qwen3_tts/cuda"]
+rocm = ["tts_qwen3_tts/rocm"]
+metal = ["tts_qwen3_tts/metal"]
+vulkan = ["tts_qwen3_tts/vulkan"]
+webgpu = ["tts_qwen3_tts/webgpu"]
+
+[dependencies]
+thiserror = { workspace = true }
+tts_core = { workspace = true }
+tts_error = { workspace = true }
+tts_qwen3_tts = { workspace = true }

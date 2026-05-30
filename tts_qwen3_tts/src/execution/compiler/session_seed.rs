@@ -2,7 +2,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 
 use crate::Qwen3TtsInferenceError;
-use crate::compiler::SemanticRequestCondition;
+use crate::execution::compiler::SemanticRequestCondition;
 use crate::model::graph::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
 use crate::model::graph::engine::components::generator::weights::LoadedQwen3TtsTalker;
 use crate::profiling::record_operator;
@@ -34,7 +34,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
     device: &B::Device,
 ) -> Result<SessionSeed<B>, Qwen3TtsInferenceError> {
     let prepared = match condition.prompt_recipe {
-        crate::compiler::Qwen3TtsPromptRecipe::CustomVoiceInstructed => {
+        crate::execution::compiler::Qwen3TtsPromptRecipe::CustomVoiceInstructed => {
             let instruct_ids = condition.instruct_token_ids.as_deref().ok_or_else(|| {
                 Qwen3TtsInferenceError::InvalidInput {
                     message: "custom-voice instruct recipe requires instruct tokens".to_string(),
@@ -52,7 +52,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
                 )
             })
         }
-        crate::compiler::Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly => {
+        crate::execution::compiler::Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly => {
             let voice_clone = condition.voice_clone.as_ref().ok_or_else(|| {
                 Qwen3TtsInferenceError::InvalidInput {
                     message: "base voice-clone recipe requires compiled voice clone state"
@@ -71,7 +71,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
                 )
             })
         }
-        crate::compiler::Qwen3TtsPromptRecipe::BaseVoiceCloneIcl => {
+        crate::execution::compiler::Qwen3TtsPromptRecipe::BaseVoiceCloneIcl => {
             let voice_clone = condition.voice_clone.as_ref().ok_or_else(|| {
                 Qwen3TtsInferenceError::InvalidInput {
                     message: "base voice-clone ICL recipe requires compiled voice clone state"
@@ -154,7 +154,7 @@ fn build_non_streaming_seed<B: Backend>(
     text_ids: &[i64],
     leading_text_ids: Option<&[i64]>,
     reference_codec_frames: Option<Vec<Vec<i64>>>,
-    controls: &crate::compiler::ProfileControlIds,
+    controls: &crate::execution::compiler::ProfileControlIds,
     hidden_size: usize,
     device: &B::Device,
 ) -> Result<SeedEmbeddings<B>, Qwen3TtsInferenceError> {
@@ -224,8 +224,8 @@ fn build_voice_clone_seed<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     text_ids: &[i64],
     ref_text_token_ids: Option<&[i64]>,
-    voice_clone: &crate::compiler::CompiledVoiceCloneCondition,
-    controls: &crate::compiler::ProfileControlIds,
+    voice_clone: &crate::execution::compiler::CompiledVoiceCloneCondition,
+    controls: &crate::execution::compiler::ProfileControlIds,
     hidden_size: usize,
     device: &B::Device,
 ) -> Result<SeedEmbeddings<B>, Qwen3TtsInferenceError> {
@@ -319,7 +319,7 @@ fn build_voice_clone_seed<B: Backend>(
 fn build_first_text_with_codec_bos<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     body_ids: &[i64],
-    controls: &crate::compiler::ProfileControlIds,
+    controls: &crate::execution::compiler::ProfileControlIds,
     device: &B::Device,
 ) -> Option<Tensor<B, 3>> {
     let first_id = *body_ids.first()?;
@@ -349,7 +349,7 @@ fn build_trailing_text_hidden<B: Backend>(
 
 fn special_text_embeds<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
-    controls: &crate::compiler::ProfileControlIds,
+    controls: &crate::execution::compiler::ProfileControlIds,
     hidden_size: usize,
     device: &B::Device,
 ) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
@@ -371,8 +371,8 @@ fn special_text_embeds<B: Backend>(
 
 fn voice_clone_codec_prefix<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
-    voice_clone: &crate::compiler::CompiledVoiceCloneCondition,
-    controls: &crate::compiler::ProfileControlIds,
+    voice_clone: &crate::execution::compiler::CompiledVoiceCloneCondition,
+    controls: &crate::execution::compiler::ProfileControlIds,
     hidden_size: usize,
     tts_bos_embed: &Tensor<B, 3>,
     tts_pad_embed: &Tensor<B, 3>,

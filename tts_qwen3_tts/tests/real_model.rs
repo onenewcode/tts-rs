@@ -147,7 +147,7 @@ fn smoke_options() -> Qwen3TtsRunOptions {
     Qwen3TtsRunOptions::default()
 }
 
-fn assert_pcm_audio(audio: &tts_infer::PcmAudio) {
+fn assert_pcm_audio(audio: &tts_core::PcmAudio) {
     assert_eq!(audio.sample_rate, 24_000);
     assert_eq!(audio.channels, 1);
     assert!(!audio.pcm_i16.is_empty());

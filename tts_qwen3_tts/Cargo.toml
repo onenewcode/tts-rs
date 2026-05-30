@@ -28,7 +28,8 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
-tts_infer = { path = "../tts_infer" }
+tts_core = { workspace = true }
+tts_error = { workspace = true }
 tracing = { workspace = true }
 hound = "3.5.1"
 rustfft = "6"

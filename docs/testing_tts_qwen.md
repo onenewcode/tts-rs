@@ -4,8 +4,8 @@
 
 Testing must follow the target architecture, not only the current file layout.
 
-The repository has three current crates, but the test strategy should already
-enforce future boundaries:
+The repository now exposes five crates, and the test strategy must reinforce
+the implemented framework boundaries:
 
 - framework-core behavior stays fast and deterministic
 - Qwen3 driver behavior is split between public-surface tests and deeper driver
@@ -19,11 +19,7 @@ enforce future boundaries:
 
 Current location:
 
-- `tts_infer/tests/`
-
-Future location:
-
-- `tts_core/tests/`
+- `tts_infer/tests/` (package `tts_core`)
 
 Must verify:
 
@@ -115,7 +111,7 @@ Should not verify:
 Fast checks:
 
 ```bash
-cargo test -p tts_infer
+cargo test -p tts_core
 cargo test -p tts_qwen3_tts --test public_surface
 cargo test -p tts_qwen3_tts --test compiler_load
 cargo test -p tts_cli --test cli_parse
@@ -123,7 +119,7 @@ cargo test -p tts_cli --test cli_parse
 
 Current repo note:
 
-- `cargo test -p tts_infer` is already passing in the observed repository state
+- `cargo test -p tts_core` is the framework-core fast check in the current repository state
 
 Recommended workspace fast path after refactor:
 

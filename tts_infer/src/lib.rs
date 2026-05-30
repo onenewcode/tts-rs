@@ -1,9 +1,10 @@
 mod audio;
-mod engine;
-mod error;
-mod session;
+mod capabilities;
+pub mod driver;
+mod manager;
+mod result;
 
 pub use audio::PcmAudio;
-pub use engine::{Engine, LoadedModel};
-pub use error::{InferError, ServiceError};
-pub use session::{EngineSession, ModelSession, SessionStep};
+pub use capabilities::{ModelCapabilities, ModelCapabilitiesBuilder};
+pub use manager::{DriverDescriptor, DriverRegistry, LoadedModelHandle, ModelManager, ModelState};
+pub use result::SynthesisResult;

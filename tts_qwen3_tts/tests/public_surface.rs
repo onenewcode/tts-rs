@@ -1,11 +1,14 @@
 use std::fs;
 use std::path::PathBuf;
 
+use tts_core::{DriverRegistry, ModelManager};
+use tts_error::ErrorCategory;
 use tts_qwen3_tts::{
     BaseRequest, BaseVoiceCloneConditioning, CustomVoiceRequest, LanguageSelection,
-    Qwen3TtsBackend, Qwen3TtsGenerationConfigSource, Qwen3TtsPackage, Qwen3TtsPackageSource,
-    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
-    Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingConfig,
+    QWEN3_TTS_DRIVER_ID, Qwen3TtsBackend, Qwen3TtsEngineConfig, Qwen3TtsGenerationConfigSource,
+    Qwen3TtsPackage, Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions,
+    Qwen3TtsVoiceClonePrompt, Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingConfig,
+    register_driver,
 };
 
 #[test]
@@ -167,6 +170,34 @@ fn request_enum_preserves_profile_specific_payloads() {
         }
         QwenRequest::Base(_) => panic!("expected custom voice request"),
     }
+}
+
+#[test]
+fn registered_driver_surfaces_structured_load_diagnostics() {
+    let model_dir = write_model_dir_fixture("driver-load-diagnostic");
+    fs::remove_file(model_dir.join("generation_config.json")).unwrap();
+
+    let mut registry = DriverRegistry::new();
+    register_driver(&mut registry).unwrap();
+    let manager = ModelManager::new(registry);
+
+    let error = manager
+        .load(
+            QWEN3_TTS_DRIVER_ID,
+            Qwen3TtsEngineConfig {
+                package: Qwen3TtsPackageSource::ModelDir(model_dir),
+                backend: Qwen3TtsBackend::Flex,
+                profiling: Qwen3TtsProfilingConfig::default(),
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(error.category(), ErrorCategory::InvalidArgument);
+    assert_eq!(error.code(), "qwen3.load.invalid_model_dir");
+    assert!(
+        error.message().contains("generation_config.json"),
+        "unexpected diagnostic: {error}"
+    );
 }
 
 fn write_model_dir_fixture(label: &str) -> PathBuf {

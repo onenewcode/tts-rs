@@ -147,7 +147,7 @@ implementation trivia.
 At minimum:
 
 ```bash
-cargo test -p tts_infer
+cargo test -p tts_core
 cargo test -p tts_qwen3_tts --test public_surface
 cargo test -p tts_qwen3_tts --test compiler_load
 cargo test -p tts_cli --test cli_parse

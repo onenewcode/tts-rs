@@ -1,9 +1,7 @@
 [package]
-name = "tts_core"
+name = "tts_error"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde_json = { workspace = true }
 thiserror = { workspace = true }
-tts_error = { workspace = true }

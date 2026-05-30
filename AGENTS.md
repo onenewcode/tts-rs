@@ -2,24 +2,25 @@
 
 ## Project Structure & Module Organization
 
-This workspace now has three Rust crates: `tts_infer/` for the session-layer
-inference contract, `tts_qwen3_tts/` for the concrete Qwen3-TTS model runtime,
-and `tts_cli/` for the CLI wrapper. In `tts_qwen3_tts/src/`, request and
-package-facing code lives under `request/`, `compiler/`, `package/`,
-`profiling/`, `runtime/`, and `model/`. `tts_cli/` should remain a thin adapter
-over that API surface. See `docs/architecture.md`, `docs/testing_tts_qwen.md`,
-and `docs/refactor/` for the current target-state notes.
+This workspace now has five Rust crates: `tts_infer/` (package `tts_core`) for
+the framework core, `tts_error/` for shared diagnostics, `tts_qwen3_tts/` for
+the concrete Qwen3-TTS driver, `tts_app/` for application-service orchestration,
+and `tts_cli/` for the CLI shell. In `tts_qwen3_tts/src/`, the target internal
+layers are `surface/`, `loading/`, `capabilities/`, `execution/`, and
+`backend/`; legacy support modules may still exist behind those boundaries while
+the refactor settles. `tts_cli/` should remain a thin adapter over `tts_app`.
+See `docs/architecture.md`, `docs/testing_tts_qwen.md`, and `docs/refactor/`
+for the current target-state notes.
 
 ## Architecture Overview
 
 ```text
 text -> request compiler -> talker/model -> codec tokens -> audio codec -> WAV
                          ^                                              |
-                         +------ tts_infer session/runtime facade ------+
+                         +-------- tts_core loaded-model facade -------+
 ```
 
-Keep `tts_cli/` thin: parse args, choose backend, call the `tts_qwen3_tts`
-facade, and write output.
+Keep `tts_cli/` thin: parse args, call `tts_app`, and report output.
 
 ## Build, Test, and Development Commands
 
@@ -32,17 +33,17 @@ local `Qwen/` assets.
 
 Follow standard Rust style: 4-space indentation, `snake_case` for
 functions/modules, `CamelCase` for types, and small focused modules. Keep
-`tts_infer` limited to stable service-layer concerns, expose high-level model
-behavior through the `tts_qwen3_tts` facade, and prefer explicit
-`thiserror`-based errors.
+`tts_core` limited to stable framework concerns, expose high-level model
+behavior through `tts_app` and the `tts_qwen3_tts` surface, and prefer explicit
+`thiserror`-based errors with shared diagnostics in `tts_error`.
 
 ## Testing Guidelines
 
 Add unit tests next to internal logic and integration tests in the owning crate
 for public behavior. Keep fast checks under `tts_infer/tests/`,
-`tts_qwen3_tts/tests/`, and `tts_cli/tests/`. Keep model-heavy coverage behind
-ignored tests and document required assets or env vars in
-`docs/testing_tts_qwen.md`.
+`tts_app/tests/`, `tts_qwen3_tts/tests/`, and `tts_cli/tests/`. Keep
+model-heavy coverage behind ignored tests and document required assets or env
+vars in `docs/testing_tts_qwen.md`.
 
 ## Commit & Pull Request Guidelines
 

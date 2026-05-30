@@ -20,20 +20,19 @@ leave room for additional model drivers with very different semantics.
 
 ## Current Workspace
 
-Current workspace members:
+Current workspace packages:
 
-- `tts_infer`
+- `tts_core` (directory `tts_infer/`)
+- `tts_error`
 - `tts_qwen3_tts`
+- `tts_app`
 - `tts_cli`
 
 Observed repo state:
 
-- `tts_core/` exists in the repository tree but is not a workspace member
-- `tts_qwen3_tts` currently mixes public API, package normalization, request
-  semantics, request compilation, runtime execution, Burn graph code, codec
-  decode, and profiling
-- `tts_cli` is relatively thin, but still performs request assembly and input
-  validation that should move out of the frontend shell
+- the framework core now lives in package `tts_core`, still rooted at `tts_infer/`
+- `tts_qwen3_tts` still contains substantial model-private internals, but now exposes framework registration and loaded-instance capability projection
+- `tts_cli` is thin and routes orchestration through `tts_app` instead of assembling rich driver requests itself
 
 ## Target Architecture
 
@@ -66,11 +65,9 @@ Target workspace shape:
 - `tts_cli`
   CLI shell
 
-Initial migration note:
+Migration note:
 
-- `tts_infer` is the starting point for the future `tts_core`
-- `tts_core/` in the repo root is treated as a stale directory, not as the
-  source of truth
+- package `tts_core` currently lives in the existing `tts_infer/` directory to keep the repository move bounded while the API contract settles
 
 ## Core Principles
 

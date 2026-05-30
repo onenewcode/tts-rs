@@ -1,7 +1,7 @@
 use burn::tensor::backend::Backend;
 
-use crate::compiler::session_seed::{SessionSeed, materialize_session_seed};
 use crate::error::QwenTtsInferenceError;
+use crate::execution::compiler::session_seed::{SessionSeed, materialize_session_seed};
 use crate::model::graph::engine::components::generator::import::config::Qwen3TtsTalkerConfig;
 use crate::model::graph::engine::components::generator::weights::LoadedQwen3TtsTalker;
 
@@ -31,7 +31,7 @@ pub(crate) struct GeneratorLowering;
 
 impl GeneratorLowering {
     pub(crate) fn lower<B: Backend>(
-        prepared: &crate::compiler::SemanticRequestCondition,
+        prepared: &crate::execution::compiler::SemanticRequestCondition,
         talker_config: &Qwen3TtsTalkerConfig,
         talker: &LoadedQwen3TtsTalker<B>,
         device: &B::Device,

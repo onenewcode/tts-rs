@@ -1,6 +1,6 @@
 // SnakeBeta activation and LayerScale — shared by talker and audio codec.
 use burn::module::{Module, Param};
-use burn::tensor::{DType, Tensor, backend::Backend};
+use burn::tensor::{Tensor, backend::Backend};
 
 #[derive(Module, Debug)]
 pub struct AudioCodecSnakeBeta<B: Backend> {
@@ -25,25 +25,13 @@ impl<B: Backend> AudioCodecSnakeBeta<B> {
         let [_, d1, _] = x.dims();
         let (alpha, beta) = if d1 == n_param {
             (
-                self.alpha
-                    .val()
-                    .exp()
-                    .reshape([1, n_param, 1]),
-                self.beta
-                    .val()
-                    .exp()
-                    .reshape([1, n_param, 1]),
+                self.alpha.val().exp().reshape([1, n_param, 1]),
+                self.beta.val().exp().reshape([1, n_param, 1]),
             )
         } else {
             (
-                self.alpha
-                    .val()
-                    .exp()
-                    .reshape([1, 1, n_param]),
-                self.beta
-                    .val()
-                    .exp()
-                    .reshape([1, 1, n_param]),
+                self.alpha.val().exp().reshape([1, 1, n_param]),
+                self.beta.val().exp().reshape([1, 1, n_param]),
             )
         };
         let sin_sq = (x.clone().mul(alpha)).sin().powf_scalar(2.0);

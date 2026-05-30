@@ -58,7 +58,7 @@ where
             final_mask,
             cache,
         );
-        let logits= self.codec_head.forward(hidden_states.clone()) ;
+        let logits = self.codec_head.forward(hidden_states.clone());
         (hidden_states, logits)
     }
 }
@@ -75,7 +75,7 @@ impl<B> Qwen3TtsTalkerModel<B>
 where
     B: Backend,
 {
-     /// TODO 这里应该明确为forward 
+    /// TODO 这里应该明确为forward
     #[allow(clippy::too_many_arguments)]
     pub fn run_layers(
         &self,
