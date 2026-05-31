@@ -69,24 +69,20 @@ Must verify:
 - capability aggregation rules
 - backend availability logic
 
-### 4. Real-model ignored smoke tests
+### 4. CLI end-to-end smoke verification
 
 Current location:
 
-- `tts_qwen3_tts/tests/real_model.rs`
-- `tts_qwen3_tts/tests/cuda_real_model.rs`
+- CLI runtime against local `Qwen/` assets
 
 Must verify:
 
-- custom-voice synthesis
-- instructed synthesis
-- base voice-clone synthesis
-- x-vector-only voice-clone synthesis
+- custom-voice synthesis from the CLI shell
+- optional base-model synthesis paths when the shell needs them
 
 Rules:
 
-- keep these tests `#[ignore]`
-- do not require them in default CI-style fast checks
+- do not require these runs in default CI-style fast checks
 - document local asset assumptions explicitly
 
 ### 5. CLI shell tests
@@ -122,22 +118,16 @@ Current repo note:
 
 - `cargo test -p tts_core` is the framework-core fast check in the current repository state
 
-Recommended workspace fast path after refactor:
+CLI end-to-end smoke path:
 
 ```bash
-cargo test --workspace -- --skip real_model
-```
-
-Model-backed smoke path:
-
-```bash
-cargo test -p tts_qwen3_tts --test real_model -- --ignored --nocapture
-```
-
-CUDA smoke path:
-
-```bash
-cargo test -p tts_qwen3_tts --no-default-features --features cuda --test cuda_real_model cuda_custom_voice_smoke_generates_pcm_audio -- --ignored --exact
+cargo run --release -p tts_cli -- synthesize custom-voice \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice \
+  --text "你好，欢迎使用 tts-rs。" \
+  --language Chinese \
+  --speaker Vivian \
+  --backend flex \
+  --output ./out/custom-voice-flex-smoke.wav
 ```
 
 CUDA CLI verification:
@@ -167,7 +157,7 @@ The stable workaround is:
 - do greedy token selection on host from those hidden states
 - rebuild fresh device-side integer token tensors for subsequent GPU stages
 
-Keep the CUDA smoke test above passing before changing this generation path.
+Keep the CUDA CLI check above passing before changing this generation path.
 
 ## Local Asset Assumptions
 
@@ -176,8 +166,8 @@ Current repo-local model directories include:
 - `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
 - `Qwen/Qwen3-TTS-12Hz-0___6B-CustomVoice`
 
-Real-model smoke tests must tolerate absent local assets by returning early,
-but documentation should state the expected paths and required files.
+CLI smoke verification assumes those paths exist locally and point at complete
+runtime assets.
 
 ## Test Ownership Rules
 

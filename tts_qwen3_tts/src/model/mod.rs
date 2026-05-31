@@ -7,7 +7,7 @@ use crate::execution::compiler::session_seed::{materialize_session_seed, Session
 use crate::execution::compiler::Qwen3TtsRequestCompiler;
 use crate::execution::run::LoadedModel;
 use crate::execution::session::{ModelSession, SessionStep};
-use crate::model::codec::loading::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
+use crate::model::codec::loading::{load_qwen3_tts_audio_codec, LoadedQwen3TtsAudioCodec};
 use crate::model::codec::runtime::{decode_waveform, lift_waveform, waveform_to_pcm};
 use crate::model::talker::infer::TalkerGenerator;
 use crate::model::talker::sampling::SamplingConfig as RuntimeSamplingConfig;
@@ -19,6 +19,7 @@ use crate::{
 };
 
 pub(crate) mod codec;
+pub(crate) mod nn;
 mod runtime;
 pub(crate) mod speaker;
 pub(crate) mod talker;
@@ -100,35 +101,14 @@ where
         let generated = run.finalize()?;
         let waveform = if let Some(reference_codec_frames) = reference_codec_frames {
             let [batch_size, num_quantizers, time_steps] = generated.codec_token_ids.dims();
-            let generated_tokens = generated
-                .codec_token_ids
-                .try_into_data()
-                .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                    message: format!("failed to read generated codec tokens: {source}"),
-                })?
-                .convert::<i32>()
-                .into_vec::<i32>()
-                .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                    message: format!("failed to read generated codec tokens: {source}"),
-                })?;
-
-            let mut combined =
-                Vec::with_capacity(num_quantizers * (time_steps + reference_codec_frames.len()));
-            for group_idx in 0..num_quantizers {
-                combined.extend(
-                    reference_codec_frames
-                        .iter()
-                        .map(|frame| frame[group_idx] as i32),
-                );
-                let group_offset = group_idx * time_steps;
-                combined
-                    .extend_from_slice(&generated_tokens[group_offset..group_offset + time_steps]);
-            }
-            let combined_steps = time_steps + reference_codec_frames.len();
-            let codec_ids = Tensor::<B, 3, Int>::from_data(
-                TensorData::new(combined, [batch_size, num_quantizers, combined_steps]),
+            let reference_prefix = reference_codec_prefix_tensor::<B>(
+                reference_codec_frames,
+                batch_size,
+                num_quantizers,
                 &self.device,
-            );
+            )?;
+            let combined_steps = time_steps + reference_codec_frames.len();
+            let codec_ids = Tensor::cat(vec![reference_prefix, generated.codec_token_ids], 2);
             let mut waveform = decode_waveform(&self.decoder, codec_ids)?;
             let total_samples = waveform.dims()[2];
             let cut_samples = reference_codec_frames.len() * total_samples / combined_steps.max(1);
@@ -363,5 +343,74 @@ fn map_sampling(sampling: &crate::SamplingConfig) -> RuntimeSamplingConfig {
         top_k: sampling.top_k,
         top_p: sampling.top_p,
         repetition_penalty: sampling.repetition_penalty,
+    }
+}
+
+fn reference_codec_prefix_tensor<B: Backend>(
+    reference_codec_frames: &[Vec<i64>],
+    batch_size: usize,
+    num_quantizers: usize,
+    device: &B::Device,
+) -> Result<Tensor<B, 3, Int>, Qwen3TtsInferenceError> {
+    if batch_size != 1 {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!("reference codec prefix only supports batch_size=1, got {batch_size}"),
+        });
+    }
+
+    let flat = flatten_reference_codec_frames(reference_codec_frames, num_quantizers)?;
+    Ok(Tensor::<B, 3, Int>::from_data(
+        TensorData::new(
+            flat,
+            [batch_size, num_quantizers, reference_codec_frames.len()],
+        ),
+        device,
+    ))
+}
+
+fn flatten_reference_codec_frames(
+    reference_codec_frames: &[Vec<i64>],
+    num_quantizers: usize,
+) -> Result<Vec<i32>, Qwen3TtsInferenceError> {
+    let mut flat = Vec::with_capacity(num_quantizers * reference_codec_frames.len());
+    for group_idx in 0..num_quantizers {
+        for (frame_idx, frame) in reference_codec_frames.iter().enumerate() {
+            let value = frame
+                .get(group_idx)
+                .copied()
+                .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "reference codec frame {frame_idx} has {} quantizers, expected at least {num_quantizers}",
+                        frame.len()
+                    ),
+                })?;
+            flat.push(i32::try_from(value).map_err(|_| Qwen3TtsInferenceError::InvalidInput {
+                message: format!(
+                    "reference codec token {value} at frame {frame_idx}, quantizer {group_idx} does not fit i32"
+                ),
+            })?);
+        }
+    }
+    Ok(flat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flatten_reference_codec_frames;
+
+    #[test]
+    fn flatten_reference_codec_frames_uses_quantizer_major_layout() {
+        let frames = vec![vec![10, 20, 30], vec![11, 21, 31]];
+        let flat = flatten_reference_codec_frames(&frames, 3).expect("frames should flatten");
+        assert_eq!(flat, vec![10, 11, 20, 21, 30, 31]);
+    }
+
+    #[test]
+    fn flatten_reference_codec_frames_rejects_short_frame() {
+        let frames = vec![vec![10, 20], vec![11, 21, 31]];
+        let error =
+            flatten_reference_codec_frames(&frames, 3).expect_err("short frame should be rejected");
+        let message = error.to_string();
+        assert!(message.contains("reference codec frame 0"));
     }
 }

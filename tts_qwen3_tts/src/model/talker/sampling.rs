@@ -5,7 +5,10 @@
 
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor, TensorData};
+use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor};
+
+use crate::model::nn::mask::suppress_token_mask;
+use crate::model::nn::sequence::select_last_sequence_step;
 
 #[derive(Debug, Clone)]
 pub struct SamplingConfig {
@@ -75,16 +78,11 @@ fn prepare_last_step_logits<B: Backend>(
     } else {
         logits
     };
-    let device = logits.device();
     let [_batch_size, seq_len, _feature_size] = logits.dims();
     let logits_2d = if seq_len == 1 {
         logits
     } else {
-        let last_step = Tensor::<B, 1, Int>::from_data(
-            TensorData::new(vec![i32::try_from(seq_len - 1).unwrap()], [1]),
-            &device,
-        );
-        logits.select(1, last_step)
+        select_last_sequence_step(logits)
     }
     .reshape([batch_size, vocab_size]);
     apply_suppress_mask(logits_2d, suppress_token_ids)
@@ -100,19 +98,13 @@ fn apply_suppress_mask<B: Backend>(
 
     let [batch_size, vocab_size] = logits.dims();
     let device = logits.device();
-    let mut mask_data = vec![false; batch_size * vocab_size];
-    for batch in 0..batch_size {
-        for &id in suppress_token_ids {
-            if id < vocab_size {
-                mask_data[batch * vocab_size + id] = true;
-            }
-        }
+    if let Some(suppress_mask) =
+        suppress_token_mask::<B>(batch_size, vocab_size, suppress_token_ids, &device)
+    {
+        logits.mask_fill(suppress_mask, f32::NEG_INFINITY)
+    } else {
+        logits
     }
-    let suppress_mask = Tensor::<B, 2, Bool>::from_data(
-        TensorData::new(mask_data, [batch_size, vocab_size]),
-        &device,
-    );
-    logits.mask_fill(suppress_mask, f32::NEG_INFINITY)
 }
 
 pub fn apply_repetition_penalty<B: Backend>(

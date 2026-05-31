@@ -6,6 +6,7 @@ use burn::tensor::DType;
 use burn::tensor::{Bool, Tensor};
 
 use super::kv::KeyValueCache;
+use crate::model::nn::attention::repeat_kv_heads;
 
 pub enum AttentionPosition<B: Backend> {
     Standard {
@@ -97,8 +98,8 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         mask: Option<Tensor<B, 4, Bool>>,
     ) -> Tensor<B, 3> {
         let n_rep = num_heads / num_kv_heads;
-        let k = repeat_kv(k, n_rep);
-        let v = repeat_kv(v, n_rep);
+        let k = repeat_kv_heads(k, n_rep);
+        let v = repeat_kv_heads(v, n_rep);
 
         let dtype = q.dtype();
         let scaling = (head_dim as f32).sqrt().recip();
@@ -124,19 +125,6 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);
         self.o_proj.forward(attn_output)
     }
-}
-
-fn repeat_kv<B: Backend>(x: Tensor<B, 4>, n_rep: usize) -> Tensor<B, 4> {
-    if n_rep == 1 {
-        return x;
-    }
-    let [batch_size, num_kv_heads, seq_len, head_dim] = x.dims();
-    x.unsqueeze_dim::<5>(2).repeat_dim(2, n_rep).reshape([
-        batch_size,
-        num_kv_heads * n_rep,
-        seq_len,
-        head_dim,
-    ])
 }
 
 fn rotate_half<B: Backend>(x: Tensor<B, 4>) -> Tensor<B, 4> {

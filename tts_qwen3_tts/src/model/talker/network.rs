@@ -1,5 +1,4 @@
 use burn::module::Module;
-use burn::nn::attention::generate_autoregressive_mask;
 use burn::nn::{Embedding, Linear, RmsNorm};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
@@ -9,6 +8,7 @@ use super::kv::KeyValueCache;
 use super::layer::Qwen3TtsDecoderLayer;
 use super::mlp::Qwen3TtsTalkerResizeMlp;
 use super::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
+use crate::model::nn::attention::autoregressive_attention_mask;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsTalkerModelBundle<B: Backend> {
@@ -57,7 +57,11 @@ where
         let [batch_size, seq_len, hidden_size] = hidden_states.dims();
         let logits = self
             .codec_head
-            .forward(hidden_states.clone().reshape([batch_size * seq_len, hidden_size]))
+            .forward(
+                hidden_states
+                    .clone()
+                    .reshape([batch_size * seq_len, hidden_size]),
+            )
             .reshape([batch_size, seq_len, self.codec_head.weight.dims()[1]]);
         (hidden_states, logits)
     }
@@ -232,9 +236,8 @@ pub(crate) fn build_attention_mask<B: Backend>(
         has_causal_mask = query_len == key_len,
         "building attention mask"
     );
-    let causal_mask = (query_len == key_len).then(|| {
-        generate_autoregressive_mask::<B>(batch_size, query_len, device).unsqueeze_dim::<4>(1)
-    });
+    let causal_mask = (query_len == key_len)
+        .then(|| autoregressive_attention_mask::<B>(batch_size, query_len, device));
 
     let padding_mask =
         padding_mask.map(|mask| mask.equal_elem(0).unsqueeze::<4>().repeat_dim(2, query_len));

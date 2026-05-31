@@ -1,10 +1,12 @@
+use burn::prelude::ElementConversion;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor, TensorData};
+use burn::tensor::{Int, Tensor};
 
 use super::kv::KeyValueCache;
 use super::sampling::{apply_repetition_penalty, sample_token, SamplingConfig};
 use crate::error::QwenTtsInferenceError;
 use crate::execution::compiler::session_seed::SessionSeed;
+use crate::model::nn::sequence::select_last_sequence_step;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
 use crate::model::talker::network::build_attention_mask;
 use crate::model::talker::weights::LoadedQwen3TtsTalker;
@@ -223,39 +225,17 @@ fn selected_token_is_eos<B: Backend>(
         .equal_elem(id as i64)
         .float()
         .reshape([1])
-        .try_into_data()
+        .try_into_scalar()
         .map_err(|source| QwenTtsInferenceError::TensorRead {
             message: format!("talker.selected_token_is_eos: {source}"),
         })?
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .map_err(|source| QwenTtsInferenceError::TensorRead {
-            message: format!("talker.selected_token_is_eos: {source}"),
-        })?
-        .into_iter()
-        .next()
-        .ok_or_else(|| QwenTtsInferenceError::TensorRead {
-            message: "talker.selected_token_is_eos: empty token tensor".to_string(),
-        })?;
+        .elem::<f32>();
     Ok(is_eos > 0.5)
 }
 
 pub(crate) fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {
     let [batch_size, _, hidden_size] = hidden.dims();
-    last_hidden_step_3d(hidden).reshape([batch_size, hidden_size])
-}
-
-fn last_hidden_step_3d<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-    let [_batch_size, seq_len, _hidden_size] = hidden.dims();
-    if seq_len == 1 {
-        return hidden;
-    }
-    let device = hidden.device();
-    let last_step = Tensor::<B, 1, Int>::from_data(
-        TensorData::new(vec![i32::try_from(seq_len - 1).unwrap()], [1]),
-        &device,
-    );
-    hidden.select(1, last_step)
+    select_last_sequence_step(hidden).reshape([batch_size, hidden_size])
 }
 
 pub(crate) fn add_trailing_text_embed<B: Backend>(

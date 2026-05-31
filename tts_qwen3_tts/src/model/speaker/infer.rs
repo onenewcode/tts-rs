@@ -17,7 +17,10 @@ where
             .forward(mel.unsqueeze_dim::<3>(0).cast(self.encoder.dtype()));
         embed
             .reshape([self.encoder.enc_dim])
-            .into_data()
+            .try_into_data()
+            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+                message: format!("failed to read speaker embedding: {source}"),
+            })?
             .convert::<f32>()
             .into_vec::<f32>()
             .map_err(|source| Qwen3TtsInferenceError::TensorRead {
