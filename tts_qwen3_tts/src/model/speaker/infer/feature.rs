@@ -1,7 +1,6 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
-use num_complex::Complex;
-use rustfft::{FftPlanner, num_complex::Complex as FftComplex};
+use rustfft::{FftPlanner, num_complex::Complex};
 
 #[derive(Debug, Clone)]
 pub(crate) struct MelSpectrogram {
@@ -103,14 +102,14 @@ impl MelSpectrogram {
 
         for frame_idx in 0..n_frames {
             let start = frame_idx * hop_length;
-            let mut buffer: Vec<FftComplex<f32>> = (0..n_fft)
+            let mut buffer: Vec<Complex<f32>> = (0..n_fft)
                 .map(|offset| {
                     let sample = if offset < self.window.len() && start + offset < padded.len() {
                         padded[start + offset] * self.window[offset]
                     } else {
                         0.0
                     };
-                    FftComplex::new(sample, 0.0)
+                    Complex::new(sample, 0.0)
                 })
                 .collect();
             fft.process(&mut buffer);
@@ -118,7 +117,7 @@ impl MelSpectrogram {
                 buffer
                     .iter()
                     .take(n_fft / 2 + 1)
-                    .map(|value| Complex::new(value.re, value.im))
+                    .copied()
                     .collect(),
             );
         }

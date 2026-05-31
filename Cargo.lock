@@ -5792,7 +5792,6 @@ dependencies = [
  "burn",
  "burn-store",
  "hound",
- "num-complex",
  "rustfft",
  "serde",
  "serde_json",
