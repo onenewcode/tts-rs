@@ -7,7 +7,6 @@ use burn::tensor::{Bool, Int, Tensor};
 use super::attention::AttentionPosition;
 use super::kv::KeyValueCache;
 use super::layer::Qwen3TtsDecoderLayer;
-use super::mlp::native_linear_3d;
 use super::mlp::Qwen3TtsTalkerResizeMlp;
 use super::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
 
@@ -55,7 +54,11 @@ where
             final_mask,
             cache,
         );
-        let logits = self.codec_head.forward(hidden_states.clone());
+        let [batch_size, seq_len, hidden_size] = hidden_states.dims();
+        let logits = self
+            .codec_head
+            .forward(hidden_states.clone().reshape([batch_size * seq_len, hidden_size]))
+            .reshape([batch_size, seq_len, self.codec_head.weight.dims()[1]]);
         (hidden_states, logits)
     }
 }
@@ -101,7 +104,6 @@ where
                 c,
             );
         }
-
         self.norm.forward(x)
     }
 }
@@ -134,14 +136,10 @@ where
         let final_mask = build_attention_mask(batch_size, seq_len, key_len, mask, &device);
 
         let x = if let Some(projection) = &self.small_to_mtp_projection {
-            native_linear_3d(
-                projection,
-                inputs_embeds.cast(projection.weight.val().dtype()),
-            )
+            projection.forward(inputs_embeds)
         } else {
             inputs_embeds
         };
-        let x = x.cast(self.model.layers[0].self_attn.q_proj.weight.val().dtype());
 
         let hidden_states = self.model.forward(
             x,

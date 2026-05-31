@@ -6,7 +6,6 @@ use burn::tensor::{Bool, Tensor};
 use super::attention::{AttentionPosition, Qwen3TtsAttention};
 use super::kv::KeyValueCache;
 use super::mlp::Qwen3TtsTextMlp;
-use crate::execution::profiling::record_operator;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsDecoderLayer<B: Backend> {
@@ -40,6 +39,7 @@ where
 
         let residual = x.clone();
         let x = self.post_attention_layernorm.forward(x);
-        residual + record_operator("layer.mlp", || self.mlp.forward(x))
+        let mlp_out = self.mlp.forward(x);
+        residual + mlp_out
     }
 }

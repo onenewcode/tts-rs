@@ -12,7 +12,7 @@ use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 use crate::model::codec::config::{
     Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecDecoderConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
-use crate::model::codec::core::{
+use crate::model::codec::model::{
     Qwen3TtsAudioCodec, Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecDecoder,
     Qwen3TtsAudioCodecDecoderAttention, Qwen3TtsAudioCodecDecoderCodebook,
     Qwen3TtsAudioCodecDecoderMlp, Qwen3TtsAudioCodecDecoderQuantizer,
@@ -22,7 +22,7 @@ use crate::model::codec::core::{
     Qwen3TtsAudioCodecWaveDecoderConvEntry, Qwen3TtsAudioCodecWaveDecoderEntry,
     Qwen3TtsAudioCodecWaveDecoderResidualUnit, Qwen3TtsAudioCodecWaveDecoderUpsampleStage,
 };
-use crate::model::codec::core::{
+use crate::model::codec::model::{
     Qwen3TtsAudioCodecEncoder, Qwen3TtsAudioCodecEncoderActivation,
     Qwen3TtsAudioCodecEncoderAttention, Qwen3TtsAudioCodecEncoderBackbone,
     Qwen3TtsAudioCodecEncoderBackboneLayer, Qwen3TtsAudioCodecEncoderCodebook,

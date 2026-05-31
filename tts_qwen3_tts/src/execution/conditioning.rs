@@ -1,8 +1,8 @@
 use burn::tensor::backend::Backend;
 
 use crate::execution::reference_audio::load_reference_audio;
-use crate::model::codec::encode::encode_reference_codec_frames;
-use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
+use crate::model::codec::loading::LoadedQwen3TtsAudioCodec;
+use crate::model::codec::runtime::encode_reference_codec_frames;
 use crate::model::speaker::LoadedQwen3TtsSpeakerEncoder;
 use crate::{
     BaseVoiceCloneReferenceAudio, Qwen3TtsInferenceError, Qwen3TtsVoiceClonePrompt,

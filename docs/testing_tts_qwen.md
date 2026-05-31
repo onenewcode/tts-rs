@@ -74,6 +74,7 @@ Must verify:
 Current location:
 
 - `tts_qwen3_tts/tests/real_model.rs`
+- `tts_qwen3_tts/tests/cuda_real_model.rs`
 
 Must verify:
 
@@ -133,6 +134,41 @@ Model-backed smoke path:
 cargo test -p tts_qwen3_tts --test real_model -- --ignored --nocapture
 ```
 
+CUDA smoke path:
+
+```bash
+cargo test -p tts_qwen3_tts --no-default-features --features cuda --test cuda_real_model cuda_custom_voice_smoke_generates_pcm_audio -- --ignored --exact
+```
+
+CUDA CLI verification:
+
+```bash
+cargo run --release -p tts_cli --no-default-features --features cuda -- synthesize custom-voice \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "你好，欢迎使用 tts-rs。" \
+  --language Chinese \
+  --speaker Vivian \
+  --backend cuda \
+  --output ./out/custom-voice-cuda-zh.wav
+```
+
+## CUDA Backend Note
+
+The current CUDA path must avoid running the talker `codec_head` and
+code-predictor `lm_head` directly on CUDA during greedy generation. That path
+can leave the Burn/CubeCL CUDA runtime in an invalid launch state for this
+model shape.
+
+The stable workaround is:
+
+- run the talker and code predictor up to readable hidden states
+- synchronize those hidden states to host immediately inside the helper that
+  produces them
+- do greedy token selection on host from those hidden states
+- rebuild fresh device-side integer token tensors for subsequent GPU stages
+
+Keep the CUDA smoke test above passing before changing this generation path.
+
 ## Local Asset Assumptions
 
 Current repo-local model directories include:
@@ -182,4 +218,3 @@ The testing document is acceptable only if it defines:
 - where capability tests belong
 - what the default verification command set is
 - what must not remain inside CLI tests
-

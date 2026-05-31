@@ -1,12 +1,10 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, Int, Tensor};
+use burn::tensor::{Int, Tensor, TensorData};
 
 use super::kv::KeyValueCache;
-use super::mlp::native_linear_3d;
 use super::sampling::{apply_repetition_penalty, sample_token, SamplingConfig};
 use crate::error::QwenTtsInferenceError;
 use crate::execution::compiler::session_seed::SessionSeed;
-use crate::execution::profiling::record_operator;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
 use crate::model::talker::network::build_attention_mask;
 use crate::model::talker::weights::LoadedQwen3TtsTalker;
@@ -17,7 +15,7 @@ pub struct TalkerGenerator<B: Backend> {
     decode_cache: Vec<KeyValueCache<B>>,
     current_hidden: Tensor<B, 2>,
     selected_token: Tensor<B, 2, Int>,
-    eos_mask: Tensor<B, 1, Bool>,
+    eos_seen: bool,
     talker_tokens: Vec<Tensor<B, 2, Int>>,
     codec_steps: Vec<Tensor<B, 3, Int>>,
     trailing_text_hidden: Option<Tensor<B, 3>>,
@@ -84,41 +82,26 @@ where
             layer_cache.reset();
         }
 
-        let prefill = record_operator("talker.prefill", || {
-            prefill(
-                config,
-                loaded,
-                compiled.inputs_embeds.clone(),
-                compiled.position_ids.clone(),
-                Some(compiled.attention_mask.clone()),
-                &mut decode_cache,
-            )
-        })?;
-        let device = compiled.inputs_embeds.device();
-        let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
-        let prefill_logits = record_operator("talker.prefill_repetition_penalty", || {
-            apply_repetition_penalty(
-                prefill.logits.clone(),
-                &empty_history,
-                sampling.repetition_penalty,
-            )
-        });
-        let (selected_token, eos_mask) = record_operator("talker.prefill_sample", || {
-            sample_token::<B>(
-                prefill_logits,
-                &sampling,
-                eos_token_id,
-                &suppress_token_ids,
-                &device,
-            )
-        });
+        let prefill = prefill(
+            config,
+            loaded,
+            compiled.inputs_embeds.clone(),
+            compiled.position_ids.clone(),
+            Some(compiled.attention_mask.clone()),
+            &mut decode_cache,
+        )?;
+        let current_hidden = last_hidden_step(prefill.last_hidden_state.clone());
+        // Repetition penalty only applies once we have generated history.
+        let penalized_logits = prefill.logits.clone();
+        let selected_token = sample_token::<B>(penalized_logits, &sampling, &suppress_token_ids);
+        let eos_seen = selected_token_is_eos(&selected_token, eos_token_id)?;
 
         Ok(Self {
             config: config.clone(),
             decode_cache,
-            current_hidden: last_hidden_step(prefill.last_hidden_state),
+            current_hidden,
             selected_token: selected_token.clone(),
-            eos_mask,
+            eos_seen,
             talker_tokens: vec![selected_token],
             codec_steps: Vec::new(),
             trailing_text_hidden: Some(compiled.trailing_text_hidden.clone()),
@@ -139,7 +122,7 @@ where
         if self.finished {
             return Ok(None);
         }
-        if batch_finished(&self.eos_mask) {
+        if self.eos_seen {
             if self.codec_steps.is_empty() {
                 return Err(QwenTtsInferenceError::InvalidInput {
                     message: "talker emitted EOS before any audio codec token".to_string(),
@@ -159,16 +142,14 @@ where
                 )
             })
             .collect::<Vec<_>>();
-        let codec_ids = record_operator("talker.predictor_step", || {
-            generate_code_predictor_groups(
-                &self.config,
-                loaded,
-                self.current_hidden.clone(),
-                self.selected_token.clone(),
-                &self.sampling,
-                &mut predictor_cache,
-            )
-        })?;
+        let codec_ids = generate_code_predictor_groups(
+            &self.config,
+            loaded,
+            self.current_hidden.clone(),
+            self.selected_token.clone(),
+            &self.sampling,
+            &mut predictor_cache,
+        )?;
         self.codec_steps.push(
             codec_ids
                 .clone()
@@ -193,43 +174,29 @@ where
         );
         let device = inputs_embeds.device();
         let position_ids = Tensor::<B, 3, Int>::full([3, 1, 1], cache_len as i32, &device);
-        let decoded = record_operator("talker.decode_step", || {
-            decode_step(
-                &self.config,
-                loaded,
-                inputs_embeds,
-                position_ids,
-                &mut self.decode_cache,
-            )
-        })?;
         let past_ids = Tensor::cat(self.talker_tokens.clone(), 1);
-        let penalized_logits = record_operator("talker.decode_repetition_penalty", || {
-            apply_repetition_penalty(decoded.logits, &past_ids, self.sampling.repetition_penalty)
-        });
-        let (next_token, next_eos) = record_operator("talker.decode_sample", || {
-            sample_token::<B>(
-                penalized_logits,
-                &self.sampling,
-                self.eos_token_id,
-                &self.suppress_token_ids,
-                &device,
-            )
-        });
+        let decoded = decode_step(
+            &self.config,
+            loaded,
+            inputs_embeds,
+            position_ids,
+            &mut self.decode_cache,
+        )?;
+        let penalized_logits =
+            apply_repetition_penalty(decoded.logits, &past_ids, self.sampling.repetition_penalty);
+        let next_token =
+            sample_token::<B>(penalized_logits, &self.sampling, &self.suppress_token_ids);
         self.selected_token = next_token.clone();
-        self.eos_mask = self.eos_mask.clone().bool_or(next_eos);
+        self.eos_seen = self.eos_seen || selected_token_is_eos(&next_token, self.eos_token_id)?;
         self.talker_tokens.push(next_token);
         self.current_hidden = last_hidden_step(decoded.last_hidden_state);
-        if batch_finished(&self.eos_mask) {
+        if self.eos_seen {
             self.finished = true;
         }
         Ok(Some(TalkerStep {
             finished: self.finished,
             _codec_ids: codec_ids,
         }))
-    }
-
-    pub fn step_idx(&self) -> usize {
-        self.step_idx
     }
 
     pub fn finalize(&self) -> Result<TalkerGenerationOutput<B>, QwenTtsInferenceError> {
@@ -244,21 +211,51 @@ where
     }
 }
 
-pub(crate) fn batch_finished<B: Backend>(eos_mask: &Tensor<B, 1, Bool>) -> bool {
-    eos_mask
+fn selected_token_is_eos<B: Backend>(
+    selected_token: &Tensor<B, 2, Int>,
+    eos_token_id: Option<usize>,
+) -> Result<bool, QwenTtsInferenceError> {
+    let Some(id) = eos_token_id else {
+        return Ok(false);
+    };
+    let is_eos = selected_token
         .clone()
-        .all()
-        .into_data()
-        .convert::<bool>()
-        .into_vec::<bool>()
-        .expect("eos mask should be readable")[0]
+        .equal_elem(id as i64)
+        .float()
+        .reshape([1])
+        .try_into_data()
+        .map_err(|source| QwenTtsInferenceError::TensorRead {
+            message: format!("talker.selected_token_is_eos: {source}"),
+        })?
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .map_err(|source| QwenTtsInferenceError::TensorRead {
+            message: format!("talker.selected_token_is_eos: {source}"),
+        })?
+        .into_iter()
+        .next()
+        .ok_or_else(|| QwenTtsInferenceError::TensorRead {
+            message: "talker.selected_token_is_eos: empty token tensor".to_string(),
+        })?;
+    Ok(is_eos > 0.5)
 }
 
 pub(crate) fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {
-    let [batch_size, seq_len, hidden_size] = hidden.dims();
-    hidden
-        .slice([0..batch_size, seq_len - 1..seq_len, 0..hidden_size])
-        .reshape([batch_size, hidden_size])
+    let [batch_size, _, hidden_size] = hidden.dims();
+    last_hidden_step_3d(hidden).reshape([batch_size, hidden_size])
+}
+
+fn last_hidden_step_3d<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 3> {
+    let [_batch_size, seq_len, _hidden_size] = hidden.dims();
+    if seq_len == 1 {
+        return hidden;
+    }
+    let device = hidden.device();
+    let last_step = Tensor::<B, 1, Int>::from_data(
+        TensorData::new(vec![i32::try_from(seq_len - 1).unwrap()], [1]),
+        &device,
+    );
+    hidden.select(1, last_step)
 }
 
 pub(crate) fn add_trailing_text_embed<B: Backend>(
@@ -603,17 +600,12 @@ where
     );
     let prefill_hidden = run_code_predictor_hidden(config, loaded, prefill_inputs, None, cache);
     let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
-    let prefill_logits = native_linear_3d(
-        prefill_head,
+    let prefill_logits = prefill_head.forward(
         prefill_hidden
             .clone()
             .cast(prefill_head.weight.val().dtype()),
     );
-    let device = prefill_logits.device();
-    let empty_history = Tensor::<B, 2, Int>::zeros([batch_size, 0], &device);
-    let prefill_logits =
-        apply_repetition_penalty(prefill_logits, &empty_history, sampling.repetition_penalty);
-    let mut selected_token = sample_token::<B>(prefill_logits, sampling, None, &[], &device).0;
+    let mut selected_token = sample_token::<B>(prefill_logits, sampling, &[]);
     let mut predictor_tokens = vec![selected_token.clone()];
 
     for head_idx in 1..config.num_code_groups - 1 {
@@ -621,10 +613,13 @@ where
             .forward(selected_token);
         let step_hidden = run_code_predictor_hidden(config, loaded, step_inputs, None, cache);
         let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
-        let logits = native_linear_3d(head, step_hidden.clone().cast(head.weight.val().dtype()));
         let past_ids = Tensor::cat(predictor_tokens.clone(), 1);
-        let logits = apply_repetition_penalty(logits, &past_ids, sampling.repetition_penalty);
-        selected_token = sample_token::<B>(logits, sampling, None, &[], &device).0;
+        let logits = apply_repetition_penalty(
+            head.forward(step_hidden.clone().cast(head.weight.val().dtype())),
+            &past_ids,
+            sampling.repetition_penalty,
+        );
+        selected_token = sample_token::<B>(logits, sampling, &[]);
         predictor_tokens.push(selected_token.clone());
     }
 
@@ -647,21 +642,10 @@ where
 {
     let predictor = &loaded.model.talker.code_predictor;
     let projected_inputs = if let Some(projection) = &predictor.small_to_mtp_projection {
-        native_linear_3d(
-            projection,
-            inputs_embeds.cast(projection.weight.val().dtype()),
-        )
+        projection.forward(inputs_embeds)
     } else {
         inputs_embeds
     };
-    let projected_inputs = projected_inputs.cast(
-        predictor.model.layers[0]
-            .self_attn
-            .q_proj
-            .weight
-            .val()
-            .dtype(),
-    );
 
     let [batch_size, seq_len, _] = projected_inputs.dims();
     let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);

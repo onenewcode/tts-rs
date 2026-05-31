@@ -727,7 +727,11 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderCodebook<B> {
     pub fn forward(&self, token_ids: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         let [batch, seq_len] = token_ids.dims();
         let [_codebook_size, embed_dim] = self.embedding_sum.dims();
-        let usage = self.cluster_usage.val().unsqueeze_dim(1);
+        let usage = self
+            .cluster_usage
+            .val()
+            .clamp_min(1e-6)
+            .reshape([self.cluster_usage.dims()[0], 1]);
         let codebook = self.embedding_sum.val().div(usage);
         let gathered = codebook.select(0, token_ids.reshape([batch * seq_len]));
         gathered

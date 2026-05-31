@@ -6,8 +6,6 @@ use burn::tensor::DType;
 use burn::tensor::{Bool, Tensor};
 
 use super::kv::KeyValueCache;
-use super::mlp::native_linear_3d;
-use crate::execution::profiling::record_operator;
 
 pub enum AttentionPosition<B: Backend> {
     Standard {
@@ -43,9 +41,9 @@ impl<B: Backend> Qwen3TtsAttention<B> {
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
 
-        let q = native_linear_3d(&self.q_proj, x.clone());
-        let k = native_linear_3d(&self.k_proj, x.clone());
-        let v = native_linear_3d(&self.v_proj, x);
+        let q = self.q_proj.forward(x.clone());
+        let k = self.k_proj.forward(x.clone());
+        let v = self.v_proj.forward(x);
 
         let q = self
             .q_norm
@@ -62,15 +60,15 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             .swap_dims(1, 2)
             .clone();
 
-        let (q, k) = record_operator("attention.rope", || match position {
+        let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } | AttentionPosition::Mrope { cos, sin } => {
                 let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
                 let k = (k.clone() * cos) + (rotate_half(k) * sin);
                 (q, k)
             }
-        });
+        };
 
-        let (k, v) = record_operator("attention.kv_append", || cache.forward(k, v));
+        let (k, v) = cache.forward(k, v);
 
         self.execute_attention(
             batch_size,
@@ -104,34 +102,27 @@ impl<B: Backend> Qwen3TtsAttention<B> {
 
         let dtype = q.dtype();
         let scaling = (head_dim as f32).sqrt().recip();
-        let attn_scores = record_operator("attention.qk_matmul", || {
-            q.clone()
-                .cast(DType::F32)
-                .matmul(k.clone().cast(DType::F32).swap_dims(2, 3).clone())
-                .mul_scalar(scaling)
-        });
+        let attn_scores = q
+            .clone()
+            .cast(DType::F32)
+            .matmul(k.clone().cast(DType::F32).swap_dims(2, 3).clone())
+            .mul_scalar(scaling);
         let attn_scores = if let Some(mask) = mask {
             attn_scores.mask_fill(mask, f32::NEG_INFINITY)
         } else {
             attn_scores
         };
-        let attn_weights_f32 = record_operator("attention.softmax", || {
-            softmax(attn_scores.cast(DType::F32), 3)
-        });
+        let attn_weights_f32 = softmax(attn_scores.cast(DType::F32), 3);
         let attn_weights = attn_weights_f32.clone().cast(dtype);
-        let attn_output = record_operator("attention.av_matmul", || {
-            attn_weights
-                .clone()
-                .cast(DType::F32)
-                .matmul(v.cast(DType::F32))
-                .cast(dtype)
-        });
+        let attn_output = attn_weights
+            .clone()
+            .cast(DType::F32)
+            .matmul(v.cast(DType::F32))
+            .cast(dtype);
 
         let attn_output = attn_output.swap_dims(1, 2).clone();
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);
-        record_operator("attention.o_proj", || {
-            native_linear_3d(&self.o_proj, attn_output)
-        })
+        self.o_proj.forward(attn_output)
     }
 }
 

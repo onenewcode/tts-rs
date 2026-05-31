@@ -3,9 +3,8 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
 use crate::error::QwenTtsInferenceError;
-use crate::execution::profiling::record_operator;
 use crate::model::codec::config::Qwen3TtsAudioCodecDecoderConfig;
-use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
+use crate::model::codec::loading::LoadedQwen3TtsAudioCodec;
 
 #[derive(Debug, Clone)]
 pub struct Waveform {
@@ -71,16 +70,14 @@ pub fn decode_waveform<B: Backend>(
         .with_theta(config.rope_theta as f32)
         .init(&codec_ids.device());
 
-    Ok(record_operator("codec.decode", || {
-        loaded.model.decoder.forward(
-            codec_ids,
-            config.num_semantic_quantizers,
-            config.num_attention_heads,
-            config.num_key_value_heads,
-            config.head_dim,
-            &rope,
-        )
-    }))
+    Ok(loaded.model.decoder.forward(
+        codec_ids,
+        config.num_semantic_quantizers,
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+        &rope,
+    ))
 }
 
 pub fn lift_waveform<B: Backend>(
@@ -89,7 +86,10 @@ pub fn lift_waveform<B: Backend>(
 ) -> Result<Waveform, QwenTtsInferenceError> {
     let [batch_size, channels, _time_steps] = waveform.dims();
     let samples = waveform
-        .into_data()
+        .try_into_data()
+        .map_err(|source| QwenTtsInferenceError::TensorRead {
+            message: format!("failed to read waveform: {source}"),
+        })?
         .convert::<f32>()
         .into_vec::<f32>()
         .map_err(|source| QwenTtsInferenceError::TensorRead {

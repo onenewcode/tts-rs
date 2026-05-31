@@ -96,7 +96,10 @@ fn load_qwen3_tts_talker_with_adapter<B: Backend, A: ModuleAdapter + 'static>(
         "loaded qwen3 tts talker weights"
     );
 
-    Ok(LoadedQwen3TtsTalker { config, model })
+    Ok(LoadedQwen3TtsTalker {
+        config,
+        model,
+    })
 }
 
 impl Qwen3TtsTalkerConfig {

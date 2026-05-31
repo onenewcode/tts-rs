@@ -5,11 +5,10 @@ use burn::tensor::{Int, Tensor, TensorData};
 
 use crate::execution::compiler::session_seed::{materialize_session_seed, SessionSeed};
 use crate::execution::compiler::Qwen3TtsRequestCompiler;
-use crate::execution::profiling::with_session_context;
 use crate::execution::run::LoadedModel;
 use crate::execution::session::{ModelSession, SessionStep};
-use crate::model::codec::decode::{decode_waveform, lift_waveform, waveform_to_pcm};
-use crate::model::codec::weights::{load_qwen3_tts_audio_codec, LoadedQwen3TtsAudioCodec};
+use crate::model::codec::loading::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
+use crate::model::codec::runtime::{decode_waveform, lift_waveform, waveform_to_pcm};
 use crate::model::talker::infer::TalkerGenerator;
 use crate::model::talker::sampling::SamplingConfig as RuntimeSamplingConfig;
 use crate::model::talker::weights::{load_qwen3_tts_talker_for_inference, LoadedQwen3TtsTalker};
@@ -20,6 +19,7 @@ use crate::{
 };
 
 pub(crate) mod codec;
+mod runtime;
 pub(crate) mod speaker;
 pub(crate) mod talker;
 
@@ -81,16 +81,14 @@ where
         seed: SessionSeed<B>,
         options: Qwen3TtsRunOptions,
     ) -> Result<TalkerGenerator<B>, Qwen3TtsInferenceError> {
-        let codec_eos_token_id = seed.codec_eos_token_id;
-        let suppress_token_ids = seed.suppress_token_ids.clone();
         TalkerGenerator::start(
             &self.talker.config,
             &self.talker,
             &seed,
             map_sampling(&options.sampling),
             options.max_new_tokens.unwrap_or(seed.max_new_tokens),
-            Some(codec_eos_token_id),
-            suppress_token_ids,
+            Some(seed.codec_eos_token_id),
+            seed.suppress_token_ids.clone(),
         )
     }
 
@@ -104,7 +102,10 @@ where
             let [batch_size, num_quantizers, time_steps] = generated.codec_token_ids.dims();
             let generated_tokens = generated
                 .codec_token_ids
-                .into_data()
+                .try_into_data()
+                .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+                    message: format!("failed to read generated codec tokens: {source}"),
+                })?
                 .convert::<i32>()
                 .into_vec::<i32>()
                 .map_err(|source| Qwen3TtsInferenceError::TensorRead {
@@ -245,125 +246,7 @@ impl Qwen3TtsLoadedModel {
         profiling: &Qwen3TtsProfilingConfig,
         compiler: Qwen3TtsRequestCompiler,
     ) -> Result<Self, Qwen3TtsLoadError> {
-        let inner: Arc<dyn LoadedModelOps> = match backend {
-            Qwen3TtsBackend::Flex => {
-                #[cfg(feature = "flex")]
-                {
-                    let device = Default::default();
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::Flex,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "flex"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-            Qwen3TtsBackend::Wgpu => {
-                #[cfg(feature = "wgpu")]
-                {
-                    let device = burn::backend::wgpu::WgpuDevice::default();
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::Wgpu,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "wgpu"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-            Qwen3TtsBackend::Cuda => {
-                #[cfg(feature = "cuda")]
-                {
-                    let device = Default::default();
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::Cuda,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "cuda"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-            Qwen3TtsBackend::Rocm => {
-                #[cfg(feature = "rocm")]
-                {
-                    let device = Default::default();
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::Rocm,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "rocm"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-            Qwen3TtsBackend::Metal => {
-                #[cfg(feature = "metal")]
-                {
-                    let device = burn::backend::wgpu::WgpuDevice::default();
-                    burn::backend::wgpu::init_setup::<burn::backend::wgpu::graphics::Metal>(
-                        &device,
-                        Default::default(),
-                    );
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::Metal,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "metal"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-            Qwen3TtsBackend::Vulkan => {
-                #[cfg(feature = "vulkan")]
-                {
-                    let device = burn::backend::wgpu::WgpuDevice::default();
-                    burn::backend::wgpu::init_setup::<burn::backend::wgpu::graphics::Vulkan>(
-                        &device,
-                        Default::default(),
-                    );
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::Vulkan,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "vulkan"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-            Qwen3TtsBackend::WebGpu => {
-                #[cfg(feature = "webgpu")]
-                {
-                    let device = burn::backend::wgpu::WgpuDevice::default();
-                    burn::backend::wgpu::init_setup::<burn::backend::wgpu::graphics::WebGpu>(
-                        &device,
-                        Default::default(),
-                    );
-                    Arc::new(BackendRuntime::new(Qwen3TtsModelInner::<
-                        burn::backend::WebGpu,
-                    >::load(
-                        package, profiling, compiler, &device,
-                    )?)) as Arc<dyn LoadedModelOps>
-                }
-                #[cfg(not(feature = "webgpu"))]
-                {
-                    return Err(unavailable_backend_error(backend));
-                }
-            }
-        };
+        let inner = runtime::load_backend_runtime(package, backend, profiling, compiler)?;
         Ok(Self { inner })
     }
 
@@ -431,7 +314,6 @@ struct SessionImpl<B: Backend> {
     inner: Arc<Qwen3TtsModelInner<B>>,
     run: TalkerGenerator<B>,
     reference_codec_frames: Option<Vec<Vec<i64>>>,
-    session_id: usize,
 }
 
 impl<B> SessionOps for SessionImpl<B>
@@ -440,10 +322,7 @@ where
     B::Device: Clone + Send + 'static,
 {
     fn step(&mut self) -> Result<SessionStep, Qwen3TtsInferenceError> {
-        let step_idx = self.run.step_idx();
-        let step_result = with_session_context(self.session_id, step_idx, || {
-            self.run.step(&self.inner.talker)
-        })?;
+        let step_result = self.run.step(&self.inner.talker)?;
         match step_result {
             Some(step) if step.finished => Ok(SessionStep::Finished),
             Some(_) => Ok(SessionStep::Advanced),
@@ -474,14 +353,7 @@ where
         inner,
         run,
         reference_codec_frames,
-        session_id: 0,
     })
-}
-
-fn unavailable_backend_error(backend: Qwen3TtsBackend) -> Qwen3TtsLoadError {
-    Qwen3TtsLoadError::UnavailableBackend {
-        backend: backend.label().to_string(),
-    }
 }
 
 fn map_sampling(sampling: &crate::SamplingConfig) -> RuntimeSamplingConfig {

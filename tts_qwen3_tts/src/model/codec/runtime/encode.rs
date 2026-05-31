@@ -2,8 +2,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 
 use crate::Qwen3TtsInferenceError;
-
-use super::weights::LoadedQwen3TtsAudioCodec;
+use crate::model::codec::loading::LoadedQwen3TtsAudioCodec;
 
 pub fn encode_reference_codec_frames<B: Backend>(
     loaded: &LoadedQwen3TtsAudioCodec<B>,

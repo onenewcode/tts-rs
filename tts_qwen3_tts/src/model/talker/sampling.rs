@@ -31,38 +31,13 @@ impl Default for SamplingConfig {
 pub fn sample_token<B: Backend>(
     logits: Tensor<B, 3>,
     sampling: &SamplingConfig,
-    eos_token_id: Option<usize>,
     suppress_token_ids: &[usize],
-    device: &B::Device,
-) -> (Tensor<B, 2, Int>, Tensor<B, 1, Bool>) {
-    let [batch_size, seq_len, vocab_size] = logits.dims();
-    let mut logits_2d = logits
-        .slice([0..batch_size, seq_len - 1..seq_len, 0..vocab_size])
-        .reshape([batch_size, vocab_size]);
-
-    if !suppress_token_ids.is_empty() {
-        let mut mask_data = vec![false; batch_size * vocab_size];
-        for batch in 0..batch_size {
-            for &id in suppress_token_ids {
-                if id < vocab_size {
-                    mask_data[batch * vocab_size + id] = true;
-                }
-            }
-        }
-        let suppress_mask = Tensor::<B, 2, Bool>::from_data(
-            TensorData::new(mask_data, [batch_size, vocab_size]),
-            device,
-        );
-        logits_2d = logits_2d.mask_fill(suppress_mask, f32::NEG_INFINITY);
-    }
+) -> Tensor<B, 2, Int> {
+    let mut logits_2d = prepare_last_step_logits(logits, suppress_token_ids);
+    let [batch_size, vocab_size] = logits_2d.dims();
 
     if !sampling.do_sample {
-        let selected = greedy_argmax_lowest_index(logits_2d, batch_size, vocab_size, device);
-        let eos_mask = match eos_token_id {
-            Some(id) => selected.clone().equal_elem(id as i64).reshape([batch_size]),
-            None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
-        };
-        return (selected, eos_mask);
+        return logits_2d.argmax(1);
     }
 
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
@@ -87,40 +62,57 @@ pub fn sample_token<B: Backend>(
     }
 
     let probs = softmax(logits_2d.clone().cast(DType::F32), 1);
-    let selected = probs.categorical(1);
-
-    let eos_mask = match eos_token_id {
-        Some(id) => selected.clone().equal_elem(id as i64).reshape([batch_size]),
-        None => Tensor::<B, 1, Bool>::zeros([batch_size], device),
-    };
-
-    (selected, eos_mask)
+    probs.categorical(1)
 }
 
-fn greedy_argmax_lowest_index<B: Backend>(
+fn prepare_last_step_logits<B: Backend>(
+    logits: Tensor<B, 3>,
+    suppress_token_ids: &[usize],
+) -> Tensor<B, 2> {
+    let [batch_size, _seq_len, vocab_size] = logits.dims();
+    let logits = if logits.dtype() == DType::BF16 {
+        logits.cast(DType::F32)
+    } else {
+        logits
+    };
+    let device = logits.device();
+    let [_batch_size, seq_len, _feature_size] = logits.dims();
+    let logits_2d = if seq_len == 1 {
+        logits
+    } else {
+        let last_step = Tensor::<B, 1, Int>::from_data(
+            TensorData::new(vec![i32::try_from(seq_len - 1).unwrap()], [1]),
+            &device,
+        );
+        logits.select(1, last_step)
+    }
+    .reshape([batch_size, vocab_size]);
+    apply_suppress_mask(logits_2d, suppress_token_ids)
+}
+
+fn apply_suppress_mask<B: Backend>(
     logits: Tensor<B, 2>,
-    batch_size: usize,
-    vocab_size: usize,
-    device: &B::Device,
-) -> Tensor<B, 2, Int> {
-    let values = logits
-        .into_data()
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .expect("greedy logits should be convertible to f32");
-    let mut selected = Vec::with_capacity(batch_size);
-    for row in values.chunks(vocab_size) {
-        let mut best_id = 0_i32;
-        let mut best_value = f32::NEG_INFINITY;
-        for (id, value) in row.iter().copied().enumerate() {
-            if value > best_value {
-                best_id = id as i32;
-                best_value = value;
+    suppress_token_ids: &[usize],
+) -> Tensor<B, 2> {
+    if suppress_token_ids.is_empty() {
+        return logits;
+    }
+
+    let [batch_size, vocab_size] = logits.dims();
+    let device = logits.device();
+    let mut mask_data = vec![false; batch_size * vocab_size];
+    for batch in 0..batch_size {
+        for &id in suppress_token_ids {
+            if id < vocab_size {
+                mask_data[batch * vocab_size + id] = true;
             }
         }
-        selected.push(best_id);
     }
-    Tensor::<B, 2, Int>::from_data(TensorData::new(selected, [batch_size, 1]), device)
+    let suppress_mask = Tensor::<B, 2, Bool>::from_data(
+        TensorData::new(mask_data, [batch_size, vocab_size]),
+        &device,
+    );
+    logits.mask_fill(suppress_mask, f32::NEG_INFINITY)
 }
 
 pub fn apply_repetition_penalty<B: Backend>(
@@ -145,4 +137,58 @@ pub fn apply_repetition_penalty<B: Backend>(
     let deltas = gathered.mul_scalar(scale);
     let result_2d = logits_2d.scatter(1, past_token_ids.clone(), deltas, IndexingUpdateOp::Add);
     result_2d.reshape([batch_size, seq_len, vocab_size])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_repetition_penalty, sample_token, SamplingConfig};
+    use burn::tensor::{Int, Tensor, TensorData};
+
+    type TestBackend = burn::backend::Flex;
+
+    #[test]
+    fn greedy_sampling_skips_suppressed_tokens() {
+        let device = Default::default();
+        let logits = Tensor::<TestBackend, 3>::from_data(
+            TensorData::new(
+                vec![
+                    0.0_f32, 1.0, 2.0, 3.0, //
+                    0.5, 6.0, 5.0, 1.0,
+                ],
+                [1, 2, 4],
+            ),
+            &device,
+        );
+
+        let token = sample_token(logits, &SamplingConfig::default(), &[1]);
+        let value = token
+            .into_data()
+            .convert::<i64>()
+            .into_vec::<i64>()
+            .expect("sampled token should be readable");
+
+        assert_eq!(value, vec![2]);
+    }
+
+    #[test]
+    fn repetition_penalty_only_changes_seen_tokens() {
+        let device = Default::default();
+        let logits = Tensor::<TestBackend, 3>::from_data(
+            TensorData::new(vec![1.0_f32, 2.0, 3.0, 4.0], [1, 1, 4]),
+            &device,
+        );
+        let past_token_ids = Tensor::<TestBackend, 2, Int>::from_data(
+            TensorData::new(vec![1_i64, 3_i64], [1, 2]),
+            &device,
+        );
+
+        let penalized = apply_repetition_penalty(logits, &past_token_ids, Some(2.0));
+        let values = penalized
+            .into_data()
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .expect("penalized logits should be readable");
+
+        assert_eq!(values, vec![1.0, 1.0, 3.0, 2.0]);
+    }
 }

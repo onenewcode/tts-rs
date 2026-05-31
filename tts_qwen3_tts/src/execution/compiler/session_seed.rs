@@ -2,7 +2,6 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 
 use crate::execution::compiler::SemanticRequestCondition;
-use crate::execution::profiling::record_operator;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
 use crate::model::talker::weights::LoadedQwen3TtsTalker;
 use crate::Qwen3TtsInferenceError;
@@ -40,17 +39,15 @@ pub(crate) fn materialize_session_seed<B: Backend>(
                     message: "custom-voice instruct recipe requires instruct tokens".to_string(),
                 }
             })?;
-            record_operator("profile.sample_embed", || {
-                build_non_streaming_seed(
-                    talker,
-                    &condition.text_token_ids,
-                    Some(instruct_ids),
-                    None,
-                    &condition.controls,
-                    talker_config.hidden_size,
-                    device,
-                )
-            })
+            build_non_streaming_seed(
+                talker,
+                &condition.text_token_ids,
+                Some(instruct_ids),
+                None,
+                &condition.controls,
+                talker_config.hidden_size,
+                device,
+            )
         }
         crate::execution::compiler::Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly => {
             let voice_clone = condition.voice_clone.as_ref().ok_or_else(|| {
@@ -59,17 +56,15 @@ pub(crate) fn materialize_session_seed<B: Backend>(
                         .to_string(),
                 }
             })?;
-            record_operator("profile.sample_embed", || {
-                build_voice_clone_seed(
-                    talker,
-                    &condition.text_token_ids,
-                    None,
-                    voice_clone,
-                    &condition.controls,
-                    talker_config.hidden_size,
-                    device,
-                )
-            })
+            build_voice_clone_seed(
+                talker,
+                &condition.text_token_ids,
+                None,
+                voice_clone,
+                &condition.controls,
+                talker_config.hidden_size,
+                device,
+            )
         }
         crate::execution::compiler::Qwen3TtsPromptRecipe::BaseVoiceCloneIcl => {
             let voice_clone = condition.voice_clone.as_ref().ok_or_else(|| {
@@ -78,34 +73,30 @@ pub(crate) fn materialize_session_seed<B: Backend>(
                         .to_string(),
                 }
             })?;
-            record_operator("profile.sample_embed", || {
-                build_voice_clone_seed(
-                    talker,
-                    &condition.text_token_ids,
-                    Some(voice_clone.ref_text_token_ids.as_deref().ok_or_else(|| {
-                        Qwen3TtsInferenceError::InvalidInput {
-                            message: "base voice-clone ICL recipe requires reference text tokens"
-                                .to_string(),
-                        }
-                    })?),
-                    voice_clone,
-                    &condition.controls,
-                    talker_config.hidden_size,
-                    device,
-                )
-            })
-        }
-        _ => record_operator("profile.sample_embed", || {
-            build_non_streaming_seed(
+            build_voice_clone_seed(
                 talker,
                 &condition.text_token_ids,
-                None,
-                None,
+                Some(voice_clone.ref_text_token_ids.as_deref().ok_or_else(|| {
+                    Qwen3TtsInferenceError::InvalidInput {
+                        message: "base voice-clone ICL recipe requires reference text tokens"
+                            .to_string(),
+                    }
+                })?),
+                voice_clone,
                 &condition.controls,
                 talker_config.hidden_size,
                 device,
             )
-        }),
+        }
+        _ => build_non_streaming_seed(
+            talker,
+            &condition.text_token_ids,
+            None,
+            None,
+            &condition.controls,
+            talker_config.hidden_size,
+            device,
+        ),
     }?;
 
     let preferred_dtype = preferred_hidden_dtype::<B>(device);
