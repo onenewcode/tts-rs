@@ -1,8 +1,8 @@
 use burn::module::Module;
 use burn::nn::{Linear, RmsNorm};
+use burn::tensor::DType;
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::DType;
 use burn::tensor::{Bool, Tensor};
 
 use super::kv::KeyValueCache;

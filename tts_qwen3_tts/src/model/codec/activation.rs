@@ -1,6 +1,6 @@
 // Audio codec activation helpers loaded as part of the codec subsystem.
 use burn::module::{Module, Param};
-use burn::tensor::{backend::Backend, Tensor};
+use burn::tensor::{Tensor, backend::Backend};
 
 #[derive(Module, Debug)]
 pub struct AudioCodecSnakeBeta<B: Backend> {

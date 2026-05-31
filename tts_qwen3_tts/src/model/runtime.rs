@@ -22,12 +22,7 @@ pub(super) fn load_backend_runtime(
             }
             #[cfg(not(feature = "flex"))]
             {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::Flex,
-                    package,
-                    profiling,
-                    compiler,
-                )
+                unavailable_backend_result(Qwen3TtsBackend::Flex, package, profiling, compiler)
             }
         }
         Qwen3TtsBackend::Wgpu => {
@@ -37,12 +32,7 @@ pub(super) fn load_backend_runtime(
             }
             #[cfg(not(feature = "wgpu"))]
             {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::Wgpu,
-                    package,
-                    profiling,
-                    compiler,
-                )
+                unavailable_backend_result(Qwen3TtsBackend::Wgpu, package, profiling, compiler)
             }
         }
         Qwen3TtsBackend::Cuda => {
@@ -52,12 +42,7 @@ pub(super) fn load_backend_runtime(
             }
             #[cfg(not(feature = "cuda"))]
             {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::Cuda,
-                    package,
-                    profiling,
-                    compiler,
-                )
+                unavailable_backend_result(Qwen3TtsBackend::Cuda, package, profiling, compiler)
             }
         }
         Qwen3TtsBackend::Rocm => {
@@ -67,32 +52,27 @@ pub(super) fn load_backend_runtime(
             }
             #[cfg(not(feature = "rocm"))]
             {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::Rocm,
-                    package,
-                    profiling,
-                    compiler,
-                )
+                unavailable_backend_result(Qwen3TtsBackend::Rocm, package, profiling, compiler)
             }
         }
         Qwen3TtsBackend::Metal => {
             #[cfg(feature = "metal")]
             {
-                load_wgpu_backend::<burn::backend::Metal, _>(package, profiling, compiler, |device| {
-                    burn::backend::wgpu::init_setup::<burn::backend::wgpu::graphics::Metal>(
-                        device,
-                        Default::default(),
-                    );
-                })
-            }
-            #[cfg(not(feature = "metal"))]
-            {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::Metal,
+                load_wgpu_backend::<burn::backend::Metal, _>(
                     package,
                     profiling,
                     compiler,
+                    |device| {
+                        burn::backend::wgpu::init_setup::<burn::backend::wgpu::graphics::Metal>(
+                            device,
+                            Default::default(),
+                        );
+                    },
                 )
+            }
+            #[cfg(not(feature = "metal"))]
+            {
+                unavailable_backend_result(Qwen3TtsBackend::Metal, package, profiling, compiler)
             }
         }
         Qwen3TtsBackend::Vulkan => {
@@ -112,12 +92,7 @@ pub(super) fn load_backend_runtime(
             }
             #[cfg(not(feature = "vulkan"))]
             {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::Vulkan,
-                    package,
-                    profiling,
-                    compiler,
-                )
+                unavailable_backend_result(Qwen3TtsBackend::Vulkan, package, profiling, compiler)
             }
         }
         Qwen3TtsBackend::WebGpu => {
@@ -137,12 +112,7 @@ pub(super) fn load_backend_runtime(
             }
             #[cfg(not(feature = "webgpu"))]
             {
-                unavailable_backend_result(
-                    Qwen3TtsBackend::WebGpu,
-                    package,
-                    profiling,
-                    compiler,
-                )
+                unavailable_backend_result(Qwen3TtsBackend::WebGpu, package, profiling, compiler)
             }
         }
     }

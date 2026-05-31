@@ -1,10 +1,10 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 
+use crate::Qwen3TtsInferenceError;
 use crate::execution::compiler::SemanticRequestCondition;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
 use crate::model::talker::weights::LoadedQwen3TtsTalker;
-use crate::Qwen3TtsInferenceError;
 
 #[derive(Debug)]
 pub(crate) struct SessionSeed<B: Backend> {

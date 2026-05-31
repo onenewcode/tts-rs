@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use thiserror::Error;
 use tts_core::{DriverRegistry, ModelManager, SynthesisResult};
 use tts_qwen3_tts::{
-    register_driver, BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio,
-    CustomVoiceRequest, LanguageSelection, Qwen3TtsEngineConfig, Qwen3TtsHandleExt,
-    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest,
+    BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
+    LanguageSelection, Qwen3TtsEngineConfig, Qwen3TtsHandleExt, Qwen3TtsPackageSource,
+    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest, register_driver,
 };
 
 pub use self::backend::{available_backends, resolve_backend};

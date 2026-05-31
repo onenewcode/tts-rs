@@ -1,10 +1,12 @@
 use burn::nn::RotaryEncodingConfig;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor};
+use burn::tensor::{Int, Tensor, TensorData};
 
+use crate::Qwen3TtsInferenceError;
 use crate::error::QwenTtsInferenceError;
 use crate::model::codec::config::Qwen3TtsAudioCodecDecoderConfig;
 use crate::model::codec::loading::LoadedQwen3TtsAudioCodec;
+use crate::model::nn::tensor::read_float_tensor_vec;
 
 #[derive(Debug, Clone)]
 pub struct Waveform {
@@ -57,54 +59,62 @@ impl Waveform {
     pub(crate) fn samples(&self) -> &[f32] {
         &self.samples
     }
+
+    pub(crate) fn from_tensor<B: Backend>(
+        sample_rate: u32,
+        waveform: Tensor<B, 3>,
+    ) -> Result<Self, QwenTtsInferenceError> {
+        let [batch_size, channels, _time_steps] = waveform.dims();
+        let samples = read_float_tensor_vec(waveform, "failed to read waveform")?;
+        Self::new(sample_rate, batch_size, channels, samples)
+    }
+
+    pub(crate) fn to_pcm(&self) -> Vec<i16> {
+        self.samples()
+            .iter()
+            .copied()
+            .map(|sample| (sample.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .collect()
+    }
 }
 
-pub fn decode_waveform<B: Backend>(
-    loaded: &LoadedQwen3TtsAudioCodec<B>,
-    codec_ids: Tensor<B, 3, Int>,
-) -> Result<Tensor<B, 3>, QwenTtsInferenceError> {
-    validate_codec_input_3d(&codec_ids, &loaded.config.decoder_config)?;
+impl<B: Backend> LoadedQwen3TtsAudioCodec<B> {
+    pub fn decode_waveform(
+        &self,
+        codec_ids: Tensor<B, 3, Int>,
+    ) -> Result<Tensor<B, 3>, QwenTtsInferenceError> {
+        validate_codec_input_3d(&codec_ids, &self.config.decoder_config)?;
 
-    let config = &loaded.config.decoder_config;
-    let rope = RotaryEncodingConfig::new(config.max_position_embeddings, config.head_dim)
-        .with_theta(config.rope_theta as f32)
-        .init(&codec_ids.device());
+        let config = &self.config.decoder_config;
+        let rope = RotaryEncodingConfig::new(config.max_position_embeddings, config.head_dim)
+            .with_theta(config.rope_theta as f32)
+            .init(&codec_ids.device());
 
-    Ok(loaded.model.decoder.forward(
-        codec_ids,
-        config.num_semantic_quantizers,
-        config.num_attention_heads,
-        config.num_key_value_heads,
-        config.head_dim,
-        &rope,
-    ))
-}
+        Ok(self.model.decoder.forward(
+            codec_ids,
+            config.num_semantic_quantizers,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
+            &rope,
+        ))
+    }
 
-pub fn lift_waveform<B: Backend>(
-    sample_rate: u32,
-    waveform: Tensor<B, 3>,
-) -> Result<Waveform, QwenTtsInferenceError> {
-    let [batch_size, channels, _time_steps] = waveform.dims();
-    let samples = waveform
-        .try_into_data()
-        .map_err(|source| QwenTtsInferenceError::TensorRead {
-            message: format!("failed to read waveform: {source}"),
-        })?
-        .convert::<f32>()
-        .into_vec::<f32>()
-        .map_err(|source| QwenTtsInferenceError::TensorRead {
-            message: format!("failed to read waveform: {source}"),
-        })?;
-    Waveform::new(sample_rate, batch_size, channels, samples)
-}
-
-pub fn waveform_to_pcm(waveform: &Waveform) -> Result<Vec<i16>, QwenTtsInferenceError> {
-    Ok(waveform
-        .samples()
-        .iter()
-        .copied()
-        .map(|sample| (sample.clamp(-1.0, 1.0) * 32767.0) as i16)
-        .collect())
+    pub fn encode_reference_codec_frames(
+        &self,
+        device: &B::Device,
+        samples: &[f32],
+    ) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+        let waveform = Tensor::<B, 3>::from_data(
+            TensorData::new(samples.to_vec(), [1, 1, samples.len()]),
+            device,
+        );
+        self.model.encoder.encode_reference_frames(
+            &self.config.encoder_config,
+            self.config.encoder_valid_num_quantizers,
+            waveform,
+        )
+    }
 }
 
 fn validate_codec_input_3d<B: Backend>(

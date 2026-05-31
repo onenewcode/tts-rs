@@ -1,6 +1,6 @@
 use burn::module::Module;
-use burn::nn::conv::{Conv1d, Conv1dConfig};
 use burn::nn::PaddingConfig1d;
+use burn::nn::conv::{Conv1d, Conv1dConfig};
 use burn::tensor::activation::{relu, sigmoid, softmax};
 use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Tensor};

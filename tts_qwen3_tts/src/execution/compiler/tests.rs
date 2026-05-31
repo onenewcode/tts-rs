@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::*;
+use tokenizers::Tokenizer;
 use tokenizers::models::wordlevel::WordLevel;
 use tokenizers::pre_tokenizers::whitespace::WhitespaceSplit;
-use tokenizers::Tokenizer;
 
 #[test]
 fn load_detects_model_kind_from_package_name() {
@@ -116,13 +116,15 @@ fn compile_request_uses_voice_clone_prompt_recipe_and_tokens() {
         vec![2050, 2052, 3001, 2053, 2049, 2048]
     );
     assert!(condition.voice_clone.is_some());
-    assert!(condition
-        .voice_clone
-        .as_ref()
-        .unwrap()
-        .ref_text_token_ids
-        .as_ref()
-        .is_some());
+    assert!(
+        condition
+            .voice_clone
+            .as_ref()
+            .unwrap()
+            .ref_text_token_ids
+            .as_ref()
+            .is_some()
+    );
 }
 
 #[test]
@@ -222,16 +224,20 @@ fn compile_request_rejects_profile_mismatch() {
             },
         ))
         .unwrap_err();
-    assert!(base_error
-        .to_string()
-        .contains("does not support custom-voice"));
+    assert!(
+        base_error
+            .to_string()
+            .contains("does not support custom-voice")
+    );
 
     let custom_voice_error = custom_voice_compiler
         .compile_request(&crate::QwenRequest::Base(crate::BaseRequest::new("hello")))
         .unwrap_err();
-    assert!(custom_voice_error
-        .to_string()
-        .contains("does not support base"));
+    assert!(
+        custom_voice_error
+            .to_string()
+            .contains("does not support base")
+    );
 }
 
 fn unique_temp_dir(label: &str) -> PathBuf {

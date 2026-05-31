@@ -1,8 +1,8 @@
 use tts_core::ModelCapabilities;
 
 use crate::{
-    execution::compiler::Qwen3TtsRequestCompiler, model::Qwen3TtsLoadedModel, Qwen3TtsBackend,
-    Qwen3TtsPackage,
+    Qwen3TtsBackend, Qwen3TtsPackage, execution::compiler::Qwen3TtsRequestCompiler,
+    model::Qwen3TtsLoadedModel,
 };
 
 pub(crate) fn project_capabilities(

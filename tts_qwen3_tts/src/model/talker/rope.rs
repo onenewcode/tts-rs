@@ -153,7 +153,7 @@ fn interleaved_mrope_source_indices(mrope_section: &[usize], half_dim: usize) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{interleaved_mrope_source_indices, Qwen3RotaryEncoding};
+    use super::{Qwen3RotaryEncoding, interleaved_mrope_source_indices};
     use burn::backend::Flex;
     use burn::tensor::{DType, Int, Tensor, TensorData};
 

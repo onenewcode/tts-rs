@@ -2,6 +2,7 @@ use burn::tensor::backend::Backend;
 
 use super::weights::LoadedQwen3TtsSpeakerEncoder;
 use crate::Qwen3TtsInferenceError;
+use crate::model::nn::tensor::read_float_tensor_vec;
 
 impl<B> LoadedQwen3TtsSpeakerEncoder<B>
 where
@@ -15,16 +16,9 @@ where
         let embed = self
             .encoder
             .forward(mel.unsqueeze_dim::<3>(0).cast(self.encoder.dtype()));
-        embed
-            .reshape([self.encoder.enc_dim])
-            .try_into_data()
-            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                message: format!("failed to read speaker embedding: {source}"),
-            })?
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                message: format!("failed to read speaker embedding: {source}"),
-            })
+        read_float_tensor_vec(
+            embed.reshape([self.encoder.enc_dim]),
+            "failed to read speaker embedding",
+        )
     }
 }

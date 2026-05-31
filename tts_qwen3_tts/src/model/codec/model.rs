@@ -3,17 +3,21 @@ use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear, RmsNorm, RotaryEncoding, RotaryEncodingConfig};
 use burn::tensor::activation::{elu, gelu, silu, softmax};
 use burn::tensor::backend::Backend;
-use burn::tensor::ops::PadMode;
 use burn::tensor::{DType, Int, Tensor};
 
 use super::activation::{AudioCodecLayerScale, AudioCodecSnakeBeta};
-use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
+use super::conv::{
+    AudioCodecCausalConv1d, AudioCodecCausalTransConv1d, ConvPadMode, forward_padded_conv1d,
+};
+use crate::Qwen3TtsInferenceError;
 use crate::model::codec::config::Qwen3TtsAudioCodecEncoderConfig;
 use crate::model::nn::attention::{autoregressive_attention_mask, repeat_kv_heads};
 use crate::model::nn::codebook::{
     gather_codebook_embeddings, nearest_codebook_token_ids, normalized_codebook_centroids,
 };
-use crate::Qwen3TtsInferenceError;
+use crate::model::nn::tensor::{
+    flatten_batch_sequence, read_int_tensor_vec, unflatten_batch_sequence,
+};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodec<B: Backend> {
@@ -50,6 +54,8 @@ pub enum Qwen3TtsAudioCodecEncoderBackboneLayer<B: Backend> {
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecEncoderConvLayer<B: Backend> {
     pub conv: Conv1d<B>,
+    #[module(skip)]
+    pub pad_mode: ConvPadMode,
 }
 
 #[derive(Module, Debug)]
@@ -238,8 +244,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoder<B> {
     ) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
         let encoded = self.encoder.forward(waveform);
         let transformed = self.encoder_transformer.forward(encoded, config);
-        let downsampled =
-            streamable_conv1d(&self.downsample.conv, transformed, ConvPadMode::Replicate);
+        let downsampled = self.downsample.forward(transformed);
         self.quantizer.extract_reference_frames(
             downsampled,
             config.num_semantic_quantizers,
@@ -252,14 +257,12 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderBackbone<B> {
     pub fn forward(&self, mut hidden: Tensor<B, 3>) -> Tensor<B, 3> {
         for layer in &self.layers {
             hidden = match layer {
-                Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(layer) => {
-                    streamable_conv1d(&layer.conv, hidden, ConvPadMode::Constant)
-                }
+                Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(layer) => layer.forward(hidden),
                 Qwen3TtsAudioCodecEncoderBackboneLayer::Resnet(layer) => layer.forward(hidden),
                 Qwen3TtsAudioCodecEncoderBackboneLayer::Activation(layer) => layer.forward(hidden),
                 Qwen3TtsAudioCodecEncoderBackboneLayer::DownsampleConv(layer)
                 | Qwen3TtsAudioCodecEncoderBackboneLayer::OutputConv(layer) => {
-                    streamable_conv1d(&layer.conv, hidden, ConvPadMode::Constant)
+                    layer.forward(hidden)
                 }
             };
         }
@@ -270,6 +273,12 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderBackbone<B> {
 impl Qwen3TtsAudioCodecEncoderActivation {
     pub fn forward<B: Backend>(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
         elu(hidden, 1.0)
+    }
+}
+
+impl<B: Backend> Qwen3TtsAudioCodecEncoderConvLayer<B> {
+    pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
+        forward_padded_conv1d(&self.conv, self.pad_mode, hidden)
     }
 }
 
@@ -316,7 +325,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderTransformerLayer<B> {
         rope: &RotaryEncoding<B>,
     ) -> Tensor<B, 3> {
         let residual = hidden.clone();
-        let hidden = layer_norm_3d(&self.input_layernorm, hidden);
+        let hidden = self.input_layernorm.forward(hidden);
         let hidden = self
             .self_attn
             .forward(hidden, num_heads, num_kv_heads, head_dim, rope);
@@ -324,7 +333,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderTransformerLayer<B> {
         let hidden = residual + hidden;
 
         let residual = hidden.clone();
-        let hidden = layer_norm_3d(&self.post_attention_layernorm, hidden);
+        let hidden = self.post_attention_layernorm.forward(hidden);
         let hidden = self.mlp.forward(hidden);
         let hidden = self.mlp_layer_scale.forward(hidden);
         residual + hidden
@@ -340,9 +349,9 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
         head_dim: usize,
         rope: &RotaryEncoding<B>,
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, hidden_size] = hidden.dims();
+        let [batch_size, seq_len, _hidden_size] = hidden.dims();
         let device = hidden.device();
-        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
+        let hidden_2d = flatten_batch_sequence(hidden);
         let query = self
             .q_proj
             .forward(hidden_2d.clone())
@@ -379,21 +388,21 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
                 .swap_dims(1, 2)
                 .reshape([batch_size, seq_len, num_heads * head_dim]);
 
-        self.o_proj
-            .forward(attention_output.reshape([batch_size * seq_len, num_heads * head_dim]))
-            .reshape([batch_size, seq_len, hidden_size])
+        let output = self
+            .o_proj
+            .forward(flatten_batch_sequence(attention_output));
+        unflatten_batch_sequence(output, batch_size, seq_len)
     }
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecEncoderMlp<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        let [batch_size, seq_len, hidden_size] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
+        let [batch_size, seq_len, _hidden_size] = hidden.dims();
+        let hidden_2d = flatten_batch_sequence(hidden);
         let hidden = self.fc1.forward(hidden_2d);
         let hidden = gelu(hidden);
-        self.fc2
-            .forward(hidden)
-            .reshape([batch_size, seq_len, hidden_size])
+        let hidden = self.fc2.forward(hidden);
+        unflatten_batch_sequence(hidden, batch_size, seq_len)
     }
 }
 
@@ -422,16 +431,10 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderQuantizer<B> {
         let all_codes: Vec<Tensor<B, 2, Int>> =
             semantic_codes.into_iter().chain(acoustic_codes).collect();
         let total_layers = all_codes.len();
-        let flat_codes = Tensor::cat(all_codes, 0)
-            .try_into_data()
-            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                message: format!("failed to read reference codec token ids: {source}"),
-            })?
-            .convert::<i64>()
-            .into_vec::<i64>()
-            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                message: format!("failed to read reference codec token ids: {source}"),
-            })?;
+        let flat_codes = read_int_tensor_vec(
+            Tensor::cat(all_codes, 0),
+            "failed to read reference codec token ids",
+        )?;
 
         let mut frames = Vec::with_capacity(time_steps);
         for time_index in 0..time_steps {
@@ -542,14 +545,14 @@ impl<B: Backend> Qwen3TtsAudioCodecConvNeXtBlock<B> {
         let residual = hidden.clone();
         let [batch, channels, time] = hidden.dims();
         let hidden = self.dwconv.forward(hidden);
-        let hidden = hidden.swap_dims(1, 2).reshape([batch * time, channels]);
+        let hidden = flatten_batch_sequence(hidden.swap_dims(1, 2));
         let hidden = self.norm.forward(hidden);
-        let hidden = hidden.reshape([batch, time, channels]).swap_dims(1, 2);
-        let hidden = hidden.swap_dims(1, 2).reshape([batch * time, channels]);
+        let hidden = unflatten_batch_sequence(hidden, batch, time).swap_dims(1, 2);
+        let hidden = flatten_batch_sequence(hidden.swap_dims(1, 2));
         let hidden = self.pwconv1.forward(hidden);
         let hidden = gelu(hidden);
         let hidden = self.pwconv2.forward(hidden);
-        let hidden = hidden.reshape([batch, time, channels]).swap_dims(1, 2);
+        let hidden = unflatten_batch_sequence(hidden, batch, time).swap_dims(1, 2);
         let gamma = self.gamma.val().reshape([1, channels, 1]);
         residual + hidden.mul(gamma)
     }
@@ -557,15 +560,14 @@ impl<B: Backend> Qwen3TtsAudioCodecConvNeXtBlock<B> {
 
 impl<B: Backend> Qwen3TtsAudioCodecDecoderMlp<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        let [batch, seq_len, hidden_size] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch * seq_len, hidden_size]);
+        let [batch, seq_len, _hidden_size] = hidden.dims();
+        let hidden_2d = flatten_batch_sequence(hidden);
         let gate = self.gate_proj.forward(hidden_2d.clone());
         let up = self.up_proj.forward(hidden_2d);
         let activated = silu(gate);
         let product = activated * up;
-        self.down_proj
-            .forward(product)
-            .reshape([batch, seq_len, hidden_size])
+        let output = self.down_proj.forward(product);
+        unflatten_batch_sequence(output, batch, seq_len)
     }
 }
 
@@ -579,8 +581,8 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
         rope: &RotaryEncoding<B>,
         mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, hidden_size] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
+        let [batch_size, seq_len, _hidden_size] = hidden.dims();
+        let hidden_2d = flatten_batch_sequence(hidden);
 
         let query = self
             .q_proj
@@ -619,9 +621,8 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
                 .swap_dims(1, 2)
                 .reshape([batch_size, seq_len, num_heads * head_dim]);
 
-        self.o_proj
-            .forward(output.reshape([batch_size * seq_len, num_heads * head_dim]))
-            .reshape([batch_size, seq_len, hidden_size])
+        let output = self.o_proj.forward(flatten_batch_sequence(output));
+        unflatten_batch_sequence(output, batch_size, seq_len)
     }
 }
 
@@ -661,11 +662,10 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         rope: &RotaryEncoding<B>,
         mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
-        let [batch, seq_len, latent] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch * seq_len, latent]);
+        let [batch, seq_len, _latent] = hidden.dims();
+        let hidden_2d = flatten_batch_sequence(hidden);
         let hidden = self.input_proj.forward(hidden_2d);
-        let [_, hidden_size] = hidden.dims();
-        let mut hidden = hidden.reshape([batch, seq_len, hidden_size]);
+        let mut hidden = unflatten_batch_sequence(hidden, batch, seq_len);
 
         for layer in &self.layers {
             hidden = layer.forward(
@@ -679,10 +679,8 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         }
 
         let hidden = self.norm.forward(hidden);
-        let [batch, seq_len, hidden_size] = hidden.dims();
-        self.output_proj
-            .forward(hidden.reshape([batch * seq_len, hidden_size]))
-            .reshape([batch, seq_len, latent])
+        let hidden = self.output_proj.forward(flatten_batch_sequence(hidden));
+        unflatten_batch_sequence(hidden, batch, seq_len)
     }
 }
 
@@ -775,84 +773,4 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoder<B> {
         }
         hidden.clamp_min(-1.0).clamp_max(1.0)
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ConvPadMode {
-    Constant,
-    Replicate,
-}
-
-fn streamable_conv1d<B: Backend>(
-    conv: &Conv1d<B>,
-    hidden: Tensor<B, 3>,
-    pad_mode: ConvPadMode,
-) -> Tensor<B, 3> {
-    let time_steps = hidden.dims()[2];
-    let effective_kernel = (conv.kernel_size - 1) * conv.dilation + 1;
-    let padding_total = effective_kernel.saturating_sub(conv.stride);
-    let extra_padding =
-        extra_padding_for_conv1d(time_steps, effective_kernel, conv.stride, padding_total);
-    let hidden = pad_1d(hidden, padding_total, extra_padding, pad_mode);
-    conv.forward(hidden)
-}
-
-fn extra_padding_for_conv1d(
-    len: usize,
-    kernel_size: usize,
-    stride: usize,
-    padding_total: usize,
-) -> usize {
-    let frame_count =
-        (len + padding_total).saturating_sub(kernel_size) as f64 / stride as f64 + 1.0;
-    let ideal_len = ((frame_count.ceil() as usize).saturating_sub(1) * stride + kernel_size)
-        .saturating_sub(padding_total);
-    ideal_len.saturating_sub(len)
-}
-
-fn pad_1d<B: Backend>(
-    hidden: Tensor<B, 3>,
-    pad_left: usize,
-    pad_right: usize,
-    mode: ConvPadMode,
-) -> Tensor<B, 3> {
-    if pad_left == 0 && pad_right == 0 {
-        return hidden;
-    }
-    match mode {
-        ConvPadMode::Constant => hidden.pad((pad_left, pad_right, 0, 0), PadMode::Constant(0.0)),
-        ConvPadMode::Replicate => replicate_pad_1d(hidden, pad_left, pad_right),
-    }
-}
-
-fn replicate_pad_1d<B: Backend>(
-    hidden: Tensor<B, 3>,
-    pad_left: usize,
-    pad_right: usize,
-) -> Tensor<B, 3> {
-    let [batch, channels, time] = hidden.dims();
-    let mut segments = Vec::with_capacity(3);
-    if pad_left > 0 {
-        segments.push(
-            hidden
-                .clone()
-                .slice([0..batch, 0..channels, 0..1])
-                .repeat_dim(2, pad_left),
-        );
-    }
-    segments.push(hidden.clone());
-    if pad_right > 0 {
-        segments.push(
-            hidden
-                .slice([0..batch, 0..channels, time - 1..time])
-                .repeat_dim(2, pad_right),
-        );
-    }
-    Tensor::cat(segments, 2)
-}
-
-fn layer_norm_3d<B: Backend>(norm: &LayerNorm<B>, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-    let [batch_size, seq_len, hidden_size] = hidden.dims();
-    norm.forward(hidden.reshape([batch_size * seq_len, hidden_size]))
-        .reshape([batch_size, seq_len, hidden_size])
 }

@@ -1,4 +1,4 @@
-use burn::tensor::{backend::Backend, Tensor};
+use burn::tensor::{Tensor, backend::Backend};
 
 /// Autoregressive cache for a single tensor (e.g., Key or Value).
 #[derive(Debug)]

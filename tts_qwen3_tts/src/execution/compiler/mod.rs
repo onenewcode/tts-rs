@@ -251,11 +251,11 @@ fn detect_model_kind(
     }
 }
 
-use self::prompt::{
-    compile_profile_condition, resolve_base_prompt_recipe, resolve_custom_voice_prompt_recipe,
-};
 pub(crate) use self::prompt::{
     CompiledVoiceCloneCondition, ProfileControlIds, Qwen3TtsPromptRecipe, SemanticRequestCondition,
+};
+use self::prompt::{
+    compile_profile_condition, resolve_base_prompt_recipe, resolve_custom_voice_prompt_recipe,
 };
 
 fn resolve_base_control_ids(

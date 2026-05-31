@@ -9,6 +9,7 @@ use super::layer::Qwen3TtsDecoderLayer;
 use super::mlp::Qwen3TtsTalkerResizeMlp;
 use super::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
 use crate::model::nn::attention::autoregressive_attention_mask;
+use crate::model::nn::tensor::{flatten_batch_sequence, unflatten_batch_sequence};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsTalkerModelBundle<B: Backend> {
@@ -55,14 +56,14 @@ where
             cache,
         );
         let [batch_size, seq_len, hidden_size] = hidden_states.dims();
-        let logits = self
-            .codec_head
-            .forward(
-                hidden_states
-                    .clone()
-                    .reshape([batch_size * seq_len, hidden_size]),
-            )
-            .reshape([batch_size, seq_len, self.codec_head.weight.dims()[1]]);
+        let logits = self.codec_head.forward(
+            flatten_batch_sequence(hidden_states.clone())
+                .cast(self.codec_head.weight.val().dtype()),
+        );
+        let logits = unflatten_batch_sequence(logits, batch_size, seq_len);
+        let [_logits_batch, _logits_seq, logits_vocab] = logits.dims();
+        debug_assert_eq!(hidden_size, self.codec_head.weight.dims()[0]);
+        debug_assert_eq!(logits_vocab, self.codec_head.weight.dims()[1]);
         (hidden_states, logits)
     }
 }

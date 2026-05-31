@@ -9,6 +9,7 @@ use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor};
 
 use crate::model::nn::mask::suppress_token_mask;
 use crate::model::nn::sequence::select_last_sequence_step;
+use crate::model::nn::tensor::flatten_batch_sequence;
 
 #[derive(Debug, Clone)]
 pub struct SamplingConfig {
@@ -80,9 +81,9 @@ fn prepare_last_step_logits<B: Backend>(
     };
     let [_batch_size, seq_len, _feature_size] = logits.dims();
     let logits_2d = if seq_len == 1 {
-        logits
+        flatten_batch_sequence(logits)
     } else {
-        select_last_sequence_step(logits)
+        flatten_batch_sequence(select_last_sequence_step(logits))
     }
     .reshape([batch_size, vocab_size]);
     apply_suppress_mask(logits_2d, suppress_token_ids)
@@ -133,7 +134,7 @@ pub fn apply_repetition_penalty<B: Backend>(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_repetition_penalty, sample_token, SamplingConfig};
+    use super::{SamplingConfig, apply_repetition_penalty, sample_token};
     use burn::tensor::{Int, Tensor, TensorData};
 
     type TestBackend = burn::backend::Flex;

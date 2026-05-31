@@ -1,7 +1,7 @@
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 use num_complex::Complex;
-use rustfft::{num_complex::Complex as FftComplex, FftPlanner};
+use rustfft::{FftPlanner, num_complex::Complex as FftComplex};
 
 #[derive(Debug, Clone)]
 pub(crate) struct MelSpectrogram {

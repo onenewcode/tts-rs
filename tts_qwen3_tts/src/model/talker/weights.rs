@@ -9,12 +9,12 @@ use super::attention::Qwen3TtsAttention;
 use super::layer::Qwen3TtsDecoderLayer;
 use super::mlp::{Qwen3TtsTalkerResizeMlp, Qwen3TtsTextMlp};
 use super::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
+use crate::Qwen3TtsLoadError;
 use crate::model::talker::config::{Qwen3TtsTalkerCodePredictorConfig, Qwen3TtsTalkerConfig};
 use crate::model::talker::network::{
     Qwen3TtsTalker, Qwen3TtsTalkerCodePredictor, Qwen3TtsTalkerCodePredictorModel,
     Qwen3TtsTalkerModel, Qwen3TtsTalkerModelBundle,
 };
-use crate::Qwen3TtsLoadError;
 
 const TALKER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(r"(.*)norm\.weight$", "${1}norm.gamma")];
 #[cfg(test)]
@@ -96,10 +96,7 @@ fn load_qwen3_tts_talker_with_adapter<B: Backend, A: ModuleAdapter + 'static>(
         "loaded qwen3 tts talker weights"
     );
 
-    Ok(LoadedQwen3TtsTalker {
-        config,
-        model,
-    })
+    Ok(LoadedQwen3TtsTalker { config, model })
 }
 
 impl Qwen3TtsTalkerConfig {

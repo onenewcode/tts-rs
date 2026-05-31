@@ -3,15 +3,15 @@ use std::sync::Arc;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor, TensorData};
 
-use crate::execution::compiler::session_seed::{materialize_session_seed, SessionSeed};
 use crate::execution::compiler::Qwen3TtsRequestCompiler;
+use crate::execution::compiler::session_seed::{SessionSeed, materialize_session_seed};
 use crate::execution::run::LoadedModel;
 use crate::execution::session::{ModelSession, SessionStep};
-use crate::model::codec::loading::{load_qwen3_tts_audio_codec, LoadedQwen3TtsAudioCodec};
-use crate::model::codec::runtime::{decode_waveform, lift_waveform, waveform_to_pcm};
+use crate::model::codec::loading::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
+use crate::model::codec::runtime::Waveform;
 use crate::model::talker::infer::TalkerGenerator;
 use crate::model::talker::sampling::SamplingConfig as RuntimeSamplingConfig;
-use crate::model::talker::weights::{load_qwen3_tts_talker_for_inference, LoadedQwen3TtsTalker};
+use crate::model::talker::weights::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
 use crate::{
     BaseVoiceCloneReferenceAudio, Qwen3TtsBackend, Qwen3TtsInferenceError, Qwen3TtsLoadError,
     Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
@@ -109,16 +109,17 @@ where
             )?;
             let combined_steps = time_steps + reference_codec_frames.len();
             let codec_ids = Tensor::cat(vec![reference_prefix, generated.codec_token_ids], 2);
-            let mut waveform = decode_waveform(&self.decoder, codec_ids)?;
+            let mut waveform = self.decoder.decode_waveform(codec_ids)?;
             let total_samples = waveform.dims()[2];
             let cut_samples = reference_codec_frames.len() * total_samples / combined_steps.max(1);
             waveform = waveform.slice([0..1, 0..1, cut_samples.min(total_samples)..total_samples]);
             waveform
         } else {
-            decode_waveform(&self.decoder, generated.codec_token_ids)?
+            self.decoder.decode_waveform(generated.codec_token_ids)?
         };
-        let waveform = lift_waveform(self.decoder.config.output_sample_rate as u32, waveform)?;
-        let pcm = waveform_to_pcm(&waveform)?;
+        let waveform =
+            Waveform::from_tensor(self.decoder.config.output_sample_rate as u32, waveform)?;
+        let pcm = waveform.to_pcm();
         Ok(tts_core::PcmAudio {
             pcm_i16: pcm,
             sample_rate: waveform.sample_rate(),

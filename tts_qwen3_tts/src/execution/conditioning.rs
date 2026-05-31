@@ -2,7 +2,6 @@ use burn::tensor::backend::Backend;
 
 use crate::execution::reference_audio::load_reference_audio;
 use crate::model::codec::loading::LoadedQwen3TtsAudioCodec;
-use crate::model::codec::runtime::encode_reference_codec_frames;
 use crate::model::speaker::LoadedQwen3TtsSpeakerEncoder;
 use crate::{
     BaseVoiceCloneReferenceAudio, Qwen3TtsInferenceError, Qwen3TtsVoiceClonePrompt,
@@ -44,8 +43,7 @@ where
     let ref_codec_token_ids = if reference.x_vector_only {
         None
     } else {
-        Some(encode_reference_codec_frames(
-            loaded,
+        Some(loaded.encode_reference_codec_frames(
             device,
             &load_reference_audio(&reference.path, loaded.config.input_sample_rate as u32)?.samples,
         )?)

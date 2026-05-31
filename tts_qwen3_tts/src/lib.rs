@@ -7,15 +7,15 @@ mod sampling;
 mod surface;
 
 pub use error::{Qwen3TtsError, Qwen3TtsInferenceError, Qwen3TtsLoadError};
-pub use execution::profiling::Qwen3TtsProfilingConfig;
 pub use execution::Qwen3TtsHandleExt;
+pub use execution::profiling::Qwen3TtsProfilingConfig;
 pub use sampling::SamplingConfig;
 pub use surface::backend::Qwen3TtsBackend;
 pub use surface::{
-    register_driver, BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio,
-    CustomVoiceRequest, LanguageSelection, Qwen3TtsArtifactsManifest, Qwen3TtsDriver,
+    BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
+    DRIVER_ID as QWEN3_TTS_DRIVER_ID, LanguageSelection, Qwen3TtsArtifactsManifest, Qwen3TtsDriver,
     Qwen3TtsEngine, Qwen3TtsEngineConfig, Qwen3TtsGenerationConfigManifest,
     Qwen3TtsGenerationConfigSource, Qwen3TtsLoadOptions, Qwen3TtsPackage, Qwen3TtsPackageManifest,
     Qwen3TtsPackageSource, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
-    Qwen3TtsVoiceClonePromptMode, QwenRequest, DRIVER_ID as QWEN3_TTS_DRIVER_ID,
+    Qwen3TtsVoiceClonePromptMode, QwenRequest, register_driver,
 };

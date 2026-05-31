@@ -3,7 +3,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
 use super::kv::KeyValueCache;
-use super::sampling::{apply_repetition_penalty, sample_token, SamplingConfig};
+use super::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
 use crate::error::QwenTtsInferenceError;
 use crate::execution::compiler::session_seed::SessionSeed;
 use crate::model::nn::sequence::select_last_sequence_step;
@@ -234,7 +234,7 @@ fn selected_token_is_eos<B: Backend>(
 }
 
 pub(crate) fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {
-    let [batch_size, _, hidden_size] = hidden.dims();
+    let [batch_size, _seq_len, hidden_size] = hidden.dims();
     select_last_sequence_step(hidden).reshape([batch_size, hidden_size])
 }
 

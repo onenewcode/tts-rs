@@ -1,14 +1,15 @@
 use std::path::Path;
 
 use burn::module::Initializer;
-use burn::nn::conv::Conv1dConfig;
 use burn::nn::PaddingConfig1d;
+use burn::nn::conv::Conv1dConfig;
 use burn::nn::{LayerNormConfig, LinearConfig, RmsNormConfig};
 use burn::tensor::backend::Backend;
 use burn_store::{KeyRemapper, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use super::activation::{AudioCodecLayerScale, AudioCodecSnakeBeta};
-use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
+use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d, ConvPadMode};
+use crate::Qwen3TtsLoadError;
 use crate::model::codec::config::{
     Qwen3TtsAudioCodecConfig, Qwen3TtsAudioCodecDecoderConfig, Qwen3TtsAudioCodecEncoderConfig,
 };
@@ -31,7 +32,6 @@ use crate::model::codec::model::{
     Qwen3TtsAudioCodecEncoderResnetLayer, Qwen3TtsAudioCodecEncoderTransformer,
     Qwen3TtsAudioCodecEncoderTransformerLayer, Qwen3TtsAudioCodecEncoderVectorQuantization,
 };
-use crate::Qwen3TtsLoadError;
 
 // Keep the runtime structs readable and localize official PyTorch naming quirks here.
 const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 3] = [
@@ -166,6 +166,7 @@ impl Qwen3TtsAudioCodecConfig {
                 1,
                 1,
                 false,
+                ConvPadMode::Replicate,
                 device,
             ),
             quantizer: self.encoder_config.init_quantizer::<B>(device),
@@ -195,6 +196,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                 conv: Conv1dConfig::new(self.audio_channels, self.num_filters, self.kernel_size)
                     .with_bias(true)
                     .init(device),
+                pad_mode: ConvPadMode::Constant,
             },
         ));
 
@@ -212,6 +214,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                         1,
                         1,
                         true,
+                        ConvPadMode::Constant,
                         device,
                     ),
                     conv_out: AudioCodecCausalConv1d::<B>::new(
@@ -222,6 +225,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                         1,
                         1,
                         true,
+                        ConvPadMode::Constant,
                         device,
                     ),
                 },
@@ -236,6 +240,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                         .with_stride(ratio)
                         .with_bias(true)
                         .init(device),
+                    pad_mode: ConvPadMode::Constant,
                 },
             ));
             scaling *= 2;
@@ -253,6 +258,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                 )
                 .with_bias(true)
                 .init(device),
+                pad_mode: ConvPadMode::Constant,
             },
         ));
 
@@ -409,6 +415,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
                 1,
                 1,
                 true,
+                ConvPadMode::Constant,
                 device,
             ),
             upsample: self
@@ -434,6 +441,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
                                 1,
                                 self.latent_dim,
                                 true,
+                                ConvPadMode::Constant,
                                 device,
                             ),
                             norm: LayerNormConfig::new(self.latent_dim)
@@ -608,10 +616,28 @@ impl Qwen3TtsAudioCodecDecoderConfig {
         Qwen3TtsAudioCodecWaveDecoderResidualUnit {
             act1: AudioCodecSnakeBeta::<B>::new(channels, device),
             conv1: AudioCodecCausalConv1d::<B>::new(
-                channels, channels, 7, 1, dilation, 1, true, device,
+                channels,
+                channels,
+                7,
+                1,
+                dilation,
+                1,
+                true,
+                ConvPadMode::Constant,
+                device,
             ),
             act2: AudioCodecSnakeBeta::<B>::new(channels, device),
-            conv2: AudioCodecCausalConv1d::<B>::new(channels, channels, 1, 1, 1, 1, true, device),
+            conv2: AudioCodecCausalConv1d::<B>::new(
+                channels,
+                channels,
+                1,
+                1,
+                1,
+                1,
+                true,
+                ConvPadMode::Constant,
+                device,
+            ),
         }
     }
 }
