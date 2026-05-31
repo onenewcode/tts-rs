@@ -13,6 +13,8 @@ use crate::{
     Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage, QwenRequest,
 };
 
+use self::prompt::CompileProfileConditionInput;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct Qwen3TtsRequestCompiler {
@@ -67,14 +69,19 @@ impl Qwen3TtsRequestCompiler {
                     resolve_base_prompt_recipe(request)?;
                 compile_profile_condition(
                     &self.tokenizer,
-                    &prompt,
-                    None,
-                    voice_clone,
-                    ref_prompt.as_deref(),
-                    prompt_recipe,
-                    resolve_base_control_ids(&profile.control_config, &request.language)?,
-                    profile.generation_config.max_new_tokens,
-                    profile.control_config.codec_eos_token_id as usize,
+                    CompileProfileConditionInput {
+                        prompt: &prompt,
+                        instruct_prompt: None,
+                        voice_clone,
+                        ref_prompt: ref_prompt.as_deref(),
+                        prompt_recipe,
+                        controls: resolve_base_control_ids(
+                            &profile.control_config,
+                            &request.language,
+                        )?,
+                        max_new_tokens: profile.generation_config.max_new_tokens,
+                        codec_eos_token_id: profile.control_config.codec_eos_token_id as usize,
+                    },
                 )
             }
             QwenRequest::CustomVoice(request) => {
@@ -87,18 +94,20 @@ impl Qwen3TtsRequestCompiler {
                     resolve_custom_voice_prompt_recipe(request)?;
                 compile_profile_condition(
                     &self.tokenizer,
-                    &prompt,
-                    instruct_prompt.as_deref(),
-                    None,
-                    None,
-                    prompt_recipe,
-                    resolve_custom_voice_control_ids(
-                        &profile.control_config,
-                        &request.language,
-                        request.speaker.as_deref(),
-                    )?,
-                    profile.generation_config.max_new_tokens,
-                    profile.control_config.codec_eos_token_id as usize,
+                    CompileProfileConditionInput {
+                        prompt: &prompt,
+                        instruct_prompt: instruct_prompt.as_deref(),
+                        voice_clone: None,
+                        ref_prompt: None,
+                        prompt_recipe,
+                        controls: resolve_custom_voice_control_ids(
+                            &profile.control_config,
+                            &request.language,
+                            request.speaker.as_deref(),
+                        )?,
+                        max_new_tokens: profile.generation_config.max_new_tokens,
+                        codec_eos_token_id: profile.control_config.codec_eos_token_id as usize,
+                    },
                 )
             }
         }

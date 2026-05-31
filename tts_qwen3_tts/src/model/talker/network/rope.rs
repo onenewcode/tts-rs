@@ -184,7 +184,7 @@ mod tests {
             .into_vec::<f32>()
             .expect("sin should be readable");
 
-        let expected_cos = vec![
+        let expected_cos = [
             1.0_f32,
             1.0_f32.cos(),
             2.0_f32.cos(),
@@ -192,7 +192,7 @@ mod tests {
             1.0_f32.cos(),
             2.0_f32.cos(),
         ];
-        let expected_sin = vec![
+        let expected_sin = [
             0.0_f32,
             1.0_f32.sin(),
             2.0_f32.sin(),

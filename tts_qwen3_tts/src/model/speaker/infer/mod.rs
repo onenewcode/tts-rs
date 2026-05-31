@@ -1,5 +1,7 @@
 use burn::tensor::backend::Backend;
 
+pub(crate) mod feature;
+
 use super::weights::LoadedQwen3TtsSpeakerEncoder;
 use crate::Qwen3TtsInferenceError;
 use crate::model::nn::tensor::read_float_tensor_vec;

@@ -4,7 +4,7 @@ use burn::tensor::backend::Backend;
 use burn_store::{KeyRemapper, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
 use super::config::ModelConfigWithSpeaker;
-use super::feature::MelSpectrogram;
+use super::infer::feature::MelSpectrogram;
 use super::network::SpeakerEncoderNetwork;
 use crate::Qwen3TtsLoadError;
 

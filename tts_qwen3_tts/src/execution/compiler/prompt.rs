@@ -42,6 +42,17 @@ pub(crate) struct ProfileControlIds {
     pub(crate) codec_prefix_ids: Vec<i64>,
 }
 
+pub(crate) struct CompileProfileConditionInput<'a> {
+    pub(crate) prompt: &'a str,
+    pub(crate) instruct_prompt: Option<&'a str>,
+    pub(crate) voice_clone: Option<CompiledVoiceCloneCondition>,
+    pub(crate) ref_prompt: Option<&'a str>,
+    pub(crate) prompt_recipe: Qwen3TtsPromptRecipe,
+    pub(crate) controls: ProfileControlIds,
+    pub(crate) max_new_tokens: usize,
+    pub(crate) codec_eos_token_id: usize,
+}
+
 fn build_assistant_prompt(text: &str) -> String {
     format!(
         "<|im_start|>assistant\n{}<|im_end|>\n<|im_start|>assistant\n",
@@ -182,16 +193,9 @@ fn validate_voice_clone_prompt(
 
 pub(crate) fn compile_profile_condition(
     tokenizer: &Tokenizer,
-    prompt: &str,
-    instruct_prompt: Option<&str>,
-    mut voice_clone: Option<CompiledVoiceCloneCondition>,
-    ref_prompt: Option<&str>,
-    prompt_recipe: Qwen3TtsPromptRecipe,
-    controls: ProfileControlIds,
-    max_new_tokens: usize,
-    codec_eos_token_id: usize,
+    input: CompileProfileConditionInput<'_>,
 ) -> Result<SemanticRequestCondition, Qwen3TtsInferenceError> {
-    let text_token_ids = tokenize_prompt(tokenizer, prompt)?;
+    let text_token_ids = tokenize_prompt(tokenizer, input.prompt)?;
     if text_token_ids.len() < 8 {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: format!(
@@ -200,25 +204,29 @@ pub(crate) fn compile_profile_condition(
             ),
         });
     }
-    if let Some(voice_clone) = voice_clone.as_mut() {
-        if matches!(prompt_recipe, Qwen3TtsPromptRecipe::BaseVoiceCloneIcl) {
-            let ref_prompt = ref_prompt.ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
+    let mut voice_clone = input.voice_clone;
+    if let Some(voice_clone) = voice_clone.as_mut()
+        && matches!(input.prompt_recipe, Qwen3TtsPromptRecipe::BaseVoiceCloneIcl)
+    {
+        let ref_prompt = input
+            .ref_prompt
+            .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
                 message: "voice clone ICL recipe requires a tokenizable ref prompt".to_string(),
             })?;
-            voice_clone.ref_text_token_ids = Some(tokenize_prompt(tokenizer, ref_prompt)?);
-        }
+        voice_clone.ref_text_token_ids = Some(tokenize_prompt(tokenizer, ref_prompt)?);
     }
 
     Ok(SemanticRequestCondition {
         text_token_ids,
-        instruct_token_ids: instruct_prompt
+        instruct_token_ids: input
+            .instruct_prompt
             .map(|prompt| tokenize_prompt(tokenizer, prompt))
             .transpose()?,
         voice_clone,
-        controls,
-        max_new_tokens,
-        codec_eos_token_id,
-        prompt_recipe,
+        controls: input.controls,
+        max_new_tokens: input.max_new_tokens,
+        codec_eos_token_id: input.codec_eos_token_id,
+        prompt_recipe: input.prompt_recipe,
     })
 }
 

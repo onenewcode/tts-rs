@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use burn::tensor::backend::Backend;
 
-use super::{BackendRuntime, LoadedModelOps, Qwen3TtsModelInner};
+use super::loaded_model::{BackendRuntime, LoadedModelOps, Qwen3TtsModelInner};
 use crate::{
     Qwen3TtsBackend, Qwen3TtsLoadError, Qwen3TtsPackage, Qwen3TtsProfilingConfig,
     execution::compiler::Qwen3TtsRequestCompiler,
@@ -168,12 +168,30 @@ where
     load_runtime::<B>(package, profiling, compiler, &device)
 }
 
+#[cfg(not(any(
+    feature = "flex",
+    feature = "wgpu",
+    feature = "cuda",
+    feature = "rocm",
+    feature = "metal",
+    feature = "vulkan",
+    feature = "webgpu"
+)))]
 fn unavailable_backend_error(backend: Qwen3TtsBackend) -> Qwen3TtsLoadError {
     Qwen3TtsLoadError::UnavailableBackend {
         backend: backend.label().to_string(),
     }
 }
 
+#[cfg(not(any(
+    feature = "flex",
+    feature = "wgpu",
+    feature = "cuda",
+    feature = "rocm",
+    feature = "metal",
+    feature = "vulkan",
+    feature = "webgpu"
+)))]
 fn unavailable_backend_result<T>(
     backend: Qwen3TtsBackend,
     package: Qwen3TtsPackage,

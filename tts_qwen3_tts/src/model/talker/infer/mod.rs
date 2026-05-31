@@ -2,14 +2,16 @@ use burn::prelude::ElementConversion;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
-use super::kv::KeyValueCache;
-use super::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
+use self::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
+use super::network::kv::KeyValueCache;
 use crate::error::QwenTtsInferenceError;
 use crate::execution::compiler::session_seed::SessionSeed;
 use crate::model::nn::sequence::select_last_sequence_step;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
 use crate::model::talker::network::build_attention_mask;
 use crate::model::talker::weights::LoadedQwen3TtsTalker;
+
+pub mod sampling;
 
 #[derive(Debug)]
 pub struct TalkerGenerator<B: Backend> {

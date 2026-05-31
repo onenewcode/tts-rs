@@ -1,8 +1,11 @@
 use std::time::Instant;
 
+mod audio_finalize;
+mod backend_runtime;
 pub(crate) mod compiler;
 pub(crate) mod conditioning;
 pub(crate) mod error;
+mod loaded_model;
 pub(crate) mod profiling;
 pub(crate) mod reference_audio;
 pub(crate) mod run;
@@ -11,13 +14,13 @@ pub(crate) mod session;
 use tts_core::driver::ErasedLoadedModel;
 use tts_core::{LoadedModelHandle, ModelCapabilities, SynthesisResult};
 
-use crate::model::Qwen3TtsLoadedModel;
 use crate::{
     BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, Qwen3TtsBackend,
     Qwen3TtsEngineConfig, Qwen3TtsError, Qwen3TtsPackage, Qwen3TtsProfilingConfig,
     Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt, QwenRequest,
 };
 
+pub(crate) use self::loaded_model::Qwen3TtsLoadedModel;
 use self::run::Engine;
 
 #[derive(Debug, Clone)]
@@ -146,22 +149,18 @@ impl Qwen3TtsHandleExt for LoadedModelHandle {
     ) -> Result<SynthesisResult, Qwen3TtsError> {
         let instance_id = self.instance_id();
         let driver_id = self.driver_id().to_string();
-        Ok(
-            self.with_model_as::<Qwen3LoadedModelInstance, _, _>(move |model| {
-                model.synthesize_result(instance_id, driver_id, request, options)
-            })??,
-        )
+        self.with_model_as::<Qwen3LoadedModelInstance, _, _>(move |model| {
+            model.synthesize_result(instance_id, driver_id, request, options)
+        })?
     }
 
     fn create_qwen_voice_clone_prompt(
         &self,
         reference: BaseVoiceCloneReferenceAudio,
     ) -> Result<Qwen3TtsVoiceClonePrompt, Qwen3TtsError> {
-        Ok(
-            self.with_model_as::<Qwen3LoadedModelInstance, _, _>(move |model| {
-                model.create_voice_clone_prompt(reference)
-            })??,
-        )
+        self.with_model_as::<Qwen3LoadedModelInstance, _, _>(move |model| {
+            model.create_voice_clone_prompt(reference)
+        })?
     }
 }
 

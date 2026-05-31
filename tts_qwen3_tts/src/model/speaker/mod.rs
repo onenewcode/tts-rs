@@ -1,7 +1,6 @@
-mod config;
-mod feature;
-mod infer;
-mod network;
-mod weights;
+pub mod config;
+pub mod infer;
+pub mod network;
+pub mod weights;
 
 pub(crate) use weights::LoadedQwen3TtsSpeakerEncoder;

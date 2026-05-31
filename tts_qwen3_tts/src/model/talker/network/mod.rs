@@ -1,13 +1,19 @@
+pub(crate) mod attention;
+pub(crate) mod kv;
+pub(crate) mod layer;
+pub(crate) mod mlp;
+pub(crate) mod rope;
+
 use burn::module::Module;
 use burn::nn::{Embedding, Linear, RmsNorm};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
-use super::attention::AttentionPosition;
-use super::kv::KeyValueCache;
-use super::layer::Qwen3TtsDecoderLayer;
-use super::mlp::Qwen3TtsTalkerResizeMlp;
-use super::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
+use self::attention::AttentionPosition;
+use self::kv::KeyValueCache;
+use self::layer::Qwen3TtsDecoderLayer;
+use self::mlp::Qwen3TtsTalkerResizeMlp;
+use self::rope::{Qwen3RotaryEncoding, Qwen3StandardRotaryEncoding};
 use crate::model::nn::attention::autoregressive_attention_mask;
 use crate::model::nn::tensor::{flatten_batch_sequence, unflatten_batch_sequence};
 

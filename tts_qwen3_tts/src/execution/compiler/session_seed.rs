@@ -297,7 +297,7 @@ fn build_voice_clone_seed<B: Backend>(
             inputs_embeds: Tensor::cat(prefill_segments, 1),
             trailing_text_hidden: build_trailing_text_hidden(
                 talker,
-                &body_ids.get(1..).unwrap_or(&[]),
+                body_ids.get(1..).unwrap_or(&[]),
                 &tts_eos_embed,
                 device,
             ),

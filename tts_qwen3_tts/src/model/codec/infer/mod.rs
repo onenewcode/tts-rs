@@ -5,7 +5,7 @@ use burn::tensor::{Int, Tensor, TensorData};
 use crate::Qwen3TtsInferenceError;
 use crate::error::QwenTtsInferenceError;
 use crate::model::codec::config::Qwen3TtsAudioCodecDecoderConfig;
-use crate::model::codec::loading::LoadedQwen3TtsAudioCodec;
+use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
 use crate::model::nn::tensor::read_float_tensor_vec;
 
 #[derive(Debug, Clone)]

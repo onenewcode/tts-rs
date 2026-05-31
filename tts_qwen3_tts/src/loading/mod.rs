@@ -2,9 +2,9 @@ pub(crate) mod package;
 
 use crate::capabilities::project_capabilities;
 use crate::execution::Qwen3LoadedModelInstance;
+use crate::execution::Qwen3TtsLoadedModel;
 use crate::execution::compiler::Qwen3TtsRequestCompiler;
 use crate::loading::package::Qwen3TtsPackage;
-use crate::model::Qwen3TtsLoadedModel;
 use crate::{Qwen3TtsEngineConfig, Qwen3TtsLoadError};
 
 pub(crate) fn load_instance(
