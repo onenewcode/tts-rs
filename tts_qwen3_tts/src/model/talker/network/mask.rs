@@ -2,7 +2,6 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 
 use crate::model::nn::attention::autoregressive_attention_mask;
-// TODO查看burn是不是有更加高效的实现
 pub(crate) fn build_attention_mask<B: Backend>(
     batch_size: usize,
     query_len: usize,

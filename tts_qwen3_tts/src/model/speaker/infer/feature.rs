@@ -2,7 +2,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 use rustfft::{FftPlanner, num_complex::Complex};
 
-use crate::model::speaker::config::SpeakerEncoderConfigManifest;
+use crate::model::speaker::config::SpeakerEncoderConfig;
 
 #[derive(Debug, Clone)]
 pub(crate) struct MelSpectrogram {
@@ -23,13 +23,13 @@ pub(crate) struct MelConfig {
 }
 
 impl MelSpectrogram {
-    pub(crate) fn from_speaker_encoder_config(config: &SpeakerEncoderConfigManifest) -> Self {
+    pub(crate) fn from_speaker_encoder_config(config: &SpeakerEncoderConfig) -> Self {
         Self::new(MelConfig::for_speaker_encoder(config))
     }
 }
 
 impl MelConfig {
-    fn for_speaker_encoder(config: &SpeakerEncoderConfigManifest) -> Self {
+    fn for_speaker_encoder(config: &SpeakerEncoderConfig) -> Self {
         MelConfig {
             sample_rate: config.sample_rate,
             n_fft: 1024,

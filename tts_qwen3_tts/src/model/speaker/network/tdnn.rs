@@ -41,7 +41,7 @@ impl<B: Backend> TimeDelayNetBlock<B> {
         )
     }
 }
-// TODO 有没有更加优雅的叽桑方式
+
 fn reflect_pad_1d<B: Backend>(x: Tensor<B, 3>, pad_left: usize, pad_right: usize) -> Tensor<B, 3> {
     if pad_left == 0 && pad_right == 0 {
         return x;

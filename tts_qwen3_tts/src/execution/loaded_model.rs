@@ -101,11 +101,12 @@ where
         seed: SessionSeed<B>,
         options: Qwen3TtsRunOptions,
     ) -> Result<TalkerGenerator<B>, Qwen3TtsInferenceError> {
+        let sampling = resolve_sampling(options.sampling.as_ref(), &seed.sampling);
         TalkerGenerator::start(
             &self.talker.config,
             &self.talker,
             &seed,
-            map_sampling(options.sampling.as_ref().unwrap_or(&seed.sampling)),
+            sampling,
             options.max_new_tokens.unwrap_or(seed.max_new_tokens),
             Some(seed.codec_eos_token_id),
             seed.suppress_token_ids.clone(),
@@ -366,5 +367,73 @@ fn map_sampling(sampling: &crate::SamplingConfig) -> RuntimeSamplingConfig {
         top_k: sampling.top_k,
         top_p: sampling.top_p,
         repetition_penalty: sampling.repetition_penalty,
+    }
+}
+
+fn resolve_sampling(
+    requested: Option<&crate::SamplingOverride>,
+    model_default: &crate::SamplingConfig,
+) -> RuntimeSamplingConfig {
+    match requested {
+        None => map_sampling(model_default),
+        Some(crate::SamplingOverride::Literal(config)) => map_sampling(config),
+        Some(crate::SamplingOverride::GreedyFromModelDefaults) => map_sampling(
+            &crate::SamplingConfig {
+                do_sample: false,
+                temperature: model_default.temperature,
+                top_k: model_default.top_k,
+                top_p: model_default.top_p,
+                seed: model_default.seed,
+                repetition_penalty: model_default.repetition_penalty,
+            },
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_sampling;
+
+    #[test]
+    fn explicit_sampling_config_is_used_literally() {
+        let model_default = crate::SamplingConfig {
+            do_sample: true,
+            temperature: 0.7,
+            top_k: Some(32),
+            top_p: 0.85,
+            seed: Some(7),
+            repetition_penalty: Some(1.2),
+        };
+        let explicit = crate::SamplingOverride::Literal(crate::SamplingConfig::greedy());
+
+        let runtime = resolve_sampling(Some(&explicit), &model_default);
+
+        assert!(!runtime.do_sample);
+        assert_eq!(runtime.temperature, 1.0);
+        assert_eq!(runtime.top_k, None);
+        assert_eq!(runtime.top_p, 1.0);
+        assert_eq!(runtime.repetition_penalty, None);
+    }
+
+    #[test]
+    fn greedy_override_keeps_model_penalty_defaults() {
+        let model_default = crate::SamplingConfig {
+            do_sample: true,
+            temperature: 0.7,
+            top_k: Some(32),
+            top_p: 0.85,
+            seed: Some(7),
+            repetition_penalty: Some(1.2),
+        };
+        let runtime = resolve_sampling(
+            Some(&crate::SamplingOverride::GreedyFromModelDefaults),
+            &model_default,
+        );
+
+        assert!(!runtime.do_sample);
+        assert_eq!(runtime.temperature, 0.7);
+        assert_eq!(runtime.top_k, Some(32));
+        assert_eq!(runtime.top_p, 0.85);
+        assert_eq!(runtime.repetition_penalty, Some(1.2));
     }
 }

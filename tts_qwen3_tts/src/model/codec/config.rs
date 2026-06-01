@@ -135,14 +135,18 @@ impl Qwen3TtsAudioCodecConfig {
     }
 
     fn init_encoder<B: Backend>(&self, device: &B::Device) -> Qwen3TtsAudioCodecEncoder<B> {
-        let downsample_factor = derive_encoder_downsample_factor(
-            self.input_sample_rate,
-            self.encode_downsample_rate,
-            self.encoder_config.sampling_rate,
-            &self.encoder_config.upsampling_ratios,
-            self.encoder_config._frame_rate,
-        );
-        let downsample_kernel = derive_encoder_downsample_kernel(downsample_factor);
+        let computed_frame_rate =
+            self.input_sample_rate as f64 / self.encode_downsample_rate as f64;
+        debug_assert!((computed_frame_rate - self.encoder_config._frame_rate).abs() < 1e-6);
+        let backbone_frame_rate = self.encoder_config.sampling_rate as f64
+            / self.encoder_config
+                .upsampling_ratios
+                .iter()
+                .copied()
+                .product::<usize>() as f64;
+        let downsample_factor =
+            (backbone_frame_rate / self.encoder_config._frame_rate).round() as usize;
+        let downsample_kernel = downsample_factor * 2;
 
         Qwen3TtsAudioCodecEncoder {
             encoder: self.encoder_config.init_backbone::<B>(device),
@@ -161,24 +165,6 @@ impl Qwen3TtsAudioCodecConfig {
             quantizer: self.encoder_config.init_quantizer::<B>(device),
         }
     }
-}
-/// TODO 只有一处调用根本不用抽取成方法
-fn derive_encoder_downsample_factor(
-    input_sample_rate: usize,
-    encode_downsample_rate: usize,
-    encoder_sampling_rate: usize,
-    upsampling_ratios: &[usize],
-    frame_rate: f64,
-) -> usize {
-    let computed_frame_rate = input_sample_rate as f64 / encode_downsample_rate as f64;
-    debug_assert!((computed_frame_rate - frame_rate).abs() < 1e-6);
-    let backbone_frame_rate =
-        encoder_sampling_rate as f64 / upsampling_ratios.iter().copied().product::<usize>() as f64;
-    (backbone_frame_rate / frame_rate).round() as usize
-}
-/// TODO 只有一处调用根本不用抽取成方法
-fn derive_encoder_downsample_kernel(downsample_factor: usize) -> usize {
-    downsample_factor * 2
 }
 
 impl Qwen3TtsAudioCodecEncoderConfig {

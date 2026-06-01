@@ -9,6 +9,7 @@ use tts_qwen3_tts::{
 };
 
 pub use tts_qwen3_tts::SamplingConfig;
+pub use tts_qwen3_tts::SamplingOverride;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SharedSynthesisInput {
@@ -18,7 +19,7 @@ pub struct SharedSynthesisInput {
     pub language: String,
     pub output: PathBuf,
     pub max_new_tokens: Option<usize>,
-    pub sampling: Option<SamplingConfig>,
+    pub sampling: Option<SamplingOverride>,
     pub profiling: bool,
     pub profiling_per_step: bool,
     pub profiling_stage_summary: bool,

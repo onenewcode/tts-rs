@@ -20,7 +20,6 @@ impl Default for SamplingConfig {
         }
     }
 }
-// TODO 完全不正确，你应该加载模型的配置或者默认，而不是自己生成
 impl SamplingConfig {
     pub fn greedy() -> Self {
         Self {

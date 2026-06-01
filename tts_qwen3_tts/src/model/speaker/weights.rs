@@ -3,7 +3,7 @@ use std::path::Path;
 use burn::tensor::backend::Backend;
 use burn_store::{KeyRemapper, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
 
-use super::config::ModelConfigWithSpeaker;
+use super::config::SpeakerConfigEnvelope;
 use super::infer::feature::MelSpectrogram;
 use super::network::SpeakerEncoderNetwork;
 use crate::Qwen3TtsLoadError;
@@ -34,7 +34,7 @@ where
                 source,
             }
         })?;
-        let config: ModelConfigWithSpeaker = serde_json::from_str(&raw).map_err(|source| {
+        let config: SpeakerConfigEnvelope = serde_json::from_str(&raw).map_err(|source| {
             Qwen3TtsLoadError::CompilerConfigParse {
                 path: config_path.clone(),
                 source,

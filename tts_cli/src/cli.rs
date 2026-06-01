@@ -4,7 +4,7 @@ use std::time::Instant;
 use clap::{ArgAction, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use tracing::info;
 use tts_app::{
-    BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SamplingConfig,
+    BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SamplingOverride,
     SharedSynthesisInput,
 };
 
@@ -94,9 +94,9 @@ pub enum CliSampling {
 }
 
 impl CliSampling {
-    fn to_sampling(self) -> SamplingConfig {
+    fn to_sampling(self) -> SamplingOverride {
         match self {
-            Self::Greedy => SamplingConfig::greedy(),
+            Self::Greedy => SamplingOverride::GreedyFromModelDefaults,
         }
     }
 }
@@ -423,7 +423,7 @@ mod tests {
 
         let input = to_shared_input(&shared);
         assert_eq!(input.max_new_tokens, None);
-        assert_eq!(input.sampling, Some(SamplingConfig::greedy()));
+        assert_eq!(input.sampling, Some(SamplingOverride::GreedyFromModelDefaults));
         assert!(input.profiling);
         assert!(input.profiling_per_step);
         assert_eq!(input.profiling_log_topk, 3);

@@ -29,19 +29,16 @@ pub struct Qwen3TtsEngineConfig {
 
 pub type Qwen3TtsLoadOptions = Qwen3TtsEngineConfig;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Qwen3TtsRunOptions {
     pub max_new_tokens: Option<usize>,
-    pub sampling: Option<crate::SamplingConfig>,
+    pub sampling: Option<SamplingOverride>,
 }
 
-impl Default for Qwen3TtsRunOptions {
-    fn default() -> Self {
-        Self {
-            max_new_tokens: None,
-            sampling: None,
-        }
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub enum SamplingOverride {
+    Literal(crate::SamplingConfig),
+    GreedyFromModelDefaults,
 }
 
 #[derive(Debug, Clone)]

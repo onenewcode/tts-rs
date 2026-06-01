@@ -11,7 +11,7 @@ use self::pooling::AttentiveStatisticsPooling;
 use self::res2net::SqueezeExcitationRes2NetBlock;
 use self::tdnn::TimeDelayNetBlock;
 
-use super::config::SpeakerEncoderConfigManifest;
+use super::config::SpeakerEncoderConfig;
 
 #[derive(Module, Debug)]
 pub(crate) struct SpeakerEncoderNetwork<B: Backend> {
@@ -24,7 +24,7 @@ pub(crate) struct SpeakerEncoderNetwork<B: Backend> {
 }
 
 impl<B: Backend> SpeakerEncoderNetwork<B> {
-    pub(crate) fn new(config: &SpeakerEncoderConfigManifest, device: &B::Device) -> Self {
+    pub(crate) fn new(config: &SpeakerEncoderConfig, device: &B::Device) -> Self {
         let mut blocks = Vec::with_capacity(4);
         blocks.push(SpeakerEncoderBlock::Initial(TimeDelayNetBlock::new(
             config.mel_dim,

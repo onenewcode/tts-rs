@@ -7,7 +7,7 @@ use tts_qwen3_tts::{
     BaseRequest, BaseVoiceCloneConditioning, CustomVoiceRequest, LanguageSelection,
     QWEN3_TTS_DRIVER_ID, Qwen3TtsEngineConfig, Qwen3TtsGenerationConfigSource, Qwen3TtsPackage,
     Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
-    Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingConfig, register_driver,
+    Qwen3TtsVoiceClonePromptMode, QwenRequest, register_driver,
 };
 
 #[test]

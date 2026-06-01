@@ -1,66 +1,66 @@
 use serde::Deserialize;
 
-// TODO 我认为模型的名称也失去语义
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct SpeakerEncoderConfigManifest {
-    #[serde(default = "default_mel_dim")]
+#[serde(default)]
+pub(crate) struct SpeakerEncoderConfig {
     pub(crate) mel_dim: usize,
-    #[serde(default = "default_enc_dim")]
     pub(crate) enc_dim: usize,
-    #[serde(default = "default_enc_channels")]
     pub(crate) enc_channels: Vec<usize>,
-    #[serde(default = "default_enc_kernel_sizes")]
     pub(crate) enc_kernel_sizes: Vec<usize>,
-    #[serde(default = "default_enc_dilations")]
     pub(crate) enc_dilations: Vec<usize>,
-    #[serde(default = "default_enc_attention_channels")]
     pub(crate) enc_attention_channels: usize,
-    #[serde(default = "default_enc_res2net_scale")]
     pub(crate) enc_res2net_scale: usize,
-    #[serde(default = "default_enc_se_channels")]
     pub(crate) enc_se_channels: usize,
-    #[serde(default = "default_speaker_sample_rate")]
     pub(crate) sample_rate: u32,
 }
 
+impl Default for SpeakerEncoderConfig {
+    fn default() -> Self {
+        Self {
+            mel_dim: 128,
+            enc_dim: 1024,
+            enc_channels: vec![512, 512, 512, 512, 1536],
+            enc_kernel_sizes: vec![5, 3, 3, 3, 1],
+            enc_dilations: vec![1, 2, 3, 4, 1],
+            enc_attention_channels: 128,
+            enc_res2net_scale: 8,
+            enc_se_channels: 128,
+            sample_rate: 24_000,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ModelConfigWithSpeaker {
+pub(crate) struct SpeakerConfigEnvelope {
     #[serde(default)]
-    pub(crate) speaker_encoder_config: Option<SpeakerEncoderConfigManifest>,
-}
-// TODO为什么每个都要有一个磨人的方法有没有更好的解决方案
-fn default_mel_dim() -> usize {
-    128
+    pub(crate) speaker_encoder_config: Option<SpeakerEncoderConfig>,
 }
 
-fn default_enc_dim() -> usize {
-    1024
-}
+#[cfg(test)]
+mod tests {
+    use super::{SpeakerConfigEnvelope, SpeakerEncoderConfig};
 
-fn default_enc_channels() -> Vec<usize> {
-    vec![512, 512, 512, 512, 1536]
-}
+    #[test]
+    fn speaker_encoder_config_defaults_missing_fields() {
+        let config: SpeakerEncoderConfig =
+            serde_json::from_str("{}").expect("empty speaker config should deserialize");
 
-fn default_enc_kernel_sizes() -> Vec<usize> {
-    vec![5, 3, 3, 3, 1]
-}
+        assert_eq!(config.mel_dim, 128);
+        assert_eq!(config.enc_dim, 1024);
+        assert_eq!(config.enc_channels, vec![512, 512, 512, 512, 1536]);
+        assert_eq!(config.enc_kernel_sizes, vec![5, 3, 3, 3, 1]);
+        assert_eq!(config.enc_dilations, vec![1, 2, 3, 4, 1]);
+        assert_eq!(config.enc_attention_channels, 128);
+        assert_eq!(config.enc_res2net_scale, 8);
+        assert_eq!(config.enc_se_channels, 128);
+        assert_eq!(config.sample_rate, 24_000);
+    }
 
-fn default_enc_dilations() -> Vec<usize> {
-    vec![1, 2, 3, 4, 1]
-}
+    #[test]
+    fn speaker_config_envelope_defaults_to_missing_speaker_section() {
+        let config: SpeakerConfigEnvelope =
+            serde_json::from_str("{}").expect("empty envelope should deserialize");
 
-fn default_enc_attention_channels() -> usize {
-    128
-}
-
-fn default_enc_res2net_scale() -> usize {
-    8
-}
-
-fn default_enc_se_channels() -> usize {
-    128
-}
-
-fn default_speaker_sample_rate() -> u32 {
-    24_000
+        assert!(config.speaker_encoder_config.is_none());
+    }
 }

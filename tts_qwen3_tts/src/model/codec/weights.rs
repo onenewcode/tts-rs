@@ -37,17 +37,6 @@ const SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS: [(&str, &str); 3] = [
         "encoder.encoder.layers.${1}.block.3.conv.${2}",
     ),
 ];
-/// TODO 只有一处调用根本不用抽取成方法
-fn audio_codec_load_key_remapper() -> KeyRemapper {
-    KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
-        .expect("static regex remapping must compile")
-}
-
-#[cfg(test)]
-fn audio_codec_export_key_remapper() -> KeyRemapper {
-    KeyRemapper::from_patterns(SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS.to_vec())
-        .expect("static regex remapping must compile")
-}
 
 #[derive(Debug)]
 pub struct LoadedQwen3TtsAudioCodec<B: Backend> {
@@ -72,7 +61,10 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
 
     let mut store = SafetensorsStore::from_file(&weights_path)
         .with_from_adapter(PyTorchToBurnAdapter)
-        .remap(audio_codec_load_key_remapper())
+        .remap(
+            KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
+                .expect("static regex remapping must compile"),
+        )
         .skip_enum_variants(true);
 
     let apply_result = model
@@ -95,11 +87,15 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
 
 #[cfg(test)]
 mod tests {
-    use super::{audio_codec_export_key_remapper, audio_codec_load_key_remapper};
+    use burn_store::KeyRemapper;
+
+    use super::{SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS, SPEECH_TOKENIZER_LOAD_KEY_PATTERNS};
 
     #[test]
     fn audio_codec_remappers_compile() {
-        let _ = audio_codec_load_key_remapper();
-        let _ = audio_codec_export_key_remapper();
+        let _ = KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
+            .expect("static load regex remapping must compile");
+        let _ = KeyRemapper::from_patterns(SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS.to_vec())
+            .expect("static export regex remapping must compile");
     }
 }
