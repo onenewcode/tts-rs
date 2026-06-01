@@ -21,6 +21,7 @@ pub(crate) struct MelConfig {
 }
 
 impl MelSpectrogram {
+    // TODO不应该有默认值，所有的配置必须有对应的模型的文件提供
     pub(crate) fn speaker_encoder() -> MelConfig {
         MelConfig {
             sample_rate: 24_000,
@@ -134,7 +135,7 @@ fn hann_window(size: usize) -> Vec<f32> {
         })
         .collect()
 }
-
+// TODO为什么定义死完全不合理
 fn hz_to_mel(hz: f32) -> f32 {
     const F_SP: f32 = 200.0 / 3.0;
     const MIN_LOG_HZ: f32 = 1000.0;
@@ -147,7 +148,7 @@ fn hz_to_mel(hz: f32) -> f32 {
         MIN_LOG_MEL + (hz / MIN_LOG_HZ).ln() / LOGSTEP
     }
 }
-
+// TODO为什么定义死完全不合理
 fn mel_to_hz(mel: f32) -> f32 {
     const F_SP: f32 = 200.0 / 3.0;
     const MIN_LOG_HZ: f32 = 1000.0;

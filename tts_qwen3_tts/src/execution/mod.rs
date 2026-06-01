@@ -22,7 +22,7 @@ use crate::{
 
 pub(crate) use self::loaded_model::Qwen3TtsLoadedModel;
 use self::run::Engine;
-
+// TODO 有很多单层无意义的封装
 #[derive(Debug, Clone)]
 pub(crate) struct Qwen3LoadedModelInstance {
     model: Qwen3TtsLoadedModel,

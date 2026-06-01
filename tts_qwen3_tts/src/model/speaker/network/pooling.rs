@@ -21,7 +21,7 @@ impl<B: Backend> AttentiveStatisticsPooling<B> {
                 .init(device),
         }
     }
-
+    // TODO 太多clone 有没有更加高效的用法
     pub(crate) fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let [batch, channels, time] = x.dims();
         let mean = x.clone().mean_dim(2);

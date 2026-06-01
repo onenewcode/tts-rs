@@ -1,21 +1,34 @@
 # tts-rs
 
-Rust workspace for running Qwen3-TTS locally and writing WAV output from the
-CLI. The Qwen3-TTS runtime path is implemented on Burn.
+`tts-rs` is a Rust workspace for running Qwen3-TTS locally and writing WAV
+output from a thin CLI. The current runtime path is implemented on Burn and is
+structured so the repository can grow beyond a single model driver over time.
 
-Workspace crates:
+Today the repository ships one concrete driver, `tts_qwen3_tts`, plus the
+framework and application layers that sit around it.
 
-- `tts_core` (`tts_infer/`): framework core for lifecycle, session/audio primitives, and loaded-instance management
-- `tts_error`: shared diagnostics foundation
+Important: run synthesis commands in release mode. Debug builds are much slower
+and can look like they are hanging during model load or generation.
+
+## Workspace Overview
+
+The workspace currently contains five crates:
+
+- `tts_core` (`tts_infer/`): framework core for loaded-model lifecycle,
+  capability inspection, and shared audio/result primitives
+- `tts_error`: shared diagnostics and error-reporting foundation
 - `tts_qwen3_tts`: Qwen3-TTS driver crate
-- `tts_app`: application-service orchestration for local frontends
-- `tts_cli`: command-line shell that writes `.wav` files through `tts_app`
+- `tts_app`: application-service orchestration used by local frontends
+- `tts_cli`: command-line shell that routes requests through `tts_app`
 
-The CLI writes mono, 24 kHz, 16-bit PCM WAV output. Base voice cloning supports
-both `ref_audio + ref_text` ICL conditioning and `x_vector_only` conditioning.
+At a high level:
 
-Important: run all CLI synthesis commands in release mode. Debug builds are
-much slower and can look like they are hanging during model load or generation.
+```text
+CLI/frontend -> tts_app -> tts_core manager/handle lifecycle -> qwen3 driver -> WAV
+```
+
+For the current implementation split and runtime responsibilities, see
+`docs/architecture.md`.
 
 ## Prerequisites
 
@@ -25,9 +38,9 @@ much slower and can look like they are hanging during model load or generation.
 
 ## Quickstart
 
-The normal path is: pass the model directory directly.
+The normal path is to pass the model directory directly.
 
-Base voice clone ICL example:
+Base voice clone with `ref_audio + ref_text` conditioning:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize base \
@@ -40,7 +53,7 @@ cargo run --release -p tts_cli -- synthesize base \
   --output ./out/base_clone_icl_release.wav
 ```
 
-Base x-vector-only example:
+Base voice clone with `x_vector_only` conditioning:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize base \
@@ -53,7 +66,7 @@ cargo run --release -p tts_cli -- synthesize base \
   --output ./out/base_clone_xvector_release.wav
 ```
 
-Custom voice example:
+Custom voice synthesis:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize custom-voice \
@@ -65,7 +78,7 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --output ./out/custom-voice.wav
 ```
 
-Custom voice instruct example:
+Custom voice synthesis with `--instruct`:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize custom-voice \
@@ -153,6 +166,36 @@ contains speakers such as:
 
 If you pass an unsupported language or speaker, the CLI reports the values that
 the model actually supports.
+
+## Testing
+
+Use the fast, asset-free checks first:
+
+```bash
+cargo test -p tts_core
+cargo test -p tts_app
+cargo test -p tts_qwen3_tts --test public_surface
+cargo test -p tts_qwen3_tts --test compiler_load
+cargo test -p tts_cli --test cli_parse
+```
+
+For full testing guidance, see `docs/TEST.md`.
+
+For CLI end-to-end verification, run `tts_cli` in release mode against a local
+model package. A good smoke path is:
+
+```bash
+cargo run --release -p tts_cli -- synthesize custom-voice \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "你好，欢迎使用 tts-rs。" \
+  --language Chinese \
+  --speaker Vivian \
+  --backend flex \
+  --output ./out/custom-voice-flex-smoke.wav
+```
+
+That command exercises the CLI shell, `tts_app` request preparation, driver
+loading, generation, and WAV writing in one path.
 
 ## Advanced: Custom Manifest
 

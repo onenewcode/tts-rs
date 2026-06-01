@@ -11,6 +11,7 @@ where
     B: Backend,
     B::Device: Clone,
 {
+    // TODO 不太合理频繁的转换和复制，应该直接输出tensor或者提供一个更高效的接口
     pub(crate) fn encode(&self, samples: &[f32]) -> Result<Vec<f32>, Qwen3TtsInferenceError> {
         let mel = self
             .mel_extractor

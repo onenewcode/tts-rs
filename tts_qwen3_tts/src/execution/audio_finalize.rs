@@ -2,7 +2,7 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor, TensorData};
 
 use crate::Qwen3TtsInferenceError;
-
+// TODO 优化这部分代码
 pub(crate) fn reference_codec_prefix_tensor<B: Backend>(
     reference_codec_frames: &[Vec<i64>],
     batch_size: usize,

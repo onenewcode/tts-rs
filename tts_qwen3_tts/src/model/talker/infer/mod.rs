@@ -35,6 +35,7 @@ pub struct TalkerGenerator<B: Backend> {
 #[derive(Debug)]
 pub struct TalkerStep<B: Backend> {
     pub finished: bool,
+    //TODO 该字段有必要么。没有就应该删除
     _codec_ids: Tensor<B, 2, Int>,
 }
 

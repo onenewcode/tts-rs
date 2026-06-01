@@ -2,12 +2,12 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
 use crate::error::QwenTtsInferenceError;
-
+// TODO不正确，完全不需要封装
 pub(crate) fn flatten_batch_sequence<B: Backend>(tensor: Tensor<B, 3>) -> Tensor<B, 2> {
     let [batch_size, seq_len, feature_size] = tensor.dims();
     tensor.reshape([batch_size * seq_len, feature_size])
 }
-
+// TODO不正确，完全不需要封装
 pub(crate) fn unflatten_batch_sequence<B: Backend>(
     tensor: Tensor<B, 2>,
     batch_size: usize,
@@ -16,7 +16,7 @@ pub(crate) fn unflatten_batch_sequence<B: Backend>(
     let [_flat, feature_size] = tensor.dims();
     tensor.reshape([batch_size, seq_len, feature_size])
 }
-
+// TODO不正确，完全不需要封装
 pub(crate) fn read_float_tensor_vec<B: Backend, const D: usize>(
     tensor: Tensor<B, D>,
     context: &str,
@@ -32,7 +32,7 @@ pub(crate) fn read_float_tensor_vec<B: Backend, const D: usize>(
             message: format!("{context}: {source}"),
         })
 }
-
+// TODO不正确，完全不需要封装
 pub(crate) fn read_int_tensor_vec<B: Backend, const D: usize>(
     tensor: Tensor<B, D, Int>,
     context: &str,
