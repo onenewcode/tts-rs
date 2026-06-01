@@ -22,6 +22,7 @@ pub(crate) struct SemanticRequestCondition {
     pub(crate) controls: ProfileControlIds,
     pub(crate) max_new_tokens: usize,
     pub(crate) codec_eos_token_id: usize,
+    pub(crate) sampling: crate::SamplingConfig,
     pub(crate) prompt_recipe: Qwen3TtsPromptRecipe,
 }
 
@@ -51,6 +52,7 @@ pub(crate) struct CompileProfileConditionInput<'a> {
     pub(crate) controls: ProfileControlIds,
     pub(crate) max_new_tokens: usize,
     pub(crate) codec_eos_token_id: usize,
+    pub(crate) sampling: crate::SamplingConfig,
 }
 
 fn build_assistant_prompt(text: &str) -> String {
@@ -226,6 +228,7 @@ pub(crate) fn compile_profile_condition(
         controls: input.controls,
         max_new_tokens: input.max_new_tokens,
         codec_eos_token_id: input.codec_eos_token_id,
+        sampling: input.sampling,
         prompt_recipe: input.prompt_recipe,
     })
 }

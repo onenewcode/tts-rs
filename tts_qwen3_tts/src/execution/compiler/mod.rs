@@ -81,6 +81,14 @@ impl Qwen3TtsRequestCompiler {
                         )?,
                         max_new_tokens: profile.generation_config.max_new_tokens,
                         codec_eos_token_id: profile.control_config.codec_eos_token_id as usize,
+                        sampling: crate::SamplingConfig {
+                            do_sample: profile.generation_config.do_sample,
+                            temperature: profile.generation_config.temperature,
+                            top_k: Some(profile.generation_config.top_k),
+                            top_p: profile.generation_config.top_p,
+                            seed: None,
+                            repetition_penalty: profile.generation_config.repetition_penalty,
+                        },
                     },
                 )
             }
@@ -107,6 +115,14 @@ impl Qwen3TtsRequestCompiler {
                         )?,
                         max_new_tokens: profile.generation_config.max_new_tokens,
                         codec_eos_token_id: profile.control_config.codec_eos_token_id as usize,
+                        sampling: crate::SamplingConfig {
+                            do_sample: profile.generation_config.do_sample,
+                            temperature: profile.generation_config.temperature,
+                            top_k: Some(profile.generation_config.top_k),
+                            top_p: profile.generation_config.top_p,
+                            seed: None,
+                            repetition_penalty: profile.generation_config.repetition_penalty,
+                        },
                     },
                 )
             }

@@ -37,7 +37,7 @@ const SPEECH_TOKENIZER_EXPORT_KEY_PATTERNS: [(&str, &str); 3] = [
         "encoder.encoder.layers.${1}.block.3.conv.${2}",
     ),
 ];
-
+/// TODO 只有一处调用根本不用抽取成方法
 fn audio_codec_load_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
         .expect("static regex remapping must compile")

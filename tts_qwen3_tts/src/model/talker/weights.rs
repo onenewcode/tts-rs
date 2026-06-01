@@ -10,12 +10,12 @@ use crate::model::talker::network::Qwen3TtsTalkerModelBundle;
 const TALKER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(r"(.*)norm\.weight$", "${1}norm.gamma")];
 #[cfg(test)]
 const TALKER_EXPORT_KEY_PATTERNS: [(&str, &str); 1] = [(r"(.*)norm\.gamma$", "${1}norm.weight")];
-
+// TODO 只有一个地方使用完全不需要抽取
 fn talker_load_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(TALKER_LOAD_KEY_PATTERNS.to_vec())
         .expect("static regex remapping must compile")
 }
-
+/// TODO 不需测试，这样简单的函数
 #[cfg(test)]
 fn talker_export_key_remapper() -> KeyRemapper {
     KeyRemapper::from_patterns(TALKER_EXPORT_KEY_PATTERNS.to_vec())
@@ -75,7 +75,7 @@ pub fn load_qwen3_tts_talker_for_inference<B: Backend>(
 
     Ok(LoadedQwen3TtsTalker { config, model })
 }
-
+// TODO 删除该测试
 #[cfg(test)]
 mod tests {
     use super::{talker_export_key_remapper, talker_load_key_remapper};

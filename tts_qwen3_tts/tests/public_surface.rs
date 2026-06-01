@@ -50,10 +50,10 @@ fn voice_clone_prompt_is_reusable_across_base_requests() {
 }
 
 #[test]
-fn run_options_default_to_greedy_and_model_token_limit() {
+fn run_options_default_to_model_sampling_and_token_limit() {
     let options = Qwen3TtsRunOptions::default();
     assert_eq!(options.max_new_tokens, None);
-    assert_eq!(options.sampling, SamplingConfig::greedy());
+    assert_eq!(options.sampling, None);
 }
 
 #[test]

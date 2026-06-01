@@ -16,6 +16,7 @@ pub(crate) struct SessionSeed<B: Backend> {
     pub(crate) reference_codec_frames: Option<Vec<Vec<i64>>>,
     pub(crate) max_new_tokens: usize,
     pub(crate) codec_eos_token_id: usize,
+    pub(crate) sampling: crate::SamplingConfig,
     pub(crate) suppress_token_ids: Vec<usize>,
 }
 
@@ -107,7 +108,6 @@ pub(crate) fn materialize_session_seed<B: Backend>(
         .collect::<Vec<_>>();
     let position_ids =
         Tensor::<B, 3, Int>::from_data(TensorData::new(position_data, [3, 1, seq_len]), device);
-
     Ok(SessionSeed {
         inputs_embeds: prepared.inputs_embeds,
         position_ids,
@@ -117,6 +117,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
         reference_codec_frames: prepared.reference_codec_frames,
         max_new_tokens: condition.max_new_tokens,
         codec_eos_token_id: condition.codec_eos_token_id,
+        sampling: condition.sampling.clone(),
         suppress_token_ids: build_suppress_token_ids(
             talker.config.vocab_size,
             condition.codec_eos_token_id,

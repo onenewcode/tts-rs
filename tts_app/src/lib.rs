@@ -18,7 +18,7 @@ pub struct SharedSynthesisInput {
     pub language: String,
     pub output: PathBuf,
     pub max_new_tokens: Option<usize>,
-    pub sampling: SamplingConfig,
+    pub sampling: Option<SamplingConfig>,
     pub profiling: bool,
     pub profiling_per_step: bool,
     pub profiling_stage_summary: bool,

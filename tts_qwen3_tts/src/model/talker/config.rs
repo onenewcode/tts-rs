@@ -64,6 +64,7 @@ pub struct Qwen3TtsTalkerCodePredictorConfig {
 pub struct Qwen3TtsTalkerRopeScalingConfig {
     pub interleaved: bool,
     pub mrope_section: Vec<usize>,
+    // TODO 为什么要rename
     #[serde(default = "default_rope_type", rename = "rope_type")]
     pub rope_type: String,
 }

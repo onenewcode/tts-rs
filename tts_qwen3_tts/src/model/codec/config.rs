@@ -162,7 +162,7 @@ impl Qwen3TtsAudioCodecConfig {
         }
     }
 }
-
+/// TODO 只有一处调用根本不用抽取成方法
 fn derive_encoder_downsample_factor(
     input_sample_rate: usize,
     encode_downsample_rate: usize,
@@ -176,7 +176,7 @@ fn derive_encoder_downsample_factor(
         encoder_sampling_rate as f64 / upsampling_ratios.iter().copied().product::<usize>() as f64;
     (backbone_frame_rate / frame_rate).round() as usize
 }
-
+/// TODO 只有一处调用根本不用抽取成方法
 fn derive_encoder_downsample_kernel(downsample_factor: usize) -> usize {
     downsample_factor * 2
 }

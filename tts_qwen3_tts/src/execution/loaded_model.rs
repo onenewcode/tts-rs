@@ -105,7 +105,7 @@ where
             &self.talker.config,
             &self.talker,
             &seed,
-            map_sampling(&options.sampling),
+            map_sampling(options.sampling.as_ref().unwrap_or(&seed.sampling)),
             options.max_new_tokens.unwrap_or(seed.max_new_tokens),
             Some(seed.codec_eos_token_id),
             seed.suppress_token_ids.clone(),

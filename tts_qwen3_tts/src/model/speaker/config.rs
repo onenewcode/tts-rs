@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+// TODO 我认为模型的名称也失去语义
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SpeakerEncoderConfigManifest {
     #[serde(default = "default_mel_dim")]
@@ -27,7 +28,7 @@ pub(crate) struct ModelConfigWithSpeaker {
     #[serde(default)]
     pub(crate) speaker_encoder_config: Option<SpeakerEncoderConfigManifest>,
 }
-
+// TODO为什么每个都要有一个磨人的方法有没有更好的解决方案
 fn default_mel_dim() -> usize {
     128
 }

@@ -21,6 +21,7 @@ impl<B> Qwen3TtsTalkerCodePredictor<B>
 where
     B: Backend,
 {
+    // TODO 不允许有  #[allow(dead_code)]你要删除无用的代码
     #[allow(dead_code)]
     pub fn predict(
         &self,

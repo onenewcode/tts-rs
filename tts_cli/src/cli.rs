@@ -52,10 +52,8 @@ pub struct SharedSynthesizeArgs {
     pub language: String,
     #[arg(long)]
     pub output: PathBuf,
-    #[arg(long)]
-    pub max_new_tokens: Option<usize>,
-    #[arg(long, value_enum, default_value_t = CliSampling::Greedy)]
-    pub sampling: CliSampling,
+    #[arg(long, value_enum)]
+    pub sampling: Option<CliSampling>,
     #[arg(long)]
     pub profiling: bool,
     #[arg(long)]
@@ -151,7 +149,6 @@ fn run_base_synthesis(
     info!(
         source = %input_source_display(&args.shared).display(),
         output = %args.shared.output.display(),
-        max_new_tokens = ?args.shared.max_new_tokens,
         profiling = args.shared.profiling,
         language = %args.shared.language,
         "starting tts generation"
@@ -184,7 +181,6 @@ fn run_custom_voice_synthesis(
     info!(
         source = %input_source_display(&args.shared).display(),
         output = %args.shared.output.display(),
-        max_new_tokens = ?args.shared.max_new_tokens,
         profiling = args.shared.profiling,
         language = %args.shared.language,
         "starting tts generation"
@@ -215,8 +211,8 @@ fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
         text: shared.text.clone(),
         language: shared.language.clone(),
         output: shared.output.clone(),
-        max_new_tokens: shared.max_new_tokens,
-        sampling: shared.sampling.to_sampling(),
+        max_new_tokens: None,
+        sampling: shared.sampling.map(CliSampling::to_sampling),
         profiling: shared.profiling,
         profiling_per_step: shared.profiling_per_step,
         profiling_stage_summary: shared.profiling_stage_summary,
@@ -267,7 +263,6 @@ mod tests {
                     assert_eq!(base.shared.text, "hello");
                     assert_eq!(base.shared.language, "auto");
                     assert_eq!(base.shared.output, PathBuf::from("out.wav"));
-                    assert_eq!(base.shared.max_new_tokens, None);
                     assert_eq!(base.ref_audio, None);
                     assert_eq!(base.ref_text, None);
                     assert!(!base.x_vector_only);
@@ -349,8 +344,7 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            max_new_tokens: None,
-            sampling: CliSampling::Greedy,
+            sampling: None,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -419,8 +413,7 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            max_new_tokens: Some(32),
-            sampling: CliSampling::Greedy,
+            sampling: Some(CliSampling::Greedy),
             profiling: true,
             profiling_per_step: true,
             profiling_stage_summary: true,
@@ -429,8 +422,8 @@ mod tests {
         };
 
         let input = to_shared_input(&shared);
-        assert_eq!(input.max_new_tokens, Some(32));
-        assert_eq!(input.sampling, SamplingConfig::greedy());
+        assert_eq!(input.max_new_tokens, None);
+        assert_eq!(input.sampling, Some(SamplingConfig::greedy()));
         assert!(input.profiling);
         assert!(input.profiling_per_step);
         assert_eq!(input.profiling_log_topk, 3);

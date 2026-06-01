@@ -32,14 +32,14 @@ pub type Qwen3TtsLoadOptions = Qwen3TtsEngineConfig;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Qwen3TtsRunOptions {
     pub max_new_tokens: Option<usize>,
-    pub sampling: crate::SamplingConfig,
+    pub sampling: Option<crate::SamplingConfig>,
 }
 
 impl Default for Qwen3TtsRunOptions {
     fn default() -> Self {
         Self {
             max_new_tokens: None,
-            sampling: crate::SamplingConfig::greedy(),
+            sampling: None,
         }
     }
 }

@@ -137,6 +137,7 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
     }
 }
 
+// TODO不需要抽取同时有没有更加高效的计算方式
 fn interleaved_mrope_source_indices(mrope_section: &[usize], half_dim: usize) -> Vec<i64> {
     let modalities = mrope_section.len();
     (0..half_dim)
