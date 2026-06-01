@@ -2,6 +2,8 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 use rustfft::{FftPlanner, num_complex::Complex};
 
+use crate::model::speaker::config::SpeakerEncoderConfigManifest;
+
 #[derive(Debug, Clone)]
 pub(crate) struct MelSpectrogram {
     config: MelConfig,
@@ -21,19 +23,26 @@ pub(crate) struct MelConfig {
 }
 
 impl MelSpectrogram {
-    // TODO不应该有默认值，所有的配置必须有对应的模型的文件提供
-    pub(crate) fn speaker_encoder() -> MelConfig {
+    pub(crate) fn from_speaker_encoder_config(config: &SpeakerEncoderConfigManifest) -> Self {
+        Self::new(MelConfig::for_speaker_encoder(config))
+    }
+}
+
+impl MelConfig {
+    fn for_speaker_encoder(config: &SpeakerEncoderConfigManifest) -> Self {
         MelConfig {
-            sample_rate: 24_000,
+            sample_rate: config.sample_rate,
             n_fft: 1024,
             hop_length: 256,
             win_length: 1024,
-            n_mels: 128,
+            n_mels: config.mel_dim,
             fmin: 0.0,
-            fmax: 12_000.0,
+            fmax: config.sample_rate as f32 / 2.0,
         }
     }
+}
 
+impl MelSpectrogram {
     pub(crate) fn new(config: MelConfig) -> Self {
         let mel_basis = create_mel_filterbank(
             config.sample_rate,
@@ -114,13 +123,7 @@ impl MelSpectrogram {
                 })
                 .collect();
             fft.process(&mut buffer);
-            result.push(
-                buffer
-                    .iter()
-                    .take(n_fft / 2 + 1)
-                    .copied()
-                    .collect(),
-            );
+            result.push(buffer.iter().take(n_fft / 2 + 1).copied().collect());
         }
 
         result
@@ -135,31 +138,17 @@ fn hann_window(size: usize) -> Vec<f32> {
         })
         .collect()
 }
-// TODO为什么定义死完全不合理
+
 fn hz_to_mel(hz: f32) -> f32 {
-    const F_SP: f32 = 200.0 / 3.0;
-    const MIN_LOG_HZ: f32 = 1000.0;
-    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;
-    const LOGSTEP: f32 = 0.068_751_74;
-
-    if hz < MIN_LOG_HZ {
-        hz / F_SP
-    } else {
-        MIN_LOG_MEL + (hz / MIN_LOG_HZ).ln() / LOGSTEP
-    }
+    const MEL_SCALE: f32 = 2_595.0;
+    const MEL_BREAK_FREQUENCY_HZ: f32 = 700.0;
+    MEL_SCALE * (1.0 + hz / MEL_BREAK_FREQUENCY_HZ).log10()
 }
-// TODO为什么定义死完全不合理
-fn mel_to_hz(mel: f32) -> f32 {
-    const F_SP: f32 = 200.0 / 3.0;
-    const MIN_LOG_HZ: f32 = 1000.0;
-    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;
-    const LOGSTEP: f32 = 0.068_751_74;
 
-    if mel < MIN_LOG_MEL {
-        mel * F_SP
-    } else {
-        MIN_LOG_HZ * ((mel - MIN_LOG_MEL) * LOGSTEP).exp()
-    }
+fn mel_to_hz(mel: f32) -> f32 {
+    const MEL_SCALE: f32 = 2_595.0;
+    const MEL_BREAK_FREQUENCY_HZ: f32 = 700.0;
+    MEL_BREAK_FREQUENCY_HZ * (10_f32.powf(mel / MEL_SCALE) - 1.0)
 }
 
 fn create_mel_filterbank(

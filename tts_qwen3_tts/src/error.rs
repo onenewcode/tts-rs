@@ -49,8 +49,6 @@ pub enum Qwen3TtsLoadError {
         #[source]
         source: tokenizers::Error,
     },
-    #[error("backend `{backend}` is not compiled in")]
-    UnavailableBackend { backend: String },
     #[error("invalid package manifest: {message}")]
     InvalidManifest { message: String },
     #[error("invalid model directory: {message}")]
@@ -148,11 +146,6 @@ impl From<Qwen3TtsLoadError> for DiagnosticError {
                 path,
                 source.to_string(),
             ),
-            Qwen3TtsLoadError::UnavailableBackend { backend } => DiagnosticError::unsupported(
-                "qwen3.load.backend_unavailable",
-                format!("backend `{backend}` is not compiled in"),
-            )
-            .with_context("backend", backend),
             Qwen3TtsLoadError::InvalidManifest { message } => DiagnosticError::invalid_argument(
                 "qwen3.load.invalid_manifest",
                 format!("invalid package manifest: {message}"),

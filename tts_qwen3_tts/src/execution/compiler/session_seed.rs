@@ -99,9 +99,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
         ),
     }?;
 
-    let preferred_dtype = preferred_hidden_dtype::<B>(device);
     let seq_len = prepared.inputs_embeds.dims()[1];
-    let inputs_embeds = prepared.inputs_embeds.cast(preferred_dtype);
     let attention_mask =
         Tensor::<B, 2, Int>::from_data(TensorData::new(vec![1; seq_len], [1, seq_len]), device);
     let position_data = (0..3)
@@ -111,11 +109,11 @@ pub(crate) fn materialize_session_seed<B: Backend>(
         Tensor::<B, 3, Int>::from_data(TensorData::new(position_data, [3, 1, seq_len]), device);
 
     Ok(SessionSeed {
-        inputs_embeds,
+        inputs_embeds: prepared.inputs_embeds,
         position_ids,
         attention_mask,
-        trailing_text_hidden: prepared.trailing_text_hidden.cast(preferred_dtype),
-        tts_pad_embed: prepared.tts_pad_embed.cast(preferred_dtype),
+        trailing_text_hidden: prepared.trailing_text_hidden,
+        tts_pad_embed: prepared.tts_pad_embed,
         reference_codec_frames: prepared.reference_codec_frames,
         max_new_tokens: condition.max_new_tokens,
         codec_eos_token_id: condition.codec_eos_token_id,
@@ -130,14 +128,6 @@ fn build_suppress_token_ids(vocab_size: usize, codec_eos_token_id: usize) -> Vec
     (vocab_size.saturating_sub(1024)..vocab_size)
         .filter(|id| *id != codec_eos_token_id)
         .collect()
-}
-
-fn preferred_hidden_dtype<B: Backend>(device: &B::Device) -> DType {
-    if B::supports_dtype(device, DType::BF16) {
-        DType::BF16
-    } else {
-        DType::F32
-    }
 }
 
 fn build_non_streaming_seed<B: Backend>(

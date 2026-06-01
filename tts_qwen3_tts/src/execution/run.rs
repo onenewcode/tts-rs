@@ -1,6 +1,6 @@
 use super::error::InferError;
 use super::session::{EngineSession, ModelSession, SessionStep};
-use tts_core::PcmAudio;
+use tts_infer::PcmAudio;
 
 pub trait LoadedModel {
     type Request;
@@ -62,7 +62,7 @@ mod tests {
     use super::{Engine, LoadedModel};
     use crate::execution::error::{InferError, ServiceError};
     use crate::execution::session::{ModelSession, SessionStep};
-    use tts_core::PcmAudio;
+    use tts_infer::PcmAudio;
 
     #[derive(Clone)]
     struct MockLoadedModel {

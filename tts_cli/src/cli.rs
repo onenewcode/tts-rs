@@ -4,7 +4,7 @@ use std::time::Instant;
 use clap::{ArgAction, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use tracing::info;
 use tts_app::{
-    BaseSynthesisInput, CustomVoiceSynthesisInput, Qwen3TtsBackend, QwenAppService, SamplingConfig,
+    BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SamplingConfig,
     SharedSynthesisInput,
 };
 
@@ -52,8 +52,6 @@ pub struct SharedSynthesizeArgs {
     pub language: String,
     #[arg(long)]
     pub output: PathBuf,
-    #[arg(long, value_enum)]
-    pub backend: Option<CliBackend>,
     #[arg(long)]
     pub max_new_tokens: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliSampling::Greedy)]
@@ -90,31 +88,6 @@ pub struct CustomVoiceSynthesizeArgs {
     pub speaker: String,
     #[arg(long)]
     pub instruct: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum CliBackend {
-    Flex,
-    Wgpu,
-    Cuda,
-    Rocm,
-    Metal,
-    Vulkan,
-    Webgpu,
-}
-
-impl CliBackend {
-    fn to_backend(self) -> Qwen3TtsBackend {
-        match self {
-            Self::Flex => Qwen3TtsBackend::Flex,
-            Self::Wgpu => Qwen3TtsBackend::Wgpu,
-            Self::Cuda => Qwen3TtsBackend::Cuda,
-            Self::Rocm => Qwen3TtsBackend::Rocm,
-            Self::Metal => Qwen3TtsBackend::Metal,
-            Self::Vulkan => Qwen3TtsBackend::Vulkan,
-            Self::Webgpu => Qwen3TtsBackend::WebGpu,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -178,7 +151,6 @@ fn run_base_synthesis(
     info!(
         source = %input_source_display(&args.shared).display(),
         output = %args.shared.output.display(),
-        backend = ?args.shared.backend,
         max_new_tokens = ?args.shared.max_new_tokens,
         profiling = args.shared.profiling,
         language = %args.shared.language,
@@ -212,7 +184,6 @@ fn run_custom_voice_synthesis(
     info!(
         source = %input_source_display(&args.shared).display(),
         output = %args.shared.output.display(),
-        backend = ?args.shared.backend,
         max_new_tokens = ?args.shared.max_new_tokens,
         profiling = args.shared.profiling,
         language = %args.shared.language,
@@ -244,7 +215,6 @@ fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
         text: shared.text.clone(),
         language: shared.language.clone(),
         output: shared.output.clone(),
-        backend: shared.backend.map(CliBackend::to_backend),
         max_new_tokens: shared.max_new_tokens,
         sampling: shared.sampling.to_sampling(),
         profiling: shared.profiling,
@@ -308,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn args_parse_backend_as_enum() {
+    fn args_parse_custom_voice_fields() {
         let args = Args::try_parse_from([
             "tts_cli",
             "synthesize",
@@ -323,15 +293,12 @@ mod tests {
             "Chelsie",
             "--output",
             "out.wav",
-            "--backend",
-            "flex",
         ])
-        .expect("backend should parse as enum");
+        .expect("custom voice args should parse");
 
         match args.command {
             Command::Synthesize(command) => match command.profile {
                 ProfileCommand::CustomVoice(custom_voice) => {
-                    assert_eq!(custom_voice.shared.backend, Some(CliBackend::Flex));
                     assert_eq!(
                         custom_voice.shared.manifest,
                         Some(PathBuf::from("package.yaml"))
@@ -382,7 +349,6 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            backend: None,
             max_new_tokens: None,
             sampling: CliSampling::Greedy,
             profiling: false,
@@ -453,7 +419,6 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            backend: Some(CliBackend::Flex),
             max_new_tokens: Some(32),
             sampling: CliSampling::Greedy,
             profiling: true,
@@ -464,7 +429,6 @@ mod tests {
         };
 
         let input = to_shared_input(&shared);
-        assert_eq!(input.backend, Some(Qwen3TtsBackend::Flex));
         assert_eq!(input.max_new_tokens, Some(32));
         assert_eq!(input.sampling, SamplingConfig::greedy());
         assert!(input.profiling);

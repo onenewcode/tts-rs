@@ -1,15 +1,12 @@
-pub mod backend;
 mod request;
-
-use self::backend::Qwen3TtsBackend;
 
 use std::any::type_name;
 
-use tts_core::DriverDescriptor;
-use tts_core::DriverRegistry;
-use tts_core::PcmAudio;
-use tts_core::driver::DriverFactory;
 use tts_error::DiagnosticError;
+use tts_infer::DriverDescriptor;
+use tts_infer::DriverRegistry;
+use tts_infer::PcmAudio;
+use tts_infer::driver::DriverFactory;
 
 pub use crate::loading::package::{
     Qwen3TtsArtifactsManifest, Qwen3TtsGenerationConfigManifest, Qwen3TtsGenerationConfigSource,
@@ -27,7 +24,6 @@ pub const DRIVER_ID: &str = "qwen3_tts";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Qwen3TtsEngineConfig {
     pub package: Qwen3TtsPackageSource,
-    pub backend: Qwen3TtsBackend,
     pub profiling: crate::Qwen3TtsProfilingConfig,
 }
 
@@ -89,15 +85,11 @@ impl Qwen3TtsEngine {
     }
 
     pub fn package(&self) -> &Qwen3TtsPackage {
-        self.instance.package()
-    }
-
-    pub fn backend(&self) -> Qwen3TtsBackend {
-        self.instance.backend()
+        &self.instance.package
     }
 
     pub fn profiling(&self) -> &crate::Qwen3TtsProfilingConfig {
-        self.instance.profiling()
+        &self.instance.profiling
     }
 }
 
@@ -131,9 +123,9 @@ impl DriverFactory for Qwen3TtsDriver {
     fn load(
         &self,
         config: Self::Config,
-    ) -> Result<Box<dyn tts_core::driver::ErasedLoadedModel>, DiagnosticError> {
+    ) -> Result<Box<dyn tts_infer::driver::ErasedLoadedModel>, DiagnosticError> {
         crate::loading::load_instance(&config)
-            .map(|instance| Box::new(instance) as Box<dyn tts_core::driver::ErasedLoadedModel>)
+            .map(|instance| Box::new(instance) as Box<dyn tts_infer::driver::ErasedLoadedModel>)
             .map_err(DiagnosticError::from)
     }
 }
@@ -145,7 +137,7 @@ pub fn register_driver(registry: &mut DriverRegistry) -> Result<(), DiagnosticEr
 #[cfg(test)]
 mod tests {
     use super::synthesize_batch_with;
-    use tts_core::PcmAudio;
+    use tts_infer::PcmAudio;
 
     #[test]
     fn batch_wrapper_preserves_order() {

@@ -71,7 +71,7 @@ where
 
         Ok(Some(Self {
             encoder,
-            mel_extractor: MelSpectrogram::new(MelSpectrogram::speaker_encoder()),
+            mel_extractor: MelSpectrogram::from_speaker_encoder_config(&speaker_config),
             sample_rate: speaker_config.sample_rate,
             device: device.clone(),
         }))

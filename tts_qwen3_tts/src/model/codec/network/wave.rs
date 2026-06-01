@@ -7,7 +7,6 @@ use burn::tensor::backend::Backend;
 
 use super::activation::AudioCodecSnakeBeta;
 use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
-use crate::model::nn::tensor::{flatten_batch_sequence, unflatten_batch_sequence};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecConvNeXtBlock<B: Backend> {
@@ -95,14 +94,17 @@ impl<B: Backend> Qwen3TtsAudioCodecConvNeXtBlock<B> {
         let residual = hidden.clone();
         let [batch, channels, time] = hidden.dims();
         let hidden = self.dwconv.forward(hidden);
-        let hidden = flatten_batch_sequence(hidden.swap_dims(1, 2));
+        let hidden = hidden.swap_dims(1, 2).reshape([batch * time, channels]);
         let hidden = self.norm.forward(hidden);
-        let hidden = unflatten_batch_sequence(hidden, batch, time).swap_dims(1, 2);
-        let hidden = flatten_batch_sequence(hidden.swap_dims(1, 2));
+        let hidden = hidden.reshape([batch, time, channels]).swap_dims(1, 2);
+        let hidden = hidden.swap_dims(1, 2).reshape([batch * time, channels]);
         let hidden = self.pwconv1.forward(hidden);
         let hidden = gelu(hidden);
         let hidden = self.pwconv2.forward(hidden);
-        let hidden = unflatten_batch_sequence(hidden, batch, time).swap_dims(1, 2);
+        let output_channels = hidden.dims()[1];
+        let hidden = hidden
+            .reshape([batch, time, output_channels])
+            .swap_dims(1, 2);
         let gamma = self.gamma.val().reshape([1, channels, 1]);
         residual + hidden.mul(gamma)
     }

@@ -2,6 +2,7 @@
 name = "tts_qwen3_tts"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 
 [lib]
 bench = false
@@ -27,8 +28,8 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
-tts_core = { workspace = true }
+tts_infer = { workspace = true }
 tts_error = { workspace = true }
 tracing = { workspace = true }
-hound = "3.5.1"
+hound = { workspace = true }
 rustfft = "6"

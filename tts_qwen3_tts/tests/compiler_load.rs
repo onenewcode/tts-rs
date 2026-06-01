@@ -5,8 +5,7 @@ use tokenizers::Tokenizer;
 use tokenizers::models::wordlevel::WordLevel;
 use tokenizers::pre_tokenizers::whitespace::WhitespaceSplit;
 use tts_qwen3_tts::{
-    Qwen3TtsBackend, Qwen3TtsEngine, Qwen3TtsEngineConfig, Qwen3TtsPackageSource,
-    Qwen3TtsProfilingConfig,
+    Qwen3TtsEngine, Qwen3TtsEngineConfig, Qwen3TtsPackageSource, Qwen3TtsProfilingConfig,
 };
 
 #[test]
@@ -15,7 +14,6 @@ fn engine_load_requires_generation_config_file() {
 
     let error = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
         package: Qwen3TtsPackageSource::ModelDir(model_dir),
-        backend: Qwen3TtsBackend::Flex,
         profiling: Qwen3TtsProfilingConfig::default(),
     })
     .expect_err("engine load should fail when generation_config.json is absent");
@@ -33,7 +31,6 @@ fn engine_load_requires_runtime_artifacts_after_model_dir_parse() {
 
     let error = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
         package: Qwen3TtsPackageSource::ModelDir(model_dir),
-        backend: Qwen3TtsBackend::Flex,
         profiling: Qwen3TtsProfilingConfig::default(),
     })
     .expect_err("engine load should also validate resident runtime artifacts during load");

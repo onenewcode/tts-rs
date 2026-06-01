@@ -5753,8 +5753,8 @@ name = "tts_app"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
- "tts_core",
  "tts_error",
+ "tts_infer",
  "tts_qwen3_tts",
 ]
 
@@ -5769,19 +5769,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "tts_core"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "thiserror 2.0.18",
- "tts_error",
-]
-
-[[package]]
 name = "tts_error"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "tts_infer"
+version = "0.1.0"
+dependencies = [
+ "hound",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tts_error",
 ]
 
 [[package]]
@@ -5799,8 +5800,8 @@ dependencies = [
  "thiserror 2.0.18",
  "tokenizers 0.23.1",
  "tracing",
- "tts_core",
  "tts_error",
+ "tts_infer",
 ]
 
 [[package]]

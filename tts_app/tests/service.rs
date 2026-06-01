@@ -4,8 +4,7 @@ use tts_app::{
     BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SharedSynthesisInput,
 };
 use tts_qwen3_tts::{
-    BaseVoiceCloneConditioning, LanguageSelection, Qwen3TtsBackend, Qwen3TtsPackageSource,
-    QwenRequest,
+    BaseVoiceCloneConditioning, LanguageSelection, Qwen3TtsPackageSource, QwenRequest,
 };
 
 #[test]
@@ -17,7 +16,6 @@ fn base_request_requires_ref_text_when_reference_audio_is_not_x_vector_only() {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            backend: Some(Qwen3TtsBackend::Flex),
             max_new_tokens: None,
             sampling: tts_qwen3_tts::SamplingConfig::greedy(),
             profiling: false,
@@ -44,7 +42,6 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
             text: "hello".to_string(),
             language: "zh".to_string(),
             output: PathBuf::from("out.wav"),
-            backend: Some(Qwen3TtsBackend::Flex),
             max_new_tokens: None,
             sampling: tts_qwen3_tts::SamplingConfig::greedy(),
             profiling: false,
@@ -63,7 +60,6 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
         prepared.package_source,
         Qwen3TtsPackageSource::ManifestPath(_)
     ));
-    assert_eq!(prepared.backend, Qwen3TtsBackend::Flex);
     match prepared.request {
         QwenRequest::Base(request) => {
             assert_eq!(request.language, LanguageSelection::Named("zh".to_string()));
@@ -77,33 +73,6 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
 }
 
 #[test]
-fn base_prepare_uses_driver_backend_resolution_when_shell_omits_backend() {
-    let prepared = QwenAppService::prepare_base(BaseSynthesisInput {
-        shared: SharedSynthesisInput {
-            model_dir: Some(PathBuf::from("model-dir")),
-            manifest: None,
-            text: "hello".to_string(),
-            language: "auto".to_string(),
-            output: PathBuf::from("out.wav"),
-            backend: None,
-            max_new_tokens: None,
-            sampling: tts_qwen3_tts::SamplingConfig::greedy(),
-            profiling: false,
-            profiling_per_step: false,
-            profiling_stage_summary: true,
-            no_profiling_stage_summary: false,
-            profiling_log_topk: 8,
-        },
-        ref_audio: None,
-        ref_text: None,
-        x_vector_only: false,
-    })
-    .unwrap();
-
-    assert_eq!(prepared.backend, Qwen3TtsBackend::Flex);
-}
-
-#[test]
 fn custom_voice_request_building_preserves_driver_specific_fields() {
     let prepared = QwenAppService::prepare_custom_voice(CustomVoiceSynthesisInput {
         shared: SharedSynthesisInput {
@@ -112,7 +81,6 @@ fn custom_voice_request_building_preserves_driver_specific_fields() {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            backend: Some(Qwen3TtsBackend::Flex),
             max_new_tokens: None,
             sampling: tts_qwen3_tts::SamplingConfig::greedy(),
             profiling: false,

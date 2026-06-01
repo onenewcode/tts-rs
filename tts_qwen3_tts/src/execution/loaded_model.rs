@@ -4,7 +4,6 @@ use burn::tensor::Tensor;
 use burn::tensor::backend::Backend;
 
 use super::audio_finalize::reference_codec_prefix_tensor;
-use super::backend_runtime::load_backend_runtime;
 use super::compiler::Qwen3TtsRequestCompiler;
 use super::compiler::session_seed::{SessionSeed, materialize_session_seed};
 use super::run::LoadedModel;
@@ -15,10 +14,35 @@ use crate::model::talker::infer::TalkerGenerator;
 use crate::model::talker::infer::sampling::SamplingConfig as RuntimeSamplingConfig;
 use crate::model::talker::weights::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
 use crate::{
-    BaseVoiceCloneReferenceAudio, Qwen3TtsBackend, Qwen3TtsInferenceError, Qwen3TtsLoadError,
-    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
-    QwenRequest,
+    BaseVoiceCloneReferenceAudio, Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage,
+    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt, QwenRequest,
 };
+
+#[cfg(not(any(
+    feature = "flex",
+    feature = "wgpu",
+    feature = "cuda",
+    feature = "rocm",
+    feature = "metal",
+    feature = "vulkan",
+    feature = "webgpu",
+)))]
+compile_error!("enable one backend feature for tts_qwen3_tts");
+
+#[cfg(feature = "flex")]
+type RuntimeBackend = burn::backend::Flex;
+#[cfg(feature = "wgpu")]
+type RuntimeBackend = burn::backend::Wgpu;
+#[cfg(feature = "cuda")]
+type RuntimeBackend = burn::backend::Cuda;
+#[cfg(feature = "rocm")]
+type RuntimeBackend = burn::backend::Rocm;
+#[cfg(feature = "metal")]
+type RuntimeBackend = burn::backend::Metal;
+#[cfg(feature = "vulkan")]
+type RuntimeBackend = burn::backend::Vulkan;
+#[cfg(feature = "webgpu")]
+type RuntimeBackend = burn::backend::WebGpu;
 
 #[derive(Debug)]
 pub(crate) struct Qwen3TtsModelInner<B: Backend> {
@@ -36,11 +60,10 @@ where
 {
     pub(crate) fn load(
         package: Qwen3TtsPackage,
-        profiling: &Qwen3TtsProfilingConfig,
+        _profiling: &Qwen3TtsProfilingConfig,
         compiler: Qwen3TtsRequestCompiler,
         device: &B::Device,
     ) -> Result<Self, Qwen3TtsLoadError> {
-        crate::execution::profiling::configure(profiling);
         let talker = load_qwen3_tts_talker_for_inference::<B>(
             &package.talker_config_path,
             &package.talker_weights_path,
@@ -93,7 +116,7 @@ where
         &self,
         run: &TalkerGenerator<B>,
         reference_codec_frames: Option<&[Vec<i64>]>,
-    ) -> Result<tts_core::PcmAudio, Qwen3TtsInferenceError> {
+    ) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
         let generated = run.finalize()?;
         let waveform = if let Some(reference_codec_frames) = reference_codec_frames {
             let [batch_size, num_quantizers, time_steps] = generated.codec_token_ids.dims();
@@ -116,7 +139,7 @@ where
         let waveform =
             Waveform::from_tensor(self.decoder.config.output_sample_rate as u32, waveform)?;
         let pcm = waveform.to_pcm();
-        Ok(tts_core::PcmAudio {
+        Ok(tts_infer::PcmAudio {
             pcm_i16: pcm,
             sample_rate: waveform.sample_rate(),
             channels: 1,
@@ -203,7 +226,7 @@ where
 
 pub(crate) trait SessionOps: Send {
     fn step(&mut self) -> Result<SessionStep, Qwen3TtsInferenceError>;
-    fn finish(self: Box<Self>) -> Result<tts_core::PcmAudio, Qwen3TtsInferenceError>;
+    fn finish(self: Box<Self>) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError>;
 }
 
 pub(crate) struct Qwen3TtsLoadedModel {
@@ -219,12 +242,15 @@ impl std::fmt::Debug for Qwen3TtsLoadedModel {
 impl Qwen3TtsLoadedModel {
     pub(crate) fn load(
         package: Qwen3TtsPackage,
-        backend: Qwen3TtsBackend,
         profiling: &Qwen3TtsProfilingConfig,
         compiler: Qwen3TtsRequestCompiler,
     ) -> Result<Self, Qwen3TtsLoadError> {
-        let inner = load_backend_runtime(package, backend, profiling, compiler)?;
-        Ok(Self { inner })
+        let device = Default::default();
+        Ok(Self {
+            inner: Arc::new(BackendRuntime::new(
+                Qwen3TtsModelInner::<RuntimeBackend>::load(package, profiling, compiler, &device)?,
+            )),
+        })
     }
 
     pub(crate) fn create_voice_clone_prompt(
@@ -281,7 +307,7 @@ impl ModelSession for Qwen3TtsSession {
         self.inner.step()
     }
 
-    fn finish(self) -> Result<tts_core::PcmAudio, Self::Error> {
+    fn finish(self) -> Result<tts_infer::PcmAudio, Self::Error> {
         self.inner.finish()
     }
 }
@@ -307,7 +333,7 @@ where
         }
     }
 
-    fn finish(self: Box<Self>) -> Result<tts_core::PcmAudio, Qwen3TtsInferenceError> {
+    fn finish(self: Box<Self>) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
         self.inner
             .finalize_audio(&self.run, self.reference_codec_frames.as_deref())
     }

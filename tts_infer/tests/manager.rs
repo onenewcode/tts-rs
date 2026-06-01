@@ -4,8 +4,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
-use tts_core::driver::{DriverFactory, ErasedLoadedModel};
-use tts_core::{DriverDescriptor, DriverRegistry, ModelCapabilities, ModelManager, ModelState};
+use tts_infer::driver::{DriverFactory, ErasedLoadedModel};
+use tts_infer::{DriverDescriptor, DriverRegistry, ModelCapabilities, ModelManager, ModelState};
 
 #[derive(Debug, Clone)]
 struct MockLoadConfig {

@@ -30,7 +30,17 @@ where
 
     let prepared_for_speaker =
         load_reference_audio(&reference.path, speaker_encoder.sample_rate())?;
-    let speaker_embedding = speaker_encoder.encode(&prepared_for_speaker.samples)?;
+    let speaker_embedding = speaker_encoder
+        .encode_embedding(&prepared_for_speaker.samples)
+        .try_into_data()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read speaker embedding: {source}"),
+        })?
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read speaker embedding: {source}"),
+        })?;
     if speaker_embedding.is_empty() {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: format!(

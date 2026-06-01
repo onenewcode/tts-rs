@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 mod audio_finalize;
-mod backend_runtime;
 pub(crate) mod compiler;
 pub(crate) mod conditioning;
 pub(crate) mod error;
@@ -11,24 +10,22 @@ pub(crate) mod reference_audio;
 pub(crate) mod run;
 pub(crate) mod session;
 
-use tts_core::driver::ErasedLoadedModel;
-use tts_core::{LoadedModelHandle, ModelCapabilities, SynthesisResult};
+use tts_infer::driver::ErasedLoadedModel;
+use tts_infer::{LoadedModelHandle, ModelCapabilities, SynthesisResult};
 
 use crate::{
-    BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, Qwen3TtsBackend,
-    Qwen3TtsEngineConfig, Qwen3TtsError, Qwen3TtsPackage, Qwen3TtsProfilingConfig,
-    Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt, QwenRequest,
+    BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, Qwen3TtsEngineConfig, Qwen3TtsError,
+    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
+    QwenRequest,
 };
 
 pub(crate) use self::loaded_model::Qwen3TtsLoadedModel;
 use self::run::Engine;
-// TODO 有很多单层无意义的封装
 #[derive(Debug, Clone)]
 pub(crate) struct Qwen3LoadedModelInstance {
-    model: Qwen3TtsLoadedModel,
-    package: Qwen3TtsPackage,
-    backend: Qwen3TtsBackend,
-    profiling: Qwen3TtsProfilingConfig,
+    pub(crate) model: Qwen3TtsLoadedModel,
+    pub(crate) package: Qwen3TtsPackage,
+    pub(crate) profiling: Qwen3TtsProfilingConfig,
     capabilities: ModelCapabilities,
 }
 
@@ -36,57 +33,26 @@ impl Qwen3LoadedModelInstance {
     pub(crate) fn new(
         model: Qwen3TtsLoadedModel,
         package: Qwen3TtsPackage,
-        backend: Qwen3TtsBackend,
         profiling: Qwen3TtsProfilingConfig,
         capabilities: ModelCapabilities,
     ) -> Self {
         Self {
             model,
             package,
-            backend,
             profiling,
             capabilities,
         }
-    }
-
-    pub(crate) fn package(&self) -> &Qwen3TtsPackage {
-        &self.package
-    }
-
-    pub(crate) fn backend(&self) -> Qwen3TtsBackend {
-        self.backend
-    }
-
-    pub(crate) fn profiling(&self) -> &Qwen3TtsProfilingConfig {
-        &self.profiling
     }
 
     pub(crate) fn synthesize_audio(
         &self,
         request: QwenRequest,
         options: Qwen3TtsRunOptions,
-    ) -> Result<tts_core::PcmAudio, Qwen3TtsError> {
+    ) -> Result<tts_infer::PcmAudio, Qwen3TtsError> {
         let request = self.materialize_request(request)?;
         Engine::new(self.model.clone())
             .synthesize(request, options)
             .map_err(Qwen3TtsError::from)
-    }
-
-    pub(crate) fn synthesize_result(
-        &self,
-        instance_id: u64,
-        driver_id: String,
-        request: QwenRequest,
-        options: Qwen3TtsRunOptions,
-    ) -> Result<SynthesisResult, Qwen3TtsError> {
-        let started = Instant::now();
-        let audio = self.synthesize_audio(request, options)?;
-        Ok(SynthesisResult {
-            audio,
-            instance_id,
-            driver_id,
-            elapsed: started.elapsed(),
-        })
     }
 
     pub(crate) fn create_voice_clone_prompt(
@@ -150,7 +116,14 @@ impl Qwen3TtsHandleExt for LoadedModelHandle {
         let instance_id = self.instance_id();
         let driver_id = self.driver_id().to_string();
         self.with_model_as::<Qwen3LoadedModelInstance, _, _>(move |model| {
-            model.synthesize_result(instance_id, driver_id, request, options)
+            let started = Instant::now();
+            let audio = model.synthesize_audio(request, options)?;
+            Ok(SynthesisResult {
+                audio,
+                instance_id,
+                driver_id,
+                elapsed: started.elapsed(),
+            })
         })?
     }
 

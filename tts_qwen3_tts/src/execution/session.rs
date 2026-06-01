@@ -1,5 +1,5 @@
 use super::error::{InferError, ServiceError};
-use tts_core::PcmAudio;
+use tts_infer::PcmAudio;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionStep {

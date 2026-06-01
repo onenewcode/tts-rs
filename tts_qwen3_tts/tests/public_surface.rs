@@ -1,14 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
 
-use tts_core::{DriverRegistry, ModelManager};
 use tts_error::ErrorCategory;
+use tts_infer::{DriverRegistry, ModelManager};
 use tts_qwen3_tts::{
     BaseRequest, BaseVoiceCloneConditioning, CustomVoiceRequest, LanguageSelection,
-    QWEN3_TTS_DRIVER_ID, Qwen3TtsBackend, Qwen3TtsEngineConfig, Qwen3TtsGenerationConfigSource,
-    Qwen3TtsPackage, Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions,
-    Qwen3TtsVoiceClonePrompt, Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingConfig,
-    register_driver,
+    QWEN3_TTS_DRIVER_ID, Qwen3TtsEngineConfig, Qwen3TtsGenerationConfigSource, Qwen3TtsPackage,
+    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
+    Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingConfig, register_driver,
 };
 
 #[test]
@@ -64,38 +63,6 @@ fn profiling_defaults_match_refactor_contract() {
     assert!(!profiling.per_step);
     assert!(profiling.stage_summary);
     assert_eq!(profiling.log_topk, 8);
-}
-
-#[test]
-fn backend_parses_supported_labels() {
-    assert_eq!(
-        "flex".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::Flex
-    );
-    assert_eq!(
-        "wgpu".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::Wgpu
-    );
-    assert_eq!(
-        "cuda".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::Cuda
-    );
-    assert_eq!(
-        "rocm".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::Rocm
-    );
-    assert_eq!(
-        "metal".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::Metal
-    );
-    assert_eq!(
-        "vulkan".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::Vulkan
-    );
-    assert_eq!(
-        "webgpu".parse::<Qwen3TtsBackend>().unwrap(),
-        Qwen3TtsBackend::WebGpu
-    );
 }
 
 #[test]
@@ -186,7 +153,6 @@ fn registered_driver_surfaces_structured_load_diagnostics() {
             QWEN3_TTS_DRIVER_ID,
             Qwen3TtsEngineConfig {
                 package: Qwen3TtsPackageSource::ModelDir(model_dir),
-                backend: Qwen3TtsBackend::Flex,
                 profiling: Qwen3TtsProfilingConfig::default(),
             },
         )

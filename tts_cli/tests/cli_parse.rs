@@ -27,7 +27,7 @@ fn package_first_base_subcommand_parses_clone_flags() {
 }
 
 #[test]
-fn package_first_custom_voice_subcommand_parses_speaker_and_backend() {
+fn package_first_custom_voice_subcommand_parses_speaker() {
     let args = Args::try_parse_from([
         "tts_cli",
         "synthesize",
@@ -42,14 +42,12 @@ fn package_first_custom_voice_subcommand_parses_speaker_and_backend() {
         "Chelsie",
         "--output",
         "out.wav",
-        "--backend",
-        "flex",
     ])
     .expect("package-first custom-voice command should parse");
 
     let debug = format!("{args:?}");
     assert!(debug.contains("Chelsie"));
-    assert!(debug.contains("flex") || debug.contains("Flex"));
+    assert!(debug.contains("zh"));
 }
 
 #[test]

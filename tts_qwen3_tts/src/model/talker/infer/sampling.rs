@@ -9,7 +9,6 @@ use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor};
 
 use crate::model::nn::mask::suppress_token_mask;
 use crate::model::nn::sequence::select_last_sequence_step;
-use crate::model::nn::tensor::flatten_batch_sequence;
 
 #[derive(Debug, Clone)]
 pub struct SamplingConfig {
@@ -81,11 +80,10 @@ fn prepare_last_step_logits<B: Backend>(
     };
     let [_batch_size, seq_len, _feature_size] = logits.dims();
     let logits_2d = if seq_len == 1 {
-        flatten_batch_sequence(logits)
+        logits.reshape([batch_size, vocab_size])
     } else {
-        flatten_batch_sequence(select_last_sequence_step(logits))
-    }
-    .reshape([batch_size, vocab_size]);
+        select_last_sequence_step(logits).reshape([batch_size, vocab_size])
+    };
     apply_suppress_mask(logits_2d, suppress_token_ids)
 }
 

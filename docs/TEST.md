@@ -16,11 +16,11 @@ Testing should reinforce the current workspace boundaries:
 Run these first when making ordinary code changes:
 
 ```bash
-cargo test -p tts_core
-cargo test -p tts_app
-cargo test -p tts_qwen3_tts --test public_surface
-cargo test -p tts_qwen3_tts --test compiler_load
-cargo test -p tts_cli --test cli_parse
+cargo test --release -p tts_infer
+cargo test --release -p tts_app --test service
+cargo test --release -p tts_qwen3_tts --test public_surface
+cargo test --release -p tts_qwen3_tts --test compiler_load
+cargo test --release -p tts_cli --test cli_parse
 ```
 
 These commands match the current workspace members and test targets:
@@ -59,7 +59,7 @@ Focus:
 
 - moving shell semantics out of the CLI layer
 - request preparation for base and custom-voice flows
-- backend defaulting and input validation
+- input validation
 
 These tests should stay asset-free.
 
@@ -74,7 +74,6 @@ Focus:
 
 - public request defaults
 - package source normalization
-- backend parsing and selection behavior
 - public load/config defaults
 - driver-facing request compilation/load boundaries
 
@@ -122,7 +121,6 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --text "你好，欢迎使用 tts-rs。" \
   --language Chinese \
   --speaker Vivian \
-  --backend flex \
   --output ./out/custom-voice-flex-smoke.wav
 ```
 
@@ -135,7 +133,6 @@ cargo run --release -p tts_cli -- synthesize base \
   --language English \
   --ref-audio ./out/base_reference_custom_voice.wav \
   --ref-text "Hello from the generated reference clip." \
-  --backend flex \
   --output ./out/base_clone_icl_release.wav
 ```
 
@@ -158,7 +155,6 @@ cargo run --release -p tts_cli --no-default-features --features cuda -- synthesi
   --text "你好，欢迎使用 tts-rs。" \
   --language Chinese \
   --speaker Vivian \
-  --backend cuda \
   --output ./out/custom-voice-cuda-zh.wav
 ```
 
@@ -191,7 +187,7 @@ runtime assets.
 
 ## Ownership Guidelines
 
-### `tts_core`
+### `tts_infer`
 
 Owns tests for:
 

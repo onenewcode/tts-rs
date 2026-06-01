@@ -6,7 +6,6 @@ use crate::Qwen3TtsInferenceError;
 use crate::error::QwenTtsInferenceError;
 use crate::model::codec::config::Qwen3TtsAudioCodecDecoderConfig;
 use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
-use crate::model::nn::tensor::read_float_tensor_vec;
 
 #[derive(Debug, Clone)]
 pub struct Waveform {
@@ -65,7 +64,16 @@ impl Waveform {
         waveform: Tensor<B, 3>,
     ) -> Result<Self, QwenTtsInferenceError> {
         let [batch_size, channels, _time_steps] = waveform.dims();
-        let samples = read_float_tensor_vec(waveform, "failed to read waveform")?;
+        let samples = waveform
+            .try_into_data()
+            .map_err(|source| QwenTtsInferenceError::TensorRead {
+                message: format!("failed to read waveform: {source}"),
+            })?
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .map_err(|source| QwenTtsInferenceError::TensorRead {
+                message: format!("failed to read waveform: {source}"),
+            })?;
         Self::new(sample_rate, batch_size, channels, samples)
     }
 

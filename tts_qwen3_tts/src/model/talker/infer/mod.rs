@@ -32,11 +32,9 @@ pub struct TalkerGenerator<B: Backend> {
     finished: bool,
 }
 
-#[derive(Debug)]
-pub struct TalkerStep<B: Backend> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TalkerStep {
     pub finished: bool,
-    //TODO 该字段有必要么。没有就应该删除
-    _codec_ids: Tensor<B, 2, Int>,
 }
 
 #[derive(Debug)]
@@ -123,7 +121,7 @@ where
     pub fn step(
         &mut self,
         loaded: &LoadedQwen3TtsTalker<B>,
-    ) -> Result<Option<TalkerStep<B>>, QwenTtsInferenceError> {
+    ) -> Result<Option<TalkerStep>, QwenTtsInferenceError> {
         if self.finished {
             return Ok(None);
         }
@@ -164,10 +162,7 @@ where
 
         if self.step_idx >= self.max_new_tokens {
             self.finished = true;
-            return Ok(Some(TalkerStep {
-                finished: true,
-                _codec_ids: codec_ids,
-            }));
+            return Ok(Some(TalkerStep { finished: true }));
         }
 
         let cache_len = validate_cache_lengths(&self.decode_cache)?;
@@ -200,7 +195,6 @@ where
         }
         Ok(Some(TalkerStep {
             finished: self.finished,
-            _codec_ids: codec_ids,
         }))
     }
 

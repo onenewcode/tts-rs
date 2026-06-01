@@ -41,14 +41,15 @@ impl<B: Backend> TimeDelayNetBlock<B> {
         )
     }
 }
-// TODO 有没有有优化的方式
+
 fn reflect_pad_1d<B: Backend>(x: Tensor<B, 3>, pad_left: usize, pad_right: usize) -> Tensor<B, 3> {
     if pad_left == 0 && pad_right == 0 {
         return x;
     }
 
     let [batch, channels, time] = x.dims();
-    let mut segments = Vec::with_capacity(3);
+    let mut segments =
+        Vec::with_capacity(1 + usize::from(pad_left > 0) + usize::from(pad_right > 0));
     if pad_left > 0 {
         segments.push(
             x.clone()

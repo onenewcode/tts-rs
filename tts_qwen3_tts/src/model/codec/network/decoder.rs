@@ -10,7 +10,6 @@ use super::conv::AudioCodecCausalConv1d;
 use super::wave::{Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecWaveDecoderEntry};
 use crate::model::nn::attention::repeat_kv_heads;
 use crate::model::nn::codebook::{gather_codebook_embeddings, normalized_codebook_centroids};
-use crate::model::nn::tensor::{flatten_batch_sequence, unflatten_batch_sequence};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecDecoder<B: Backend> {
@@ -88,14 +87,15 @@ pub struct Qwen3TtsAudioCodecDecoderCodebook<B: Backend> {
 
 impl<B: Backend> Qwen3TtsAudioCodecDecoderMlp<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        let [batch, seq_len, _hidden_size] = hidden.dims();
-        let hidden_2d = flatten_batch_sequence(hidden);
+        let [batch, seq_len, hidden_size] = hidden.dims();
+        let hidden_2d = hidden.reshape([batch * seq_len, hidden_size]);
         let gate = self.gate_proj.forward(hidden_2d.clone());
         let up = self.up_proj.forward(hidden_2d);
         let activated = silu(gate);
         let product = activated * up;
         let output = self.down_proj.forward(product);
-        unflatten_batch_sequence(output, batch, seq_len)
+        let output_hidden = output.dims()[1];
+        output.reshape([batch, seq_len, output_hidden])
     }
 }
 
@@ -109,8 +109,8 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
         rope: &RotaryEncoding<B>,
         mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, _hidden_size] = hidden.dims();
-        let hidden_2d = flatten_batch_sequence(hidden);
+        let [batch_size, seq_len, hidden_size] = hidden.dims();
+        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
 
         let query = self
             .q_proj
@@ -149,8 +149,11 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
                 .swap_dims(1, 2)
                 .reshape([batch_size, seq_len, num_heads * head_dim]);
 
-        let output = self.o_proj.forward(flatten_batch_sequence(output));
-        unflatten_batch_sequence(output, batch_size, seq_len)
+        let output = self
+            .o_proj
+            .forward(output.reshape([batch_size * seq_len, num_heads * head_dim]));
+        let output_hidden = output.dims()[1];
+        output.reshape([batch_size, seq_len, output_hidden])
     }
 }
 
@@ -190,10 +193,11 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         rope: &RotaryEncoding<B>,
         mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
-        let [batch, seq_len, _latent] = hidden.dims();
-        let hidden_2d = flatten_batch_sequence(hidden);
+        let [batch, seq_len, latent] = hidden.dims();
+        let hidden_2d = hidden.reshape([batch * seq_len, latent]);
         let hidden = self.input_proj.forward(hidden_2d);
-        let mut hidden = unflatten_batch_sequence(hidden, batch, seq_len);
+        let projected_hidden = hidden.dims()[1];
+        let mut hidden = hidden.reshape([batch, seq_len, projected_hidden]);
 
         for layer in &self.layers {
             hidden = layer.forward(
@@ -207,8 +211,12 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         }
 
         let hidden = self.norm.forward(hidden);
-        let hidden = self.output_proj.forward(flatten_batch_sequence(hidden));
-        unflatten_batch_sequence(hidden, batch, seq_len)
+        let hidden_size = hidden.dims()[2];
+        let hidden = self
+            .output_proj
+            .forward(hidden.reshape([batch * seq_len, hidden_size]));
+        let output_hidden = hidden.dims()[1];
+        hidden.reshape([batch, seq_len, output_hidden])
     }
 }
 

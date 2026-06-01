@@ -13,9 +13,6 @@ use crate::model::nn::attention::{autoregressive_attention_mask, repeat_kv_heads
 use crate::model::nn::codebook::{
     gather_codebook_embeddings, nearest_codebook_token_ids, normalized_codebook_centroids,
 };
-use crate::model::nn::tensor::{
-    flatten_batch_sequence, read_int_tensor_vec, unflatten_batch_sequence,
-};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecEncoder<B: Backend> {
@@ -224,9 +221,9 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
         head_dim: usize,
         rope: &RotaryEncoding<B>,
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, _hidden_size] = hidden.dims();
+        let [batch_size, seq_len, hidden_size] = hidden.dims();
         let device = hidden.device();
-        let hidden_2d = flatten_batch_sequence(hidden);
+        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
         let query = self
             .q_proj
             .forward(hidden_2d.clone())
@@ -265,19 +262,21 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
 
         let output = self
             .o_proj
-            .forward(flatten_batch_sequence(attention_output));
-        unflatten_batch_sequence(output, batch_size, seq_len)
+            .forward(attention_output.reshape([batch_size * seq_len, num_heads * head_dim]));
+        let output_hidden = output.dims()[1];
+        output.reshape([batch_size, seq_len, output_hidden])
     }
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecEncoderMlp<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        let [batch_size, seq_len, _hidden_size] = hidden.dims();
-        let hidden_2d = flatten_batch_sequence(hidden);
+        let [batch_size, seq_len, hidden_size] = hidden.dims();
+        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
         let hidden = self.fc1.forward(hidden_2d);
         let hidden = gelu(hidden);
         let hidden = self.fc2.forward(hidden);
-        unflatten_batch_sequence(hidden, batch_size, seq_len)
+        let output_hidden = hidden.dims()[1];
+        hidden.reshape([batch_size, seq_len, output_hidden])
     }
 }
 
@@ -306,10 +305,16 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderQuantizer<B> {
         let all_codes: Vec<Tensor<B, 2, Int>> =
             semantic_codes.into_iter().chain(acoustic_codes).collect();
         let total_layers = all_codes.len();
-        let flat_codes = read_int_tensor_vec(
-            Tensor::cat(all_codes, 0),
-            "failed to read reference codec token ids",
-        )?;
+        let flat_codes = Tensor::cat(all_codes, 0)
+            .try_into_data()
+            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+                message: format!("failed to read reference codec token ids: {source}"),
+            })?
+            .convert::<i64>()
+            .into_vec::<i64>()
+            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+                message: format!("failed to read reference codec token ids: {source}"),
+            })?;
 
         let mut frames = Vec::with_capacity(time_steps);
         for time_index in 0..time_steps {

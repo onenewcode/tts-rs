@@ -10,7 +10,6 @@ pub use error::{Qwen3TtsError, Qwen3TtsInferenceError, Qwen3TtsLoadError};
 pub use execution::Qwen3TtsHandleExt;
 pub use execution::profiling::Qwen3TtsProfilingConfig;
 pub use sampling::SamplingConfig;
-pub use surface::backend::Qwen3TtsBackend;
 pub use surface::{
     BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
     DRIVER_ID as QWEN3_TTS_DRIVER_ID, LanguageSelection, Qwen3TtsArtifactsManifest, Qwen3TtsDriver,

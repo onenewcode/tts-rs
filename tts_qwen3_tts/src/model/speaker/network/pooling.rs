@@ -21,17 +21,14 @@ impl<B: Backend> AttentiveStatisticsPooling<B> {
                 .init(device),
         }
     }
-    // TODO 太多clone 有没有更加高效的用法
     pub(crate) fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let [batch, channels, time] = x.dims();
         let mean = x.clone().mean_dim(2);
-        let diff = x.clone() - mean.clone();
-        let var = diff.powi_scalar(2).mean_dim(2);
-        let std = (var + 1e-5).sqrt();
+        let std = ((x.clone() - mean.clone()).powi_scalar(2).mean_dim(2) + 1e-5).sqrt();
         let attn_in = Tensor::cat(
             vec![
                 x.clone(),
-                mean.clone().expand([batch, channels, time]),
+                mean.expand([batch, channels, time]),
                 std.expand([batch, channels, time]),
             ],
             1,

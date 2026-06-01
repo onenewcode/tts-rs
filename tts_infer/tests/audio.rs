@@ -1,4 +1,4 @@
-use tts_core::PcmAudio;
+use tts_infer::PcmAudio;
 
 #[test]
 fn write_wav_emits_pcm_header_for_audio_shape() {
