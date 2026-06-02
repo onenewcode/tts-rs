@@ -108,6 +108,14 @@ pub struct Qwen3TtsAudioCodecEncoderCodebook<B: Backend> {
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecEncoder<B> {
+    pub fn dtype(&self) -> DType {
+        let Qwen3TtsAudioCodecEncoderBackboneLayer::InputConv(layer) = &self.encoder.layers[0]
+        else {
+            unreachable!("audio codec encoder layer 0 is always the input convolution")
+        };
+        layer.conv.weight.val().dtype()
+    }
+
     pub fn encode_reference_prefix(
         &self,
         config: &Qwen3TtsAudioCodecEncoderConfig,
@@ -221,22 +229,21 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
         head_dim: usize,
         rope: &RotaryEncoding<B>,
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, hidden_size] = hidden.dims();
+        let [batch_size, seq_len, _hidden_size] = hidden.dims();
         let device = hidden.device();
-        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
         let query = self
             .q_proj
-            .forward(hidden_2d.clone())
+            .forward(hidden.clone())
             .reshape([batch_size, seq_len, num_heads, head_dim])
             .swap_dims(1, 2);
         let key = self
             .k_proj
-            .forward(hidden_2d.clone())
+            .forward(hidden.clone())
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
         let value = self
             .v_proj
-            .forward(hidden_2d)
+            .forward(hidden)
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
 
@@ -272,23 +279,15 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
                 .swap_dims(1, 2)
                 .reshape([batch_size, seq_len, num_heads * head_dim]);
 
-        let output = self
-            .o_proj
-            .forward(attention_output.reshape([batch_size * seq_len, num_heads * head_dim]));
-        let output_hidden = output.dims()[1];
-        output.reshape([batch_size, seq_len, output_hidden])
+        self.o_proj.forward(attention_output)
     }
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecEncoderMlp<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        let [batch_size, seq_len, hidden_size] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
-        let hidden = self.fc1.forward(hidden_2d);
+        let hidden = self.fc1.forward(hidden);
         let hidden = gelu(hidden);
-        let hidden = self.fc2.forward(hidden);
-        let output_hidden = hidden.dims()[1];
-        hidden.reshape([batch_size, seq_len, output_hidden])
+        self.fc2.forward(hidden)
     }
 }
 

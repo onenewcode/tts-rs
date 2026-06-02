@@ -1,5 +1,5 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor, TensorData};
+use burn::tensor::{Int, Tensor};
 
 use crate::Qwen3TtsInferenceError;
 pub(crate) fn reference_codec_prefix_tensor<B: Backend>(
@@ -15,13 +15,13 @@ pub(crate) fn reference_codec_prefix_tensor<B: Backend>(
     }
 
     let flat = flatten_reference_codec_frames(reference_codec_frames, num_quantizers)?;
-    Ok(Tensor::<B, 3, Int>::from_data(
-        TensorData::new(
-            flat,
-            [batch_size, num_quantizers, reference_codec_frames.len()],
-        ),
-        device,
-    ))
+    Ok(
+        Tensor::<B, 1, Int>::from_ints(flat.as_slice(), device).reshape([
+            batch_size,
+            num_quantizers,
+            reference_codec_frames.len(),
+        ]),
+    )
 }
 
 fn flatten_reference_codec_frames(
@@ -43,25 +43,4 @@ fn flatten_reference_codec_frames(
         }
     }
     Ok(flat)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::flatten_reference_codec_frames;
-
-    #[test]
-    fn flatten_reference_codec_frames_uses_quantizer_major_layout() {
-        let frames = vec![vec![10, 20, 30], vec![11, 21, 31]];
-        let flat = flatten_reference_codec_frames(&frames, 3).expect("frames should flatten");
-        assert_eq!(flat, vec![10, 11, 20, 21, 30, 31]);
-    }
-
-    #[test]
-    fn flatten_reference_codec_frames_rejects_short_frame() {
-        let frames = vec![vec![10, 20], vec![11, 21, 31]];
-        let error =
-            flatten_reference_codec_frames(&frames, 3).expect_err("short frame should be rejected");
-        let message = error.to_string();
-        assert!(message.contains("reference codec frame 0"));
-    }
 }

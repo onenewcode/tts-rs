@@ -6,14 +6,14 @@ use burn::tensor::{Bool, DType, Tensor};
 
 use super::kv::KeyValueCache;
 
-pub enum AttentionPosition<B: Backend> {
+pub enum AttentionPosition<'a, B: Backend> {
     Standard {
-        cos: Tensor<B, 4>,
-        sin: Tensor<B, 4>,
+        cos: &'a Tensor<B, 4>,
+        sin: &'a Tensor<B, 4>,
     },
     Mrope {
-        cos: Tensor<B, 4>,
-        sin: Tensor<B, 4>,
+        cos: &'a Tensor<B, 4>,
+        sin: &'a Tensor<B, 4>,
     },
 }
 
@@ -34,8 +34,8 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        position: AttentionPosition<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
+        position: AttentionPosition<'_, B>,
+        mask: Option<&Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
@@ -48,21 +48,23 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let q = self
             .q_norm
             .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
-            .swap_dims(1, 2)
-            .cast(DType::F32);
+            .swap_dims(1, 2);
         let k = self
             .k_norm
             .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
-            .swap_dims(1, 2)
-            .cast(DType::F32);
+            .swap_dims(1, 2);
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
-            .swap_dims(1, 2)
-            .cast(DType::F32);
+            .swap_dims(1, 2);
+        let (q, k, v) = if model_dtype == DType::F32 {
+            (q, k, v)
+        } else {
+            (q.cast(DType::F32), k.cast(DType::F32), v.cast(DType::F32))
+        };
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } | AttentionPosition::Mrope { cos, sin } => {
                 let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
-                let k = (k.clone() * cos) + (rotate_half(k) * sin);
+                let k = (k.clone() * cos.clone()) + (rotate_half(k) * sin.clone());
                 (q, k)
             }
         };
@@ -95,7 +97,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         q: Tensor<B, 4>,
         k: Tensor<B, 4>,
         v: Tensor<B, 4>,
-        mask: Option<Tensor<B, 4, Bool>>,
+        mask: Option<&Tensor<B, 4, Bool>>,
     ) -> Tensor<B, 3> {
         let n_rep = num_heads / num_kv_heads;
         let key_len = k.dims()[2];
@@ -113,10 +115,11 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             head_dim,
         ]);
 
+        #[allow(clippy::cast_precision_loss)]
         let scaling = (head_dim as f32).sqrt().recip();
         let attn_scores = q.matmul(k.swap_dims(2, 3)).mul_scalar(scaling);
         let attn_scores = if let Some(mask) = mask {
-            attn_scores.mask_fill(mask, f32::NEG_INFINITY)
+            attn_scores.mask_fill(mask.clone(), f32::NEG_INFINITY)
         } else {
             attn_scores
         };

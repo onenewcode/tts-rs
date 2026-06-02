@@ -86,15 +86,11 @@ pub struct Qwen3TtsAudioCodecDecoderCodebook<B: Backend> {
 
 impl<B: Backend> Qwen3TtsAudioCodecDecoderMlp<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        let [batch, seq_len, hidden_size] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch * seq_len, hidden_size]);
-        let gate = self.gate_proj.forward(hidden_2d.clone());
-        let up = self.up_proj.forward(hidden_2d);
+        let gate = self.gate_proj.forward(hidden.clone());
+        let up = self.up_proj.forward(hidden);
         let activated = silu(gate);
         let product = activated * up;
-        let output = self.down_proj.forward(product);
-        let output_hidden = output.dims()[1];
-        output.reshape([batch, seq_len, output_hidden])
+        self.down_proj.forward(product)
     }
 }
 
@@ -106,24 +102,23 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
+        mask: Option<&Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
-        let [batch_size, seq_len, hidden_size] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch_size * seq_len, hidden_size]);
+        let [batch_size, seq_len, _hidden_size] = hidden.dims();
 
         let query = self
             .q_proj
-            .forward(hidden_2d.clone())
+            .forward(hidden.clone())
             .reshape([batch_size, seq_len, num_heads, head_dim])
             .swap_dims(1, 2);
         let key = self
             .k_proj
-            .forward(hidden_2d.clone())
+            .forward(hidden.clone())
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
         let value = self
             .v_proj
-            .forward(hidden_2d)
+            .forward(hidden)
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
 
@@ -144,7 +139,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
             .matmul(key.swap_dims(2, 3))
             .div_scalar((head_dim as f32).sqrt());
         let attention_scores = if let Some(mask) = mask {
-            attention_scores.mask_fill(mask, f32::NEG_INFINITY)
+            attention_scores.mask_fill(mask.clone(), f32::NEG_INFINITY)
         } else {
             attention_scores
         };
@@ -158,12 +153,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
             attention_output
                 .swap_dims(1, 2)
                 .reshape([batch_size, seq_len, num_heads * head_dim]);
-
-        let output = self
-            .o_proj
-            .forward(output.reshape([batch_size * seq_len, num_heads * head_dim]));
-        let output_hidden = output.dims()[1];
-        output.reshape([batch_size, seq_len, output_hidden])
+        self.o_proj.forward(output)
     }
 }
 
@@ -175,7 +165,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformerLayer<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
+        mask: Option<&Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
         let residual = hidden.clone();
         let hidden = self.input_layernorm.forward(hidden);
@@ -201,32 +191,16 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderTransformer<B> {
         num_kv_heads: usize,
         head_dim: usize,
         rope: &RotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, burn::tensor::Bool>>,
+        mask: Option<&Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
-        let [batch, seq_len, latent] = hidden.dims();
-        let hidden_2d = hidden.reshape([batch * seq_len, latent]);
-        let hidden = self.input_proj.forward(hidden_2d);
-        let projected_hidden = hidden.dims()[1];
-        let mut hidden = hidden.reshape([batch, seq_len, projected_hidden]);
+        let mut hidden = self.input_proj.forward(hidden);
 
         for layer in &self.layers {
-            hidden = layer.forward(
-                hidden,
-                num_heads,
-                num_kv_heads,
-                head_dim,
-                rope,
-                mask.clone(),
-            );
+            hidden = layer.forward(hidden, num_heads, num_kv_heads, head_dim, rope, mask);
         }
 
         let hidden = self.norm.forward(hidden);
-        let hidden_size = hidden.dims()[2];
-        let hidden = self
-            .output_proj
-            .forward(hidden.reshape([batch * seq_len, hidden_size]));
-        let output_hidden = hidden.dims()[1];
-        hidden.reshape([batch, seq_len, output_hidden])
+        self.output_proj.forward(hidden)
     }
 }
 
@@ -245,21 +219,21 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderVectorQuantization<B> {
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecDecoderResidualVectorQuantization<B> {
-    pub fn forward(&self, token_ids: &[Tensor<B, 2, Int>]) -> Tensor<B, 3> {
-        let mut output: Option<Tensor<B, 3>> = None;
-        for (layer_idx, layer) in self.layers.iter().enumerate() {
-            let embedding = layer.forward(token_ids[layer_idx].clone());
-            output = Some(match output {
-                Some(accumulator) => accumulator + embedding,
-                None => embedding,
-            });
-        }
-        output.expect("residual vector quantization requires at least one layer")
+    pub fn forward(&self, token_ids: Vec<Tensor<B, 2, Int>>) -> Tensor<B, 3> {
+        let mut embeddings = self
+            .layers
+            .iter()
+            .zip(token_ids)
+            .map(|(layer, token_ids)| layer.forward(token_ids));
+        let first = embeddings
+            .next()
+            .expect("residual vector quantization requires at least one layer");
+        embeddings.fold(first, |accumulator, embedding| accumulator + embedding)
     }
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecDecoderResidualVectorQuantizer<B> {
-    pub fn forward_decode(&self, token_ids: &[Tensor<B, 2, Int>]) -> Tensor<B, 3> {
+    pub fn forward_decode(&self, token_ids: Vec<Tensor<B, 2, Int>>) -> Tensor<B, 3> {
         let hidden = self.vq.forward(token_ids);
         self.output_proj.forward(hidden)
     }
@@ -273,21 +247,20 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderQuantizer<B> {
     ) -> Tensor<B, 3> {
         let [batch, _num_quantizers, time_steps] = codec_ids.dims();
         let total_layers = self.rvq_first.vq.layers.len() + self.rvq_rest.vq.layers.len();
-        let per_layer_tokens: Vec<Tensor<B, 2, Int>> = (0..total_layers)
-            .map(|layer_idx| {
-                codec_ids
-                    .clone()
-                    .slice([0..batch, layer_idx..layer_idx + 1, 0..time_steps])
-                    .reshape([batch, time_steps])
-            })
-            .collect();
-
-        let semantic_tokens: &[Tensor<B, 2, Int>] = &per_layer_tokens[..num_semantic_quantizers];
-        let acoustic_tokens: &[Tensor<B, 2, Int>] = &per_layer_tokens[num_semantic_quantizers..];
-
-        let semantic = self.rvq_first.forward_decode(semantic_tokens);
-        let acoustic = self.rvq_rest.forward_decode(acoustic_tokens);
-        semantic + acoustic
+        let per_layer_tokens = codec_ids
+            .chunk(total_layers, 1)
+            .into_iter()
+            .map(|token_ids| token_ids.reshape([batch, time_steps]))
+            .collect::<Vec<_>>();
+        let mut per_layer_tokens = per_layer_tokens;
+        let acoustic_tokens = per_layer_tokens.split_off(num_semantic_quantizers);
+        let semantic = self.rvq_first.forward_decode(per_layer_tokens);
+        if acoustic_tokens.is_empty() {
+            semantic
+        } else {
+            let acoustic = self.rvq_rest.forward_decode(acoustic_tokens);
+            semantic + acoustic
+        }
     }
 }
 

@@ -92,19 +92,12 @@ impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderEntry<B> {
 impl<B: Backend> Qwen3TtsAudioCodecConvNeXtBlock<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
         let residual = hidden.clone();
-        let [batch, channels, time] = hidden.dims();
-        let hidden = self.dwconv.forward(hidden);
-        let hidden = hidden.swap_dims(1, 2).reshape([batch * time, channels]);
+        let channels = hidden.dims()[1];
+        let hidden = self.dwconv.forward(hidden).swap_dims(1, 2);
         let hidden = self.norm.forward(hidden);
-        let hidden = hidden.reshape([batch, time, channels]).swap_dims(1, 2);
-        let hidden = hidden.swap_dims(1, 2).reshape([batch * time, channels]);
         let hidden = self.pwconv1.forward(hidden);
         let hidden = gelu(hidden);
-        let hidden = self.pwconv2.forward(hidden);
-        let output_channels = hidden.dims()[1];
-        let hidden = hidden
-            .reshape([batch, time, output_channels])
-            .swap_dims(1, 2);
+        let hidden = self.pwconv2.forward(hidden).swap_dims(1, 2);
         let gamma = self.gamma.val().reshape([1, channels, 1]);
         residual + hidden.mul(gamma)
     }

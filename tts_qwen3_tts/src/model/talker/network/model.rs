@@ -62,18 +62,12 @@ where
             num_kv_heads,
             head_dim,
             &self.mrope,
-            final_mask,
+            final_mask.as_ref(),
             cache,
         );
-        let [batch_size, seq_len, hidden_size] = hidden_states.dims();
-        let logits = self.codec_head.forward(
-            hidden_states
-                .clone()
-                .reshape([batch_size * seq_len, hidden_size]),
-        );
-        let logits_vocab = logits.dims()[1];
-        let logits = logits.reshape([batch_size, seq_len, logits_vocab]);
-        let [_logits_batch, _logits_seq, logits_vocab] = logits.dims();
+        let hidden_size = hidden_states.dims()[2];
+        let logits = self.codec_head.forward(hidden_states.clone());
+        let logits_vocab = logits.dims()[2];
         debug_assert_eq!(hidden_size, self.codec_head.weight.dims()[0]);
         debug_assert_eq!(logits_vocab, self.codec_head.weight.dims()[1]);
         (hidden_states, logits)
@@ -101,7 +95,7 @@ where
         num_kv_heads: usize,
         head_dim: usize,
         mrope: &Qwen3RotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
+        mask: Option<&Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
         let (cos, sin) = mrope.get_cos_sin(position_ids);
@@ -114,10 +108,10 @@ where
                 num_kv_heads,
                 head_dim,
                 AttentionPosition::Mrope {
-                    cos: cos.clone(),
-                    sin: sin.clone(),
+                    cos: &cos,
+                    sin: &sin,
                 },
-                mask.clone(),
+                mask,
                 c,
             );
         }

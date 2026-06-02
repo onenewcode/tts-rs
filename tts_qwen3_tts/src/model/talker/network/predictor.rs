@@ -37,7 +37,7 @@ where
         num_kv_heads: usize,
         head_dim: usize,
         rope: &Qwen3StandardRotaryEncoding<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
+        mask: Option<&Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = inputs_embeds.dims();
@@ -51,10 +51,10 @@ where
                 num_kv_heads,
                 head_dim,
                 AttentionPosition::Standard {
-                    cos: cos.clone(),
-                    sin: sin.clone(),
+                    cos: &cos,
+                    sin: &sin,
                 },
-                mask.clone(),
+                mask,
                 c,
             );
         }

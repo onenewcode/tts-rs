@@ -1,5 +1,5 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{DType, Int, Tensor, TensorData};
+use burn::tensor::{DType, Int, Tensor};
 
 use crate::Qwen3TtsInferenceError;
 use crate::execution::audio_finalize::reference_codec_prefix_tensor;
@@ -59,7 +59,6 @@ where
             &condition.text_token_ids,
             Some(instruct_ids(condition)?),
             &condition.controls,
-            talker_config.hidden_size,
             device,
         ),
         Qwen3TtsPromptRecipe::BaseVoiceCloneIcl
@@ -76,7 +75,6 @@ where
             &condition.text_token_ids,
             None,
             &condition.controls,
-            talker_config.hidden_size,
             device,
         ),
     }?;
@@ -151,21 +149,17 @@ fn build_non_streaming_seed<B: Backend>(
     text_ids: &[i64],
     leading_text_ids: Option<&[i64]>,
     controls: &ProfileControlIds,
-    hidden_size: usize,
     device: &B::Device,
 ) -> Result<PreparedSeed<B>, Qwen3TtsInferenceError> {
     let (tts_bos_embed, tts_eos_embed, tts_pad_embed) =
-        special_text_embeds(talker, controls, hidden_size, device);
+        special_text_embeds(talker, controls, device);
     let role_embeds = project_text_ids(talker, &text_ids[..3], device);
     let body_embeds = project_text_ids(talker, &text_ids[3..text_ids.len() - 5], device);
     let leading_embeds = leading_text_ids.map(|ids| project_text_ids(talker, ids, device));
 
     let codec_len = controls.codec_prefix_ids.len();
-    let codec_prefix_embeds = embed_codec_ids(talker, &controls.codec_prefix_ids, device).slice([
-        0..1,
-        0..codec_len - 1,
-        0..hidden_size,
-    ]);
+    let codec_prefix_embeds =
+        embed_codec_ids(talker, &controls.codec_prefix_ids[..codec_len - 1], device);
     let prefix_embeds = Tensor::cat(
         vec![
             tts_pad_embed
@@ -177,16 +171,25 @@ fn build_non_streaming_seed<B: Backend>(
     ) + codec_prefix_embeds;
 
     let body_len = body_embeds.dims()[1];
+    let codec_embedding = &talker.model.talker.model.codec_embedding;
     let text_with_codec_pad = body_embeds
-        + embed_codec_ids(
-            talker,
-            &std::iter::repeat_n(controls.codec_pad_id, body_len).collect::<Vec<_>>(),
+        + codec_embedding.forward(Tensor::<B, 2, Int>::full(
+            [1, body_len],
+            controls.codec_pad_id,
             device,
-        );
-    let eos_with_codec_pad =
-        tts_eos_embed + embed_codec_ids(talker, &[controls.codec_pad_id], device);
-    let generation_bos =
-        tts_pad_embed.clone() + embed_codec_ids(talker, &[controls.codec_bos_id], device);
+        ));
+    let eos_with_codec_pad = tts_eos_embed
+        + codec_embedding.forward(Tensor::<B, 2, Int>::full(
+            [1, 1],
+            controls.codec_pad_id,
+            device,
+        ));
+    let generation_bos = tts_pad_embed.clone()
+        + codec_embedding.forward(Tensor::<B, 2, Int>::full(
+            [1, 1],
+            controls.codec_bos_id,
+            device,
+        ));
 
     let mut segments = Vec::with_capacity(6);
     if let Some(leading_embeds) = leading_embeds {
@@ -237,7 +240,7 @@ where
         talker,
         &condition.text_token_ids,
         ref_text_ids,
-        &voice_clone,
+        voice_clone,
         &condition.controls,
         hidden_size,
         device,
@@ -248,20 +251,25 @@ fn build_voice_clone_seed<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     text_ids: &[i64],
     ref_text_ids: Option<&[i64]>,
-    voice_clone: &VoiceCloneState<B>,
+    voice_clone: VoiceCloneState<B>,
     controls: &ProfileControlIds,
     hidden_size: usize,
     device: &B::Device,
 ) -> Result<PreparedSeed<B>, Qwen3TtsInferenceError> {
+    let VoiceCloneState {
+        speaker_embedding,
+        reference_codec_prefix,
+        reference_codec_frame_count,
+    } = voice_clone;
     let (tts_bos_embed, tts_eos_embed, tts_pad_embed) =
-        special_text_embeds(talker, controls, hidden_size, device);
+        special_text_embeds(talker, controls, device);
     let role_embeds = project_text_ids(talker, &text_ids[..3], device);
     let codec_prefix = voice_clone_codec_prefix(
         talker,
-        &voice_clone.speaker_embedding,
+        speaker_embedding,
         controls,
         hidden_size,
-        &tts_bos_embed,
+        tts_bos_embed,
         &tts_pad_embed,
         device,
     )?;
@@ -273,8 +281,11 @@ fn build_voice_clone_seed<B: Backend>(
             ref_text_ids,
             role_embeds,
             codec_prefix,
-            voice_clone,
-            &tts_pad_embed,
+            reference_codec_prefix.ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
+                message: "voice-clone ICL requires reference codec frames".to_string(),
+            })?,
+            reference_codec_frame_count,
+            tts_pad_embed,
             controls,
             hidden_size,
             device,
@@ -293,7 +304,7 @@ fn build_voice_clone_seed<B: Backend>(
                 trailing_text_hidden: build_trailing_text_hidden(
                     talker,
                     body_ids.get(1..).unwrap_or(&[]),
-                    &tts_eos_embed,
+                    tts_eos_embed,
                     device,
                 ),
                 tts_pad_embed,
@@ -311,18 +322,13 @@ fn build_voice_clone_icl_seed<B: Backend>(
     ref_text_ids: &[i64],
     role_embeds: Tensor<B, 3>,
     codec_prefix: Tensor<B, 3>,
-    voice_clone: &VoiceCloneState<B>,
-    tts_pad_embed: &Tensor<B, 3>,
+    reference_codec_prefix: Tensor<B, 3, Int>,
+    reference_codec_frame_count: usize,
+    tts_pad_embed: Tensor<B, 3>,
     controls: &ProfileControlIds,
     hidden_size: usize,
     device: &B::Device,
 ) -> Result<PreparedSeed<B>, Qwen3TtsInferenceError> {
-    let reference_codec_prefix = voice_clone.reference_codec_prefix.as_ref().ok_or_else(|| {
-        Qwen3TtsInferenceError::InvalidInput {
-            message: "voice-clone ICL requires reference codec frames".to_string(),
-        }
-    })?;
-
     let target_body_ids = &text_ids[3..text_ids.len() - 5];
     let reference_body_ids = &ref_text_ids[3..ref_text_ids.len() - 2];
     let mut all_text_ids = Vec::with_capacity(reference_body_ids.len() + target_body_ids.len() + 1);
@@ -333,10 +339,19 @@ fn build_voice_clone_icl_seed<B: Backend>(
     let text_embeds = project_text_ids(talker, &all_text_ids, device);
     let text_len = text_embeds.dims()[1];
     let reference_codec_embeds =
-        sum_ref_codec_embeddings(talker, reference_codec_prefix, hidden_size)?;
+        sum_ref_codec_embeddings(talker, reference_codec_prefix.clone(), hidden_size)?;
     let codec_embeds = Tensor::cat(
         vec![
-            embed_codec_ids(talker, &[controls.codec_bos_id], device),
+            talker
+                .model
+                .talker
+                .model
+                .codec_embedding
+                .forward(Tensor::<B, 2, Int>::full(
+                    [1, 1],
+                    controls.codec_bos_id,
+                    device,
+                )),
             reference_codec_embeds,
         ],
         1,
@@ -367,9 +382,9 @@ fn build_voice_clone_icl_seed<B: Backend>(
     Ok(PreparedSeed {
         inputs_embeds: Tensor::cat(vec![role_embeds, codec_prefix, icl_embeds], 1),
         trailing_text_hidden,
-        tts_pad_embed: tts_pad_embed.clone(),
-        reference_codec_prefix: Some(reference_codec_prefix.clone()),
-        reference_codec_frame_count: voice_clone.reference_codec_frame_count,
+        tts_pad_embed,
+        reference_codec_prefix: Some(reference_codec_prefix),
+        reference_codec_frame_count,
     })
 }
 
@@ -461,24 +476,33 @@ fn build_first_text_with_codec_bos<B: Backend>(
     let first_id = *body_ids.first()?;
     Some(
         project_text_ids(talker, &[first_id], device)
-            + embed_codec_ids(talker, &[controls.codec_bos_id], device),
+            + talker
+                .model
+                .talker
+                .model
+                .codec_embedding
+                .forward(Tensor::<B, 2, Int>::full(
+                    [1, 1],
+                    controls.codec_bos_id,
+                    device,
+                )),
     )
 }
 
 fn build_trailing_text_hidden<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     remaining_body_ids: &[i64],
-    tts_eos_embed: &Tensor<B, 3>,
+    tts_eos_embed: Tensor<B, 3>,
     device: &B::Device,
 ) -> Tensor<B, 3> {
     if remaining_body_ids.is_empty() {
-        return tts_eos_embed.clone();
+        return tts_eos_embed;
     }
 
     Tensor::cat(
         vec![
             project_text_ids(talker, remaining_body_ids, device),
-            tts_eos_embed.clone(),
+            tts_eos_embed,
         ],
         1,
     )
@@ -487,7 +511,6 @@ fn build_trailing_text_hidden<B: Backend>(
 fn special_text_embeds<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     controls: &ProfileControlIds,
-    hidden_size: usize,
     device: &B::Device,
 ) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
     let special_embeds = project_text_ids(
@@ -499,6 +522,7 @@ fn special_text_embeds<B: Backend>(
         ],
         device,
     );
+    let hidden_size = special_embeds.dims()[2];
     (
         special_embeds.clone().slice([0..1, 0..1, 0..hidden_size]),
         special_embeds.clone().slice([0..1, 1..2, 0..hidden_size]),
@@ -508,10 +532,10 @@ fn special_text_embeds<B: Backend>(
 
 fn voice_clone_codec_prefix<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
-    speaker_embedding: &Tensor<B, 3>,
+    speaker_embedding: Tensor<B, 3>,
     controls: &ProfileControlIds,
     hidden_size: usize,
-    tts_bos_embed: &Tensor<B, 3>,
+    tts_bos_embed: Tensor<B, 3>,
     tts_pad_embed: &Tensor<B, 3>,
     device: &B::Device,
 ) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
@@ -529,8 +553,17 @@ fn voice_clone_codec_prefix<B: Backend>(
     let codec_prefix = Tensor::cat(
         vec![
             prefix_codec,
-            speaker_embedding.clone(),
-            embed_codec_ids(talker, &[controls.codec_pad_id], device),
+            speaker_embedding,
+            talker
+                .model
+                .talker
+                .model
+                .codec_embedding
+                .forward(Tensor::<B, 2, Int>::full(
+                    [1, 1],
+                    controls.codec_pad_id,
+                    device,
+                )),
         ],
         1,
     );
@@ -540,7 +573,7 @@ fn voice_clone_codec_prefix<B: Backend>(
             tts_pad_embed
                 .clone()
                 .repeat_dim(1, prefix_len.saturating_sub(1)),
-            tts_bos_embed.clone(),
+            tts_bos_embed,
         ],
         1,
     );
@@ -563,15 +596,9 @@ fn speaker_embedding_tensor<B: Backend>(
         });
     }
 
-    let embedding = Tensor::<B, 3>::from_data(
-        TensorData::new(embedding.to_vec(), [1, 1, hidden_size]),
-        device,
-    );
-    Ok(if embedding.dtype() == dtype {
-        embedding
-    } else {
-        embedding.cast(dtype)
-    })
+    let embedding =
+        Tensor::<B, 1>::from_data(embedding, (device, dtype)).reshape([1, 1, hidden_size]);
+    Ok(embedding)
 }
 
 fn talker_hidden_dtype<B: Backend>(talker: &LoadedQwen3TtsTalker<B>) -> DType {
@@ -587,7 +614,7 @@ fn talker_hidden_dtype<B: Backend>(talker: &LoadedQwen3TtsTalker<B>) -> DType {
 
 fn sum_ref_codec_embeddings<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
-    reference_codec_prefix: &Tensor<B, 3, Int>,
+    reference_codec_prefix: Tensor<B, 3, Int>,
     hidden_size: usize,
 ) -> Result<Tensor<B, 3>, Qwen3TtsInferenceError> {
     let [batch_size, num_groups, time_steps] = reference_codec_prefix.dims();
@@ -607,24 +634,16 @@ fn sum_ref_codec_embeddings<B: Backend>(
         });
     }
 
+    let mut groups = reference_codec_prefix.chunk(num_groups, 1).into_iter();
     let mut summed = embed_codec_group_slice(
         talker,
-        reference_codec_prefix
-            .clone()
-            .slice([0..1, 0..1, 0..time_steps]),
+        groups
+            .next()
+            .expect("reference codec prefix should include the first group"),
         0,
     );
-    for group_idx in 1..num_groups {
-        summed = summed
-            + embed_codec_group_slice(
-                talker,
-                reference_codec_prefix.clone().slice([
-                    0..1,
-                    group_idx..group_idx + 1,
-                    0..time_steps,
-                ]),
-                group_idx,
-            );
+    for (group_idx, group_tokens) in groups.enumerate() {
+        summed = summed + embed_codec_group_slice(talker, group_tokens, group_idx + 1);
     }
 
     let [batch, seq, actual_hidden] = summed.dims();
@@ -658,8 +677,7 @@ fn project_text_ids<B: Backend>(
     ids: &[i64],
     device: &B::Device,
 ) -> Tensor<B, 3> {
-    let tensor =
-        Tensor::<B, 2, Int>::from_data(TensorData::new(ids.to_vec(), [1, ids.len()]), device);
+    let tensor = Tensor::<B, 1, Int>::from_ints(ids, device).reshape([1, ids.len()]);
     talker
         .model
         .talker
@@ -672,7 +690,6 @@ fn embed_codec_ids<B: Backend>(
     ids: &[i64],
     device: &B::Device,
 ) -> Tensor<B, 3> {
-    let tensor =
-        Tensor::<B, 2, Int>::from_data(TensorData::new(ids.to_vec(), [1, ids.len()]), device);
+    let tensor = Tensor::<B, 1, Int>::from_ints(ids, device).reshape([1, ids.len()]);
     talker.model.talker.model.codec_embedding.forward(tensor)
 }

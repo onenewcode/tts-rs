@@ -139,21 +139,37 @@ fn replicate_pad_1d<B: Backend>(
     pad_right: usize,
 ) -> Tensor<B, 3> {
     let [batch, channels, time] = hidden.dims();
+    let mut hidden = Some(hidden);
     let mut segments = Vec::with_capacity(3);
     if pad_left > 0 {
         segments.push(
             hidden
+                .as_ref()
+                .expect("conv input should be present while building left padding")
                 .clone()
                 .slice([0..batch, 0..channels, 0..1])
                 .repeat_dim(2, pad_left),
         );
     }
-    segments.push(hidden.clone());
     if pad_right > 0 {
         segments.push(
             hidden
+                .as_ref()
+                .expect("conv input should be present while keeping the center segment")
+                .clone(),
+        );
+        segments.push(
+            hidden
+                .take()
+                .expect("conv input should be present while building right padding")
                 .slice([0..batch, 0..channels, time - 1..time])
                 .repeat_dim(2, pad_right),
+        );
+    } else {
+        segments.push(
+            hidden
+                .take()
+                .expect("conv input should be present while keeping the center segment"),
         );
     }
     Tensor::cat(segments, 2)

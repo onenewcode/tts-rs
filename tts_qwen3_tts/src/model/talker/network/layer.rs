@@ -26,8 +26,8 @@ where
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
-        position: AttentionPosition<B>,
-        mask: Option<Tensor<B, 4, Bool>>,
+        position: AttentionPosition<'_, B>,
+        mask: Option<&Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let residual = x.clone();

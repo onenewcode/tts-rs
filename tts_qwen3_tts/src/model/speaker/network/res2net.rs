@@ -35,24 +35,25 @@ impl<B: Backend> Res2NetBlock<B> {
     }
 
     pub(crate) fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+        let channel_count = x.dims()[1];
+        debug_assert_eq!(channel_count, self.chunk_size * self.scale);
         let mut outputs = Vec::with_capacity(self.scale);
-        outputs.push(
-            x.clone()
-                .slice([0..x.dims()[0], 0..self.chunk_size, 0..x.dims()[2]]),
-        );
-        for (idx, block) in self.blocks.iter().enumerate() {
-            let chunk = x.clone().slice([
-                0..x.dims()[0],
-                (idx + 1) * self.chunk_size..(idx + 2) * self.chunk_size,
-                0..x.dims()[2],
-            ]);
+        let mut chunks = x.chunk(self.scale, 1).into_iter();
+        let mut previous = chunks
+            .next()
+            .expect("res2net input should include the first chunk");
+
+        for (idx, (chunk, block)) in chunks.zip(self.blocks.iter()).enumerate() {
             let input = if idx == 0 {
                 chunk
             } else {
-                chunk + outputs.last().expect("previous Res2Net chunk").clone()
+                chunk + previous.clone()
             };
-            outputs.push(block.forward(input));
+            let output = block.forward(input);
+            outputs.push(previous);
+            previous = output;
         }
+        outputs.push(previous);
         Tensor::cat(outputs, 1)
     }
 }

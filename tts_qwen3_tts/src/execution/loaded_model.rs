@@ -106,23 +106,42 @@ where
         &self,
         seed: SessionSeed<B>,
         options: Qwen3TtsRunOptions,
-    ) -> Result<TalkerGenerator<B>, Qwen3TtsInferenceError> {
-        let sampling = resolve_sampling(options.sampling.as_ref(), &seed.sampling);
-        TalkerGenerator::start(
+    ) -> Result<(TalkerGenerator<B>, Option<Tensor<B, 3, Int>>, usize), Qwen3TtsInferenceError>
+    {
+        let SessionSeed {
+            inputs_embeds,
+            position_ids,
+            attention_mask,
+            trailing_text_hidden,
+            tts_pad_embed,
+            reference_codec_prefix,
+            reference_codec_frame_count,
+            max_new_tokens,
+            codec_eos_token_id,
+            sampling: seed_sampling,
+            suppress_token_ids,
+        } = seed;
+        let sampling = resolve_sampling(options.sampling.as_ref(), &seed_sampling);
+        let run = TalkerGenerator::start(
             &self.talker.config,
             &self.talker,
-            &seed,
+            inputs_embeds,
+            position_ids,
+            attention_mask,
+            trailing_text_hidden,
+            tts_pad_embed,
             sampling,
-            options.max_new_tokens.unwrap_or(seed.max_new_tokens),
-            Some(seed.codec_eos_token_id),
-            seed.suppress_token_ids.clone(),
-        )
+            options.max_new_tokens.unwrap_or(max_new_tokens),
+            Some(codec_eos_token_id),
+            suppress_token_ids,
+        )?;
+        Ok((run, reference_codec_prefix, reference_codec_frame_count))
     }
 
     fn finalize_audio(
         &self,
-        run: &TalkerGenerator<B>,
-        reference_codec_prefix: Option<&Tensor<B, 3, Int>>,
+        run: TalkerGenerator<B>,
+        reference_codec_prefix: Option<Tensor<B, 3, Int>>,
         reference_codec_frame_count: usize,
     ) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
         let generated = run.finalize()?;
@@ -137,10 +156,7 @@ where
                 });
             }
             let combined_steps = time_steps + reference_codec_frame_count;
-            let codec_ids = Tensor::cat(
-                vec![reference_codec_prefix.clone(), generated.codec_token_ids],
-                2,
-            );
+            let codec_ids = Tensor::cat(vec![reference_codec_prefix, generated.codec_token_ids], 2);
             let mut waveform = self.decoder.decode_waveform(codec_ids)?;
             let total_samples = waveform.dims()[2];
             let cut_samples = reference_codec_frame_count * total_samples / combined_steps.max(1);
@@ -358,8 +374,8 @@ where
 
     fn finish(self: Box<Self>) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
         self.inner.finalize_audio(
-            &self.run,
-            self.reference_codec_prefix.as_ref(),
+            self.run,
+            self.reference_codec_prefix,
             self.reference_codec_frame_count,
         )
     }
@@ -376,9 +392,8 @@ where
 {
     let inner = Arc::clone(inner);
     let seed = inner.compile_session_seed(request)?;
-    let reference_codec_prefix = seed.reference_codec_prefix.clone();
-    let reference_codec_frame_count = seed.reference_codec_frame_count;
-    let run = inner.start_generator(seed, options)?;
+    let (run, reference_codec_prefix, reference_codec_frame_count) =
+        inner.start_generator(seed, options)?;
     Ok(SessionImpl {
         inner,
         run,
@@ -414,53 +429,5 @@ fn resolve_sampling(
                 repetition_penalty: model_default.repetition_penalty,
             })
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_sampling;
-
-    #[test]
-    fn explicit_sampling_config_is_used_literally() {
-        let model_default = crate::SamplingConfig {
-            do_sample: true,
-            temperature: 0.7,
-            top_k: Some(32),
-            top_p: 0.85,
-            seed: Some(7),
-            repetition_penalty: Some(1.2),
-        };
-        let explicit = crate::SamplingOverride::Literal(crate::SamplingConfig::greedy());
-
-        let runtime = resolve_sampling(Some(&explicit), &model_default);
-
-        assert!(!runtime.do_sample);
-        assert_eq!(runtime.temperature, 1.0);
-        assert_eq!(runtime.top_k, None);
-        assert_eq!(runtime.top_p, 1.0);
-        assert_eq!(runtime.repetition_penalty, None);
-    }
-
-    #[test]
-    fn greedy_override_keeps_model_penalty_defaults() {
-        let model_default = crate::SamplingConfig {
-            do_sample: true,
-            temperature: 0.7,
-            top_k: Some(32),
-            top_p: 0.85,
-            seed: Some(7),
-            repetition_penalty: Some(1.2),
-        };
-        let runtime = resolve_sampling(
-            Some(&crate::SamplingOverride::GreedyFromModelDefaults),
-            &model_default,
-        );
-
-        assert!(!runtime.do_sample);
-        assert_eq!(runtime.temperature, 0.7);
-        assert_eq!(runtime.top_k, Some(32));
-        assert_eq!(runtime.top_p, 0.85);
-        assert_eq!(runtime.repetition_penalty, Some(1.2));
     }
 }

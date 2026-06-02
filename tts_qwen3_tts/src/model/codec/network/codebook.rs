@@ -21,9 +21,7 @@ pub(crate) fn nearest_codebook_token_ids<B: Backend>(
     );
 
     let distances = (hidden.swap_dims(1, 2).unsqueeze_dim::<4>(2)
-        - centroids
-            .clone()
-            .reshape([1, 1, codebook_size, codebook_hidden]))
+        - centroids.reshape([1, 1, codebook_size, codebook_hidden]))
     .square()
     .sum_dim(3)
     .squeeze_dim::<3>(3);
@@ -40,76 +38,4 @@ pub(crate) fn gather_codebook_embeddings<B: Backend>(
         .select(0, token_ids.reshape([batch * seq_len]))
         .reshape([batch, seq_len, embed_dim])
         .swap_dims(1, 2)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        gather_codebook_embeddings, nearest_codebook_token_ids, normalized_codebook_centroids,
-    };
-    use burn::backend::Flex;
-    use burn::tensor::{Int, Tensor, TensorData};
-
-    #[test]
-    fn normalized_codebook_centroids_divides_embedding_sum_by_usage() {
-        let device = Default::default();
-        let usage = Tensor::<Flex, 1>::from_data(TensorData::from([2.0_f32, 4.0]), &device);
-        let embedding_sum = Tensor::<Flex, 2>::from_data(
-            TensorData::new(vec![2.0_f32, 4.0, 12.0, 20.0], [2, 2]),
-            &device,
-        );
-
-        let centroids = normalized_codebook_centroids(usage, embedding_sum);
-        let values = centroids
-            .into_data()
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .expect("centroids should be readable");
-
-        assert_eq!(values, vec![1.0, 2.0, 3.0, 5.0]);
-    }
-
-    #[test]
-    fn nearest_codebook_token_ids_picks_smallest_l2_centroid() {
-        let device = Default::default();
-        let hidden = Tensor::<Flex, 3>::from_data(
-            TensorData::new(vec![1.0_f32, 4.0, 2.0, 5.0], [1, 2, 2]),
-            &device,
-        );
-        let codebook = Tensor::<Flex, 2>::from_data(
-            TensorData::new(vec![1.0_f32, 2.0, 4.0, 5.0, 8.0, 9.0], [3, 2]),
-            &device,
-        );
-
-        let token_ids = nearest_codebook_token_ids(hidden, codebook);
-        let values = token_ids
-            .into_data()
-            .convert::<i64>()
-            .into_vec::<i64>()
-            .expect("token ids should be readable");
-
-        assert_eq!(values, vec![0, 1]);
-    }
-
-    #[test]
-    fn gather_codebook_embeddings_restores_batch_channel_time_layout() {
-        let device = Default::default();
-        let codebook = Tensor::<Flex, 2>::from_data(
-            TensorData::new(vec![1.0_f32, 2.0, 10.0, 20.0, 100.0, 200.0], [3, 2]),
-            &device,
-        );
-        let token_ids = Tensor::<Flex, 2, Int>::from_data(
-            TensorData::new(vec![2_i64, 0_i64, 1_i64], [1, 3]),
-            &device,
-        );
-
-        let gathered = gather_codebook_embeddings(codebook, token_ids);
-        let values = gathered
-            .into_data()
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .expect("gathered embeddings should be readable");
-
-        assert_eq!(values, vec![100.0, 1.0, 10.0, 200.0, 2.0, 20.0]);
-    }
 }

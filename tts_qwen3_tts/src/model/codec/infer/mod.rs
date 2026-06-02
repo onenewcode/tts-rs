@@ -1,6 +1,6 @@
 use burn::nn::RotaryEncodingConfig;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor, TensorData};
+use burn::tensor::{Int, Tensor};
 
 use crate::Qwen3TtsInferenceError;
 use crate::error::QwenTtsInferenceError;
@@ -123,10 +123,12 @@ impl<B: Backend> LoadedQwen3TtsAudioCodec<B> {
         device: &B::Device,
         samples: &[f32],
     ) -> Result<Tensor<B, 3, Int>, Qwen3TtsInferenceError> {
-        let waveform = Tensor::<B, 3>::from_data(
-            TensorData::new(samples.to_vec(), [1, 1, samples.len()]),
-            device,
-        );
+        let encoder_dtype = self.model.encoder.dtype();
+        let waveform = Tensor::<B, 1>::from_data(samples, (device, encoder_dtype)).reshape([
+            1,
+            1,
+            samples.len(),
+        ]);
         self.model.encoder.encode_reference_prefix(
             &self.config.encoder_config,
             self.config.encoder_valid_num_quantizers,

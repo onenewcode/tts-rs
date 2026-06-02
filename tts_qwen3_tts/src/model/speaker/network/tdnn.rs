@@ -48,20 +48,34 @@ fn reflect_pad_1d<B: Backend>(x: Tensor<B, 3>, pad_left: usize, pad_right: usize
     }
 
     let [batch, channels, time] = x.dims();
+    let mut x = Some(x);
     let mut segments =
         Vec::with_capacity(1 + usize::from(pad_left > 0) + usize::from(pad_right > 0));
     if pad_left > 0 {
         segments.push(
-            x.clone()
+            x.as_ref()
+                .expect("TDNN input should be present while creating left reflection")
+                .clone()
                 .slice([0..batch, 0..channels, 1..pad_left + 1])
                 .flip([2]),
         );
     }
-    segments.push(x.clone());
     if pad_right > 0 {
         segments.push(
-            x.slice([0..batch, 0..channels, time - 1 - pad_right..time - 1])
+            x.as_ref()
+                .expect("TDNN input should be present while keeping the center segment")
+                .clone(),
+        );
+        segments.push(
+            x.take()
+                .expect("TDNN input should be present while creating right reflection")
+                .slice([0..batch, 0..channels, time - 1 - pad_right..time - 1])
                 .flip([2]),
+        );
+    } else {
+        segments.push(
+            x.take()
+                .expect("TDNN input should be present while keeping the center segment"),
         );
     }
     Tensor::cat(segments, 2)

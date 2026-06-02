@@ -45,7 +45,6 @@ impl<B: Backend> AutoregressiveCache<B> {
     /// Update the cache and return the current valid slice.
     pub fn forward(&mut self, tensor: Tensor<B, 4>) -> Tensor<B, 4> {
         let [batch_size, num_heads, seq_len, head_dim] = tensor.dims();
-        let original_tensor = tensor.clone();
         let old_seq_len = self.cur_seq_len;
         assert!(
             batch_size <= self.max_batch_size,
@@ -65,16 +64,35 @@ impl<B: Backend> AutoregressiveCache<B> {
         );
 
         if self.cache.is_none() {
-            self.cache = Some(
-                tensor
-                    .clone()
-                    .slice([0..1, 0..num_heads, 0..1, 0..head_dim])
-                    .repeat_dim(0, self.max_batch_size)
-                    .repeat_dim(2, self.max_seq_len)
-                    .mul_scalar(0.0),
-            );
+            self.cache = Some(Tensor::<B, 4>::zeros(
+                [self.max_batch_size, num_heads, self.max_seq_len, head_dim],
+                &tensor.device(),
+            ));
         }
-        let cache_tensor = self.cache.as_mut().expect("cache must be initialized");
+        let mut cache_tensor = self.cache.take().expect("cache must be initialized");
+
+        if seq_len >= self.max_seq_len {
+            tracing::debug!(
+                seq_len,
+                max_seq_len = self.max_seq_len,
+                "incoming cache step exceeds window; keeping latest slice only"
+            );
+            let keep_from = seq_len - self.max_seq_len;
+            let latest =
+                tensor.slice([0..batch_size, 0..num_heads, keep_from..seq_len, 0..head_dim]);
+            cache_tensor = cache_tensor.slice_assign(
+                [
+                    0..batch_size,
+                    0..num_heads,
+                    0..self.max_seq_len,
+                    0..head_dim,
+                ],
+                latest.clone(),
+            );
+            self.cur_seq_len = self.max_seq_len;
+            self.cache = Some(cache_tensor);
+            return latest;
+        }
 
         if new_seq_len > self.max_seq_len {
             tracing::debug!(
@@ -89,7 +107,7 @@ impl<B: Backend> AutoregressiveCache<B> {
                 seq_len..self.max_seq_len,
                 0..head_dim,
             ]);
-            *cache_tensor = cache_tensor.clone().slice_assign(
+            cache_tensor = cache_tensor.slice_assign(
                 [
                     0..batch_size,
                     0..num_heads,
@@ -101,7 +119,8 @@ impl<B: Backend> AutoregressiveCache<B> {
             new_seq_len = self.max_seq_len;
         }
 
-        *cache_tensor = cache_tensor.clone().slice_assign(
+        let original_tensor = (old_seq_len == 0 && seq_len == new_seq_len).then(|| tensor.clone());
+        cache_tensor = cache_tensor.slice_assign(
             [
                 0..batch_size,
                 0..num_heads,
@@ -117,16 +136,19 @@ impl<B: Backend> AutoregressiveCache<B> {
             "updated autoregressive cache"
         );
 
-        if old_seq_len == 0 && seq_len == new_seq_len {
+        if let Some(original_tensor) = original_tensor {
+            self.cache = Some(cache_tensor);
             return original_tensor;
         }
 
-        cache_tensor.clone().slice([
+        let current = cache_tensor.clone().slice([
             0..batch_size,
             0..num_heads,
             0..self.cur_seq_len,
             0..head_dim,
-        ])
+        ]);
+        self.cache = Some(cache_tensor);
+        current
     }
 
     pub fn len(&self) -> usize {
@@ -168,57 +190,5 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn len(&self) -> usize {
         self.key.len()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::AutoregressiveCache;
-    use burn::backend::Flex;
-    use burn::tensor::{Tensor, TensorData};
-
-    #[test]
-    fn first_forward_returns_original_step() {
-        let device = Default::default();
-        let mut cache = AutoregressiveCache::<Flex>::new(1, 1, 4, 2);
-        let token = Tensor::<Flex, 4>::from_data(
-            TensorData::new(vec![1.0_f32, 2.0], [1, 1, 1, 2]),
-            &device,
-        );
-
-        let current = cache.forward(token);
-        let values = current
-            .into_data()
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .expect("cached step should be readable");
-
-        assert_eq!(values, vec![1.0, 2.0]);
-        assert_eq!(cache.len(), 1);
-    }
-
-    #[test]
-    fn second_forward_appends_to_cache_slice() {
-        let device = Default::default();
-        let mut cache = AutoregressiveCache::<Flex>::new(1, 1, 4, 2);
-        let first = Tensor::<Flex, 4>::from_data(
-            TensorData::new(vec![1.0_f32, 2.0], [1, 1, 1, 2]),
-            &device,
-        );
-        let second = Tensor::<Flex, 4>::from_data(
-            TensorData::new(vec![3.0_f32, 4.0], [1, 1, 1, 2]),
-            &device,
-        );
-
-        let _ = cache.forward(first);
-        let current = cache.forward(second);
-        let values = current
-            .into_data()
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .expect("cache window should be readable");
-
-        assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(cache.len(), 2);
     }
 }

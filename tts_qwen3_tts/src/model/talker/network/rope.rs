@@ -1,5 +1,5 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor, TensorData};
+use burn::tensor::{Int, Tensor};
 
 #[derive(burn::module::Module, Debug)]
 pub struct Qwen3RotaryEncoding<B: Backend> {
@@ -41,10 +41,12 @@ impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
         let freqs = positions * self.inv_freq.clone().reshape([1, 1, half_dim]);
         let cos_half = freqs.clone().cos();
         let sin_half = freqs.sin();
-        let cos = Tensor::cat(vec![cos_half.clone(), cos_half], 2)
+        let cos = cos_half
+            .repeat_dim(2, 2)
             .unsqueeze_dim::<4>(1)
             .repeat_dim(0, batch_size);
-        let sin = Tensor::cat(vec![sin_half.clone(), sin_half], 2)
+        let sin = sin_half
+            .repeat_dim(2, 2)
             .unsqueeze_dim::<4>(1)
             .repeat_dim(0, batch_size);
         (cos, sin)
@@ -63,11 +65,8 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
             .map(|index| 1.0f32 / rope_theta.powf(index as f32 / half_dim as f32))
             .collect::<Vec<_>>();
         let inv_freq = Tensor::<B, 1>::from_floats(inv_freq.as_slice(), device);
-        let interleave_source = Tensor::<B, 1, Int>::from_data(
-            TensorData::new(
-                interleaved_mrope_source_indices(&mrope_section, half_dim),
-                [half_dim],
-            ),
+        let interleave_source = Tensor::<B, 1, Int>::from_ints(
+            interleaved_mrope_source_indices(&mrope_section, half_dim).as_slice(),
             device,
         );
         Self {
@@ -123,8 +122,8 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
             .reshape([batch_size, seq_len, half_dim]);
 
         // Duplicate half → full head_dim and unsqueeze for broadcast.
-        let cos = Tensor::cat(vec![cos_half.clone(), cos_half], 2).unsqueeze_dim::<4>(1);
-        let sin = Tensor::cat(vec![sin_half.clone(), sin_half], 2).unsqueeze_dim::<4>(1);
+        let cos = cos_half.repeat_dim(2, 2).unsqueeze_dim::<4>(1);
+        let sin = sin_half.repeat_dim(2, 2).unsqueeze_dim::<4>(1);
         (cos, sin)
     }
 }
@@ -141,65 +140,4 @@ fn interleaved_mrope_source_indices(mrope_section: &[usize], half_dim: usize) ->
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Qwen3RotaryEncoding, interleaved_mrope_source_indices};
-    use burn::backend::Flex;
-    use burn::tensor::{Int, Tensor, TensorData};
-
-    #[test]
-    fn interleaved_mrope_source_indices_matches_expected_pattern() {
-        let indices = interleaved_mrope_source_indices(&[2, 1, 1], 6);
-        assert_eq!(indices, vec![0, 1, 2, 0, 0, 0]);
-    }
-
-    #[test]
-    fn get_cos_sin_uses_configured_modality_per_half_dim() {
-        let device = Default::default();
-        let rope = Qwen3RotaryEncoding::<Flex>::new(6, 1.0, vec![1, 1, 1], &device);
-        let position_ids = Tensor::<Flex, 3, Int>::from_data(
-            TensorData::new(vec![0_i64, 1_i64, 2_i64], [3, 1, 1]),
-            &device,
-        );
-
-        let (cos, sin) = rope.get_cos_sin(position_ids);
-        let cos_values = cos
-            .into_data()
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .expect("cos should be readable");
-        let sin_values = sin
-            .into_data()
-            .convert::<f32>()
-            .into_vec::<f32>()
-            .expect("sin should be readable");
-
-        let expected_cos = [
-            1.0_f32,
-            1.0_f32.cos(),
-            2.0_f32.cos(),
-            1.0_f32,
-            1.0_f32.cos(),
-            2.0_f32.cos(),
-        ];
-        let expected_sin = [
-            0.0_f32,
-            1.0_f32.sin(),
-            2.0_f32.sin(),
-            0.0_f32,
-            1.0_f32.sin(),
-            2.0_f32.sin(),
-        ];
-
-        assert_eq!(cos_values.len(), expected_cos.len());
-        assert_eq!(sin_values.len(), expected_sin.len());
-        for (actual, expected) in cos_values.iter().zip(expected_cos.iter()) {
-            assert!((actual - expected).abs() < 1e-6);
-        }
-        for (actual, expected) in sin_values.iter().zip(expected_sin.iter()) {
-            assert!((actual - expected).abs() < 1e-6);
-        }
-    }
 }

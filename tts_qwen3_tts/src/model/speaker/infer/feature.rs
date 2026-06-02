@@ -1,5 +1,5 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{Tensor, TensorData};
+use burn::tensor::{DType, Tensor};
 use rustfft::{FftPlanner, num_complex::Complex};
 
 use crate::model::speaker::config::SpeakerEncoderConfig;
@@ -62,6 +62,7 @@ impl MelSpectrogram {
     pub(crate) fn compute_for_speaker_encoder<B: Backend>(
         &self,
         samples: &[f32],
+        dtype: DType,
         device: &B::Device,
     ) -> Tensor<B, 2> {
         let stft = self.stft(samples);
@@ -80,11 +81,9 @@ impl MelSpectrogram {
             .flat_map(|frame| frame.into_iter().map(|value| value.max(1e-5).ln()))
             .collect();
         let n_frames = log_mel.len() / self.config.n_mels;
-        Tensor::<B, 2>::from_data(
-            TensorData::new(log_mel, [n_frames, self.config.n_mels]),
-            device,
-        )
-        .swap_dims(0, 1)
+        Tensor::<B, 1>::from_data(log_mel.as_slice(), (device, dtype))
+            .reshape([n_frames, self.config.n_mels])
+            .swap_dims(0, 1)
     }
 
     fn stft(&self, samples: &[f32]) -> Vec<Vec<Complex<f32>>> {

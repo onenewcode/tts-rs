@@ -70,14 +70,24 @@ impl<B: Backend> SpeakerEncoderNetwork<B> {
         let SpeakerEncoderBlock::Initial(initial_tdnn) = &self.blocks[0] else {
             unreachable!("speaker encoder block 0 is always the initial TDNN")
         };
-        let mut hidden = initial_tdnn.forward(mel);
+        let mut hidden = Some(initial_tdnn.forward(mel));
+        let se_blocks = &self.blocks[1..];
         let mut outputs = Vec::with_capacity(3);
-        for block in &self.blocks[1..] {
+        for (idx, block) in se_blocks.iter().enumerate() {
             let SpeakerEncoderBlock::Se(block) = block else {
                 unreachable!("speaker encoder blocks 1..3 are SE-Res2Net blocks")
             };
-            hidden = block.forward(hidden);
-            outputs.push(hidden.clone());
+            let current = block.forward(
+                hidden
+                    .take()
+                    .expect("speaker encoder hidden state should be present"),
+            );
+            if idx + 1 == se_blocks.len() {
+                outputs.push(current);
+            } else {
+                outputs.push(current.clone());
+                hidden = Some(current);
+            }
         }
         let hidden = self.mfa.forward(Tensor::cat(outputs, 1));
         let pooled = self.asp.forward(hidden);
