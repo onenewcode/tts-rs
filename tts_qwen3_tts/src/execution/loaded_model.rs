@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use burn::tensor::Tensor;
 use burn::tensor::backend::Backend;
+use burn::tensor::{Int, Tensor};
 
-use super::audio_finalize::reference_codec_prefix_tensor;
 use super::compiler::Qwen3TtsRequestCompiler;
 use super::compiler::session_seed::{SessionSeed, materialize_session_seed};
 use super::run::LoadedModel;
@@ -93,7 +92,14 @@ where
         request: QwenRequest,
     ) -> Result<SessionSeed<B>, Qwen3TtsInferenceError> {
         let condition = self.compiler.compile_request(&request)?;
-        materialize_session_seed(&condition, &self.talker.config, &self.talker, &self.device)
+        materialize_session_seed(
+            &condition,
+            &self.talker.config,
+            &self.talker,
+            &self.decoder,
+            self.speaker_encoder.as_ref(),
+            &self.device,
+        )
     }
 
     fn start_generator(
@@ -116,22 +122,28 @@ where
     fn finalize_audio(
         &self,
         run: &TalkerGenerator<B>,
-        reference_codec_frames: Option<&[Vec<i64>]>,
+        reference_codec_prefix: Option<&Tensor<B, 3, Int>>,
+        reference_codec_frame_count: usize,
     ) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
         let generated = run.finalize()?;
-        let waveform = if let Some(reference_codec_frames) = reference_codec_frames {
+        let waveform = if let Some(reference_codec_prefix) = reference_codec_prefix {
             let [batch_size, num_quantizers, time_steps] = generated.codec_token_ids.dims();
-            let reference_prefix = reference_codec_prefix_tensor::<B>(
-                reference_codec_frames,
-                batch_size,
-                num_quantizers,
-                &self.device,
-            )?;
-            let combined_steps = time_steps + reference_codec_frames.len();
-            let codec_ids = Tensor::cat(vec![reference_prefix, generated.codec_token_ids], 2);
+            let [prefix_batch, prefix_quantizers, prefix_steps] = reference_codec_prefix.dims();
+            if prefix_batch != batch_size || prefix_quantizers != num_quantizers {
+                return Err(Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "reference codec prefix shape mismatch: expected [{batch_size}, {num_quantizers}, T], got [{prefix_batch}, {prefix_quantizers}, {prefix_steps}]"
+                    ),
+                });
+            }
+            let combined_steps = time_steps + reference_codec_frame_count;
+            let codec_ids = Tensor::cat(
+                vec![reference_codec_prefix.clone(), generated.codec_token_ids],
+                2,
+            );
             let mut waveform = self.decoder.decode_waveform(codec_ids)?;
             let total_samples = waveform.dims()[2];
-            let cut_samples = reference_codec_frames.len() * total_samples / combined_steps.max(1);
+            let cut_samples = reference_codec_frame_count * total_samples / combined_steps.max(1);
             waveform = waveform.slice([0..1, 0..1, cut_samples.min(total_samples)..total_samples]);
             waveform
         } else {
@@ -317,7 +329,8 @@ impl ModelSession for Qwen3TtsSession {
 struct SessionImpl<B: Backend> {
     inner: Arc<Qwen3TtsModelInner<B>>,
     run: TalkerGenerator<B>,
-    reference_codec_frames: Option<Vec<Vec<i64>>>,
+    reference_codec_prefix: Option<Tensor<B, 3, Int>>,
+    reference_codec_frame_count: usize,
 }
 
 impl<B> SessionOps for SessionImpl<B>
@@ -335,8 +348,11 @@ where
     }
 
     fn finish(self: Box<Self>) -> Result<tts_infer::PcmAudio, Qwen3TtsInferenceError> {
-        self.inner
-            .finalize_audio(&self.run, self.reference_codec_frames.as_deref())
+        self.inner.finalize_audio(
+            &self.run,
+            self.reference_codec_prefix.as_ref(),
+            self.reference_codec_frame_count,
+        )
     }
 }
 
@@ -351,12 +367,14 @@ where
 {
     let inner = Arc::clone(inner);
     let seed = inner.compile_session_seed(request)?;
-    let reference_codec_frames = seed.reference_codec_frames.clone();
+    let reference_codec_prefix = seed.reference_codec_prefix.clone();
+    let reference_codec_frame_count = seed.reference_codec_frame_count;
     let run = inner.start_generator(seed, options)?;
     Ok(SessionImpl {
         inner,
         run,
-        reference_codec_frames,
+        reference_codec_prefix,
+        reference_codec_frame_count,
     })
 }
 

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tokenizers::Tokenizer;
 
 use crate::{
@@ -28,9 +30,21 @@ pub(crate) struct SemanticRequestCondition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CompiledVoiceCloneCondition {
-    pub(crate) speaker_embedding: Vec<f32>,
-    pub(crate) ref_codec_token_ids: Option<Vec<Vec<i64>>>,
+    pub(crate) source: CompiledVoiceCloneConditionSource,
     pub(crate) ref_text_token_ids: Option<Vec<i64>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CompiledVoiceCloneConditionSource {
+    Prompt(Qwen3TtsVoiceClonePrompt),
+    ReferenceAudio(CompiledReferenceAudioVoiceClone),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompiledReferenceAudioVoiceClone {
+    pub(crate) path: PathBuf,
+    pub(crate) transcript: Option<String>,
+    pub(crate) x_vector_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,59 +95,108 @@ pub(crate) fn resolve_base_prompt_recipe(
     ),
     Qwen3TtsInferenceError,
 > {
-    match request.voice_clone.as_ref() {
-        None => Ok((
-            Qwen3TtsPromptRecipe::BasePlain,
-            build_assistant_prompt(&request.text),
-            None,
-            None,
-        )),
-        Some(BaseVoiceCloneConditioning::ReferenceAudio(_)) => {
-            Err(Qwen3TtsInferenceError::InvalidInput {
-                message: "reference-audio voice clone inputs must be prepared before compilation"
-                    .to_string(),
-            })
-        }
-        Some(BaseVoiceCloneConditioning::Prompt(prompt)) => {
-            validate_voice_clone_prompt(prompt)?;
-            match prompt.mode {
-                Qwen3TtsVoiceClonePromptMode::Icl => Ok((
-                    Qwen3TtsPromptRecipe::BaseVoiceCloneIcl,
-                    build_assistant_prompt(&request.text),
-                    Some(build_ref_prompt(
-                        prompt.transcript.as_deref().unwrap_or_default(),
-                    )),
-                    Some(CompiledVoiceCloneCondition {
-                        speaker_embedding: prompt.speaker_embedding.clone(),
-                        ref_codec_token_ids: prompt.ref_codec_token_ids.clone(),
-                        ref_text_token_ids: None,
-                    }),
-                )),
-                Qwen3TtsVoiceClonePromptMode::XVectorOnly => Ok((
-                    Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly,
-                    build_assistant_prompt(&request.text),
-                    None,
-                    Some(CompiledVoiceCloneCondition {
-                        speaker_embedding: prompt.speaker_embedding.clone(),
-                        ref_codec_token_ids: None,
-                        ref_text_token_ids: None,
-                    }),
-                )),
+    let prompt = build_assistant_prompt(&request.text);
+    let Some(voice_clone) = request.voice_clone.as_ref() else {
+        return Ok((Qwen3TtsPromptRecipe::BasePlain, prompt, None, None));
+    };
+
+    let (recipe, ref_prompt, compiled) = match voice_clone {
+        BaseVoiceCloneConditioning::ReferenceAudio(reference) => {
+            let transcript = reference
+                .transcript
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let recipe = if reference.x_vector_only {
+                Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly
+            } else {
+                Qwen3TtsPromptRecipe::BaseVoiceCloneIcl
+            };
+            if matches!(recipe, Qwen3TtsPromptRecipe::BaseVoiceCloneIcl) && transcript.is_none() {
+                return Err(Qwen3TtsInferenceError::InvalidInput {
+                    message: "ref_text is required when x_vector_only is false".to_string(),
+                });
             }
+            (
+                recipe,
+                transcript.as_deref().map(build_ref_prompt),
+                CompiledVoiceCloneCondition {
+                    source: CompiledVoiceCloneConditionSource::ReferenceAudio(
+                        CompiledReferenceAudioVoiceClone {
+                            path: reference.path.clone(),
+                            transcript,
+                            x_vector_only: reference.x_vector_only,
+                        },
+                    ),
+                    ref_text_token_ids: None,
+                },
+            )
         }
-    }
+        BaseVoiceCloneConditioning::Prompt(prompt) => match prompt.mode {
+            Qwen3TtsVoiceClonePromptMode::XVectorOnly => (
+                Qwen3TtsPromptRecipe::BaseVoiceCloneXVectorOnly,
+                None,
+                CompiledVoiceCloneCondition {
+                    source: CompiledVoiceCloneConditionSource::Prompt(prompt.clone()),
+                    ref_text_token_ids: None,
+                },
+            ),
+            Qwen3TtsVoiceClonePromptMode::Icl => {
+                if prompt
+                    .ref_codec_token_ids
+                    .as_ref()
+                    .is_none_or(|codes| codes.is_empty())
+                {
+                    return Err(Qwen3TtsInferenceError::InvalidInput {
+                        message: "voice clone prompt in ICL mode requires ref codec frames"
+                            .to_string(),
+                    });
+                }
+                let transcript = prompt
+                    .transcript
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| Qwen3TtsInferenceError::InvalidInput {
+                        message: "voice clone prompt in ICL mode requires ref_text".to_string(),
+                    })?;
+                (
+                    Qwen3TtsPromptRecipe::BaseVoiceCloneIcl,
+                    Some(build_ref_prompt(transcript)),
+                    CompiledVoiceCloneCondition {
+                        source: CompiledVoiceCloneConditionSource::Prompt(prompt.clone()),
+                        ref_text_token_ids: None,
+                    },
+                )
+            }
+        },
+    };
+
+    Ok((recipe, prompt, ref_prompt, Some(compiled)))
 }
 
 pub(crate) fn resolve_custom_voice_prompt_recipe(
     request: &CustomVoiceRequest,
 ) -> Result<(Qwen3TtsPromptRecipe, String, Option<String>), Qwen3TtsInferenceError> {
-    validate_custom_voice_request(request)?;
-    let instruct = request
+    if request
+        .speaker
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "custom-voice requests require a non-empty speaker".to_string(),
+        });
+    }
+
+    match request
         .instruct
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match instruct {
+        .filter(|value| !value.is_empty())
+    {
         Some(instruct) => Ok((
             Qwen3TtsPromptRecipe::CustomVoiceInstructed,
             build_assistant_prompt(&request.text),
@@ -145,52 +208,6 @@ pub(crate) fn resolve_custom_voice_prompt_recipe(
             None,
         )),
     }
-}
-
-fn validate_custom_voice_request(
-    request: &CustomVoiceRequest,
-) -> Result<(), Qwen3TtsInferenceError> {
-    let speaker = request
-        .speaker
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if speaker.is_none() {
-        return Err(Qwen3TtsInferenceError::InvalidInput {
-            message: "custom-voice requests require a non-empty speaker".to_string(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_voice_clone_prompt(
-    prompt: &Qwen3TtsVoiceClonePrompt,
-) -> Result<(), Qwen3TtsInferenceError> {
-    if prompt.speaker_embedding.is_empty() {
-        return Err(Qwen3TtsInferenceError::InvalidInput {
-            message: "voice clone prompt must contain a non-empty speaker embedding".to_string(),
-        });
-    }
-    if matches!(prompt.mode, Qwen3TtsVoiceClonePromptMode::Icl)
-        && (prompt
-            .transcript
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-            || prompt
-                .ref_codec_token_ids
-                .as_ref()
-                .map(|codes| codes.is_empty())
-                .unwrap_or(true))
-    {
-        return Err(Qwen3TtsInferenceError::InvalidInput {
-            message:
-                "voice clone prompt in ICL mode requires both non-empty transcript and ref codec frames"
-                    .to_string(),
-        });
-    }
-    Ok(())
 }
 
 pub(crate) fn compile_profile_condition(
@@ -206,6 +223,7 @@ pub(crate) fn compile_profile_condition(
             ),
         });
     }
+
     let mut voice_clone = input.voice_clone;
     if let Some(voice_clone) = voice_clone.as_mut()
         && matches!(input.prompt_recipe, Qwen3TtsPromptRecipe::BaseVoiceCloneIcl)

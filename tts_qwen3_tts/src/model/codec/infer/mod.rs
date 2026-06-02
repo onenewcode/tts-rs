@@ -113,16 +113,58 @@ impl<B: Backend> LoadedQwen3TtsAudioCodec<B> {
         device: &B::Device,
         samples: &[f32],
     ) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+        let prefix = self.encode_reference_codec_prefix(device, samples)?;
+        reference_codec_prefix_to_frames(prefix)
+    }
+
+    pub fn encode_reference_codec_prefix(
+        &self,
+        device: &B::Device,
+        samples: &[f32],
+    ) -> Result<Tensor<B, 3, Int>, Qwen3TtsInferenceError> {
         let waveform = Tensor::<B, 3>::from_data(
             TensorData::new(samples.to_vec(), [1, 1, samples.len()]),
             device,
         );
-        self.model.encoder.encode_reference_frames(
+        self.model.encoder.encode_reference_prefix(
             &self.config.encoder_config,
             self.config.encoder_valid_num_quantizers,
             waveform,
         )
     }
+}
+
+fn reference_codec_prefix_to_frames<B: Backend>(
+    prefix: Tensor<B, 3, Int>,
+) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+    let [batch_size, total_layers, time_steps] = prefix.dims();
+    if batch_size != 1 {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!("reference codec prefix only supports batch_size=1, got {batch_size}"),
+        });
+    }
+
+    let flat_codes = prefix
+        .reshape([total_layers, time_steps])
+        .try_into_data()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read reference codec token ids: {source}"),
+        })?
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read reference codec token ids: {source}"),
+        })?;
+
+    let mut frames = Vec::with_capacity(time_steps);
+    for time_index in 0..time_steps {
+        let mut frame = Vec::with_capacity(total_layers);
+        for layer_idx in 0..total_layers {
+            frame.push(flat_codes[layer_idx * time_steps + time_index]);
+        }
+        frames.push(frame);
+    }
+    Ok(frames)
 }
 
 fn validate_codec_input_3d<B: Backend>(

@@ -1,5 +1,5 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{DType, Int, Tensor, TensorData};
+use burn::tensor::{Int, Tensor, TensorData};
 
 #[derive(burn::module::Module, Debug)]
 pub struct Qwen3RotaryEncoding<B: Backend> {
@@ -28,7 +28,6 @@ impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
         batch_size: usize,
         seq_len: usize,
         start: usize,
-        dtype: DType,
         device: &B::Device,
     ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let half_dim = self.inv_freq.dims()[0];
@@ -42,11 +41,9 @@ impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
         let cos_half = freqs.clone().cos();
         let sin_half = freqs.sin();
         let cos = Tensor::cat(vec![cos_half.clone(), cos_half], 2)
-            .cast(dtype)
             .unsqueeze_dim::<4>(1)
             .repeat_dim(0, batch_size);
         let sin = Tensor::cat(vec![sin_half.clone(), sin_half], 2)
-            .cast(dtype)
             .unsqueeze_dim::<4>(1)
             .repeat_dim(0, batch_size);
         (cos, sin)
@@ -90,7 +87,6 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
     pub fn get_cos_sin(
         &self,
         position_ids: Tensor<B, 3, burn::tensor::Int>,
-        dtype: DType,
     ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let [modalities, batch_size, seq_len] = position_ids.dims();
         let half_dim = self.inv_freq.dims()[0];
@@ -126,14 +122,9 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
             .reshape([batch_size, seq_len, half_dim]);
 
         // Duplicate half → full head_dim and unsqueeze for broadcast.
-        (
-            Tensor::cat(vec![cos_half.clone(), cos_half], 2)
-                .cast(dtype)
-                .unsqueeze_dim::<4>(1),
-            Tensor::cat(vec![sin_half.clone(), sin_half], 2)
-                .cast(dtype)
-                .unsqueeze_dim::<4>(1),
-        )
+        let cos = Tensor::cat(vec![cos_half.clone(), cos_half], 2).unsqueeze_dim::<4>(1);
+        let sin = Tensor::cat(vec![sin_half.clone(), sin_half], 2).unsqueeze_dim::<4>(1);
+        (cos, sin)
     }
 }
 
@@ -155,7 +146,7 @@ fn interleaved_mrope_source_indices(mrope_section: &[usize], half_dim: usize) ->
 mod tests {
     use super::{Qwen3RotaryEncoding, interleaved_mrope_source_indices};
     use burn::backend::Flex;
-    use burn::tensor::{DType, Int, Tensor, TensorData};
+    use burn::tensor::{Int, Tensor, TensorData};
 
     #[test]
     fn interleaved_mrope_source_indices_matches_expected_pattern() {
@@ -172,7 +163,7 @@ mod tests {
             &device,
         );
 
-        let (cos, sin) = rope.get_cos_sin(position_ids, DType::F32);
+        let (cos, sin) = rope.get_cos_sin(position_ids);
         let cos_values = cos
             .into_data()
             .convert::<f32>()

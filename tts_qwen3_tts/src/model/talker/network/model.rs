@@ -1,4 +1,5 @@
 use burn::module::Module;
+use burn::nn::attention::generate_autoregressive_mask;
 use burn::nn::{Embedding, Linear, RmsNorm};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
@@ -6,7 +7,6 @@ use burn::tensor::{Bool, Int, Tensor};
 use super::attention::AttentionPosition;
 use super::kv::KeyValueCache;
 use super::layer::Qwen3TtsDecoderLayer;
-use super::mask::build_attention_mask;
 use super::mlp::Qwen3TtsTalkerResizeMlp;
 use super::predictor::Qwen3TtsTalkerCodePredictor;
 use super::rope::Qwen3RotaryEncoding;
@@ -43,7 +43,17 @@ where
         let [batch_size, seq_len, _] = inputs_embeds.dims();
         let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
         let device = inputs_embeds.device();
-        let final_mask = build_attention_mask(batch_size, seq_len, key_len, mask, &device);
+        let causal_mask = (seq_len == key_len).then(|| {
+            generate_autoregressive_mask::<B>(batch_size, seq_len, &device).unsqueeze_dim::<4>(1)
+        });
+        let padding_mask =
+            mask.map(|mask| mask.equal_elem(0).unsqueeze::<4>().repeat_dim(2, seq_len));
+        let final_mask = match (causal_mask, padding_mask) {
+            (Some(causal), Some(padding)) => Some(causal.bool_or(padding)),
+            (Some(causal), None) => Some(causal),
+            (None, Some(padding)) => Some(padding),
+            (None, None) => None,
+        };
 
         let hidden_states = self.model.forward(
             inputs_embeds,
@@ -59,8 +69,7 @@ where
         let logits = self.codec_head.forward(
             hidden_states
                 .clone()
-                .reshape([batch_size * seq_len, hidden_size])
-                .cast(self.codec_head.weight.val().dtype()),
+                .reshape([batch_size * seq_len, hidden_size]),
         );
         let logits_vocab = logits.dims()[1];
         let logits = logits.reshape([batch_size, seq_len, logits_vocab]);
@@ -95,7 +104,7 @@ where
         mask: Option<Tensor<B, 4, Bool>>,
         cache: &mut [KeyValueCache<B>],
     ) -> Tensor<B, 3> {
-        let (cos, sin) = mrope.get_cos_sin(position_ids, inputs_embeds.dtype());
+        let (cos, sin) = mrope.get_cos_sin(position_ids);
 
         let mut x = inputs_embeds;
         for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {

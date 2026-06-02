@@ -6,10 +6,9 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor};
 
 use super::activation::AudioCodecLayerScale;
+use super::codebook::{gather_codebook_embeddings, normalized_codebook_centroids};
 use super::conv::AudioCodecCausalConv1d;
 use super::wave::{Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecWaveDecoderEntry};
-use crate::model::nn::attention::repeat_kv_heads;
-use crate::model::nn::codebook::{gather_codebook_embeddings, normalized_codebook_centroids};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecDecoder<B: Backend> {
@@ -130,8 +129,15 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
 
         let query = rope.apply(query, 0);
         let key = rope.apply(key, 0);
-        let key = repeat_kv_heads(key, num_heads / num_kv_heads);
-        let value = repeat_kv_heads(value, num_heads / num_kv_heads);
+        let repetitions = num_heads / num_kv_heads;
+        let key = key
+            .unsqueeze_dim::<5>(2)
+            .repeat_dim(2, repetitions)
+            .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
+        let value = value
+            .unsqueeze_dim::<5>(2)
+            .repeat_dim(2, repetitions)
+            .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
 
         let dtype = query.dtype();
         let attention_scores = query
@@ -142,7 +148,11 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
         } else {
             attention_scores
         };
-        let attention_weights = softmax(attention_scores.cast(DType::F32), 3).cast(dtype);
+        let attention_weights = if dtype == DType::F32 {
+            softmax(attention_scores, 3)
+        } else {
+            softmax(attention_scores.cast(DType::F32), 3).cast(dtype)
+        };
         let attention_output = attention_weights.matmul(value);
         let output =
             attention_output

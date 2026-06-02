@@ -1,4 +1,5 @@
 use burn::module::{Module, Param};
+use burn::nn::attention::generate_autoregressive_mask;
 use burn::nn::conv::Conv1d;
 use burn::nn::{LayerNorm, Linear, RotaryEncoding, RotaryEncodingConfig};
 use burn::tensor::activation::{elu, gelu, softmax};
@@ -6,13 +7,12 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{DType, Int, Tensor};
 
 use super::activation::AudioCodecLayerScale;
+use super::codebook::{
+    gather_codebook_embeddings, nearest_codebook_token_ids, normalized_codebook_centroids,
+};
 use super::conv::{AudioCodecCausalConv1d, ConvPadMode, forward_padded_conv1d};
 use crate::Qwen3TtsInferenceError;
 use crate::model::codec::config::Qwen3TtsAudioCodecEncoderConfig;
-use crate::model::nn::attention::{autoregressive_attention_mask, repeat_kv_heads};
-use crate::model::nn::codebook::{
-    gather_codebook_embeddings, nearest_codebook_token_ids, normalized_codebook_centroids,
-};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecEncoder<B: Backend> {
@@ -108,16 +108,16 @@ pub struct Qwen3TtsAudioCodecEncoderCodebook<B: Backend> {
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecEncoder<B> {
-    pub fn encode_reference_frames(
+    pub fn encode_reference_prefix(
         &self,
         config: &Qwen3TtsAudioCodecEncoderConfig,
         valid_num_quantizers: usize,
         waveform: Tensor<B, 3>,
-    ) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+    ) -> Result<Tensor<B, 3, Int>, Qwen3TtsInferenceError> {
         let encoded = self.encoder.forward(waveform);
         let transformed = self.encoder_transformer.forward(encoded, config);
         let downsampled = self.downsample.forward(transformed);
-        self.quantizer.extract_reference_frames(
+        self.quantizer.extract_reference_prefix(
             downsampled,
             config.num_semantic_quantizers,
             valid_num_quantizers,
@@ -242,18 +242,30 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
 
         let query = rope.apply(query, 0);
         let key = rope.apply(key, 0);
-        let key = repeat_kv_heads(key, num_heads / num_kv_heads);
-        let value = repeat_kv_heads(value, num_heads / num_kv_heads);
+        let repetitions = num_heads / num_kv_heads;
+        let key = key
+            .unsqueeze_dim::<5>(2)
+            .repeat_dim(2, repetitions)
+            .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
+        let value = value
+            .unsqueeze_dim::<5>(2)
+            .repeat_dim(2, repetitions)
+            .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
 
         let dtype = query.dtype();
         let attention_scores = query
             .matmul(key.swap_dims(2, 3))
             .div_scalar((head_dim as f32).sqrt())
             .mask_fill(
-                autoregressive_attention_mask::<B>(batch_size, seq_len, &device),
+                generate_autoregressive_mask::<B>(batch_size, seq_len, &device)
+                    .unsqueeze_dim::<4>(1),
                 f32::NEG_INFINITY,
             );
-        let attention_weights = softmax(attention_scores.cast(DType::F32), 3).cast(dtype);
+        let attention_weights = if dtype == DType::F32 {
+            softmax(attention_scores, 3)
+        } else {
+            softmax(attention_scores.cast(DType::F32), 3).cast(dtype)
+        };
         let attention_output = attention_weights.matmul(value);
         let attention_output =
             attention_output
@@ -281,12 +293,12 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderMlp<B> {
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecEncoderQuantizer<B> {
-    pub fn extract_reference_frames(
+    pub fn extract_reference_prefix(
         &self,
         hidden: Tensor<B, 3>,
         semantic_layers: usize,
         valid_layers: usize,
-    ) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+    ) -> Result<Tensor<B, 3, Int>, Qwen3TtsInferenceError> {
         let acoustic_layers = valid_layers.saturating_sub(semantic_layers);
         let semantic_codes = self
             .semantic_residual_vector_quantizer
@@ -305,26 +317,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderQuantizer<B> {
         let all_codes: Vec<Tensor<B, 2, Int>> =
             semantic_codes.into_iter().chain(acoustic_codes).collect();
         let total_layers = all_codes.len();
-        let flat_codes = Tensor::cat(all_codes, 0)
-            .try_into_data()
-            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                message: format!("failed to read reference codec token ids: {source}"),
-            })?
-            .convert::<i64>()
-            .into_vec::<i64>()
-            .map_err(|source| Qwen3TtsInferenceError::TensorRead {
-                message: format!("failed to read reference codec token ids: {source}"),
-            })?;
-
-        let mut frames = Vec::with_capacity(time_steps);
-        for time_index in 0..time_steps {
-            let mut frame = Vec::with_capacity(valid_layers);
-            for layer_idx in 0..total_layers {
-                frame.push(flat_codes[layer_idx * time_steps + time_index]);
-            }
-            frames.push(frame);
-        }
-        Ok(frames)
+        Ok(Tensor::cat(all_codes, 0).reshape([1, total_layers, time_steps]))
     }
 }
 
@@ -364,7 +357,6 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderVectorQuantization<B> {
             });
         }
 
-        let hidden_dtype = hidden.dtype();
         let codebook_size = self.codebook.cluster_usage.dims()[0];
         if codebook_size == 0 || self.codebook.embed_sum.dims() != [codebook_size, hidden_size] {
             return Err(Qwen3TtsInferenceError::InvalidInput {
@@ -377,7 +369,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderVectorQuantization<B> {
             self.codebook.embed_sum.val(),
         );
         let token_ids = nearest_codebook_token_ids(hidden, centroids.clone());
-        let quantized = gather_codebook_embeddings(centroids, token_ids.clone()).cast(hidden_dtype);
+        let quantized = gather_codebook_embeddings(centroids, token_ids.clone());
         Ok((token_ids, quantized))
     }
 }

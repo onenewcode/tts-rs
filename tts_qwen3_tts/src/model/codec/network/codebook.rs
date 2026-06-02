@@ -1,16 +1,12 @@
 use burn::tensor::backend::Backend;
-use burn::tensor::{DType, Int, Tensor};
+use burn::tensor::{Int, Tensor};
 
 pub(crate) fn normalized_codebook_centroids<B: Backend>(
     cluster_usage: Tensor<B, 1>,
     embedding_sum: Tensor<B, 2>,
 ) -> Tensor<B, 2> {
     let [codebook_size, _embed_dim] = embedding_sum.dims();
-    let usage = cluster_usage
-        .clamp_min(1e-6)
-        .reshape([codebook_size, 1])
-        .cast(DType::F32);
-    embedding_sum.cast(DType::F32).div(usage)
+    embedding_sum.div(cluster_usage.clamp_min(1e-6).reshape([codebook_size, 1]))
 }
 
 pub(crate) fn nearest_codebook_token_ids<B: Backend>(
@@ -24,10 +20,7 @@ pub(crate) fn nearest_codebook_token_ids<B: Backend>(
         "hidden/codebook embedding size mismatch"
     );
 
-    let distances = (hidden
-        .swap_dims(1, 2)
-        .cast(DType::F32)
-        .unsqueeze_dim::<4>(2)
+    let distances = (hidden.swap_dims(1, 2).unsqueeze_dim::<4>(2)
         - centroids
             .clone()
             .reshape([1, 1, codebook_size, codebook_hidden]))

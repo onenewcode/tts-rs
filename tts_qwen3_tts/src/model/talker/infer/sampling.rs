@@ -5,10 +5,9 @@
 
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor};
+use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor, TensorData};
 
-use crate::model::nn::mask::suppress_token_mask;
-use crate::model::nn::sequence::select_last_sequence_step;
+use super::select_last_sequence_step;
 
 #[derive(Debug, Clone)]
 pub struct SamplingConfig {
@@ -37,12 +36,16 @@ pub fn sample_token<B: Backend>(
     suppress_token_ids: &[usize],
 ) -> Tensor<B, 2, Int> {
     let mut logits_2d = prepare_last_step_logits(logits, suppress_token_ids);
-    let [batch_size, vocab_size] = logits_2d.dims();
 
     if !sampling.do_sample {
         return logits_2d.argmax(1);
     }
 
+    if logits_2d.dtype() != DType::F32 {
+        logits_2d = logits_2d.cast(DType::F32);
+    }
+
+    let [batch_size, vocab_size] = logits_2d.dims();
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
 
     if let Some(k) = sampling.top_k.filter(|k| *k > 0 && *k < vocab_size) {
@@ -56,7 +59,7 @@ pub fn sample_token<B: Backend>(
 
     if sampling.top_p < 1.0 {
         let (sorted_vals, sorted_idx) = logits_2d.clone().sort_descending_with_indices(1);
-        let sorted_probs = softmax(sorted_vals.clone().cast(DType::F32), 1).cast(DType::F32);
+        let sorted_probs = softmax(sorted_vals.clone(), 1);
         let cumsum = sorted_probs.clone().cumsum(1);
         let sorted_keep: Tensor<B, 2, Bool> = cumsum.sub(sorted_probs).lower_elem(sampling.top_p);
         let inverse = sorted_idx.argsort(1);
@@ -64,7 +67,7 @@ pub fn sample_token<B: Backend>(
         logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
     }
 
-    let probs = softmax(logits_2d.clone().cast(DType::F32), 1);
+    let probs = softmax(logits_2d.clone(), 1);
     probs.categorical(1)
 }
 
@@ -73,11 +76,6 @@ fn prepare_last_step_logits<B: Backend>(
     suppress_token_ids: &[usize],
 ) -> Tensor<B, 2> {
     let [batch_size, _seq_len, vocab_size] = logits.dims();
-    let logits = if logits.dtype() == DType::BF16 {
-        logits.cast(DType::F32)
-    } else {
-        logits
-    };
     let [_batch_size, seq_len, _feature_size] = logits.dims();
     let logits_2d = if seq_len == 1 {
         logits.reshape([batch_size, vocab_size])
@@ -106,6 +104,33 @@ fn apply_suppress_mask<B: Backend>(
     }
 }
 
+fn suppress_token_mask<B: Backend>(
+    batch_size: usize,
+    vocab_size: usize,
+    suppress_token_ids: &[usize],
+    device: &B::Device,
+) -> Option<Tensor<B, 2, Bool>> {
+    let valid_ids = suppress_token_ids
+        .iter()
+        .copied()
+        .filter(|id| *id < vocab_size)
+        .map(|id| id as i64)
+        .collect::<Vec<_>>();
+    if valid_ids.is_empty() {
+        return None;
+    }
+
+    let suppress_len = valid_ids.len();
+    let token_ids =
+        Tensor::<B, 2, Int>::from_data(TensorData::new(valid_ids, [1, suppress_len]), device)
+            .repeat_dim(0, batch_size);
+    let updates = token_ids.ones_like().float();
+    let mask = Tensor::<B, 2>::zeros([batch_size, vocab_size], device)
+        .scatter(1, token_ids, updates, IndexingUpdateOp::Add)
+        .bool();
+    Some(mask)
+}
+
 pub fn apply_repetition_penalty<B: Backend>(
     logits: Tensor<B, 3>,
     past_token_ids: &Tensor<B, 2, Int>,
@@ -132,7 +157,7 @@ pub fn apply_repetition_penalty<B: Backend>(
 
 #[cfg(test)]
 mod tests {
-    use super::{SamplingConfig, apply_repetition_penalty, sample_token};
+    use super::{SamplingConfig, apply_repetition_penalty, sample_token, suppress_token_mask};
     use burn::tensor::{Int, Tensor, TensorData};
 
     type TestBackend = burn::backend::Flex;
@@ -181,5 +206,27 @@ mod tests {
             .expect("penalized logits should be readable");
 
         assert_eq!(values, vec![1.0, 1.0, 3.0, 2.0]);
+    }
+
+    #[test]
+    fn suppress_token_mask_marks_requested_ids() {
+        let device = Default::default();
+        let mask = suppress_token_mask::<TestBackend>(1, 5, &[1, 3, 9], &device)
+            .expect("in-range ids should create a mask");
+        let values = mask
+            .into_data()
+            .convert::<bool>()
+            .into_vec::<bool>()
+            .expect("mask should be readable");
+
+        assert_eq!(values, vec![false, true, false, true, false]);
+    }
+
+    #[test]
+    fn suppress_token_mask_ignores_out_of_range_ids() {
+        let device = Default::default();
+        let mask = suppress_token_mask::<TestBackend>(2, 3, &[7], &device);
+
+        assert!(mask.is_none());
     }
 }

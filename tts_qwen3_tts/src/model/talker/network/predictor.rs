@@ -42,13 +42,7 @@ where
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = inputs_embeds.dims();
         let start = cache.first().map_or(0, KeyValueCache::len);
-        let (cos, sin) = rope.get_cos_sin(
-            batch_size,
-            seq_len,
-            start,
-            inputs_embeds.dtype(),
-            &inputs_embeds.device(),
-        );
+        let (cos, sin) = rope.get_cos_sin(batch_size, seq_len, start, &inputs_embeds.device());
         let mut x = inputs_embeds;
         for (layer, c) in self.layers.iter().zip(cache.iter_mut()) {
             x = layer.forward(

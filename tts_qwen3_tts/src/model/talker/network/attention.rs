@@ -1,12 +1,10 @@
 use burn::module::Module;
 use burn::nn::{Linear, RmsNorm};
-use burn::tensor::DType;
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, Tensor};
+use burn::tensor::{Bool, DType, Tensor};
 
 use super::kv::KeyValueCache;
-use crate::model::nn::attention::repeat_kv_heads;
 
 pub enum AttentionPosition<B: Backend> {
     Standard {
@@ -41,6 +39,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = x.dims();
+        let model_dtype = x.dtype();
 
         let q = self.q_proj.forward(x.clone());
         let k = self.k_proj.forward(x.clone());
@@ -50,17 +49,19 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             .q_norm
             .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
             .swap_dims(1, 2)
-            .clone();
+            .clone()
+            .cast(DType::F32);
         let k = self
             .k_norm
             .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
             .swap_dims(1, 2)
-            .clone();
+            .clone()
+            .cast(DType::F32);
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2)
-            .clone();
-
+            .clone()
+            .cast(DType::F32);
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } | AttentionPosition::Mrope { cos, sin } => {
                 let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
@@ -77,6 +78,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             num_heads,
             num_kv_heads,
             head_dim,
+            model_dtype,
             q,
             k,
             v,
@@ -92,34 +94,42 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_heads: usize,
         num_kv_heads: usize,
         head_dim: usize,
+        model_dtype: DType,
         q: Tensor<B, 4>,
         k: Tensor<B, 4>,
         v: Tensor<B, 4>,
         mask: Option<Tensor<B, 4, Bool>>,
     ) -> Tensor<B, 3> {
         let n_rep = num_heads / num_kv_heads;
-        let k = repeat_kv_heads(k, n_rep);
-        let v = repeat_kv_heads(v, n_rep);
+        let key_len = k.dims()[2];
+        let k = k.unsqueeze_dim::<5>(2).repeat_dim(2, n_rep).reshape([
+            batch_size,
+            num_kv_heads * n_rep,
+            key_len,
+            head_dim,
+        ]);
+        let value_len = v.dims()[2];
+        let v = v.unsqueeze_dim::<5>(2).repeat_dim(2, n_rep).reshape([
+            batch_size,
+            num_kv_heads * n_rep,
+            value_len,
+            head_dim,
+        ]);
 
-        let dtype = q.dtype();
         let scaling = (head_dim as f32).sqrt().recip();
-        let attn_scores = q
-            .clone()
-            .cast(DType::F32)
-            .matmul(k.clone().cast(DType::F32).swap_dims(2, 3).clone())
-            .mul_scalar(scaling);
+        let attn_scores = q.matmul(k.swap_dims(2, 3).clone()).mul_scalar(scaling);
         let attn_scores = if let Some(mask) = mask {
             attn_scores.mask_fill(mask, f32::NEG_INFINITY)
         } else {
             attn_scores
         };
-        let attn_weights_f32 = softmax(attn_scores.cast(DType::F32), 3);
-        let attn_weights = attn_weights_f32.clone().cast(dtype);
-        let attn_output = attn_weights
-            .clone()
-            .cast(DType::F32)
-            .matmul(v.cast(DType::F32))
-            .cast(dtype);
+        let attn_weights = softmax(attn_scores, 3);
+        let attn_output = attn_weights.matmul(v);
+        let attn_output = if model_dtype == DType::F32 {
+            attn_output
+        } else {
+            attn_output.cast(model_dtype)
+        };
 
         let attn_output = attn_output.swap_dims(1, 2).clone();
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);

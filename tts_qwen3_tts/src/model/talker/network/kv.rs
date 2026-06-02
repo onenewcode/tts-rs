@@ -68,7 +68,8 @@ impl<B: Backend> AutoregressiveCache<B> {
             self.cache = Some(
                 tensor
                     .clone()
-                    .slice([0..batch_size, 0..num_heads, 0..1, 0..head_dim])
+                    .slice([0..1, 0..num_heads, 0..1, 0..head_dim])
+                    .repeat_dim(0, self.max_batch_size)
                     .repeat_dim(2, self.max_seq_len)
                     .mul_scalar(0.0),
             );
@@ -167,5 +168,57 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn len(&self) -> usize {
         self.key.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AutoregressiveCache;
+    use burn::backend::Flex;
+    use burn::tensor::{Tensor, TensorData};
+
+    #[test]
+    fn first_forward_returns_original_step() {
+        let device = Default::default();
+        let mut cache = AutoregressiveCache::<Flex>::new(1, 1, 4, 2);
+        let token = Tensor::<Flex, 4>::from_data(
+            TensorData::new(vec![1.0_f32, 2.0], [1, 1, 1, 2]),
+            &device,
+        );
+
+        let current = cache.forward(token);
+        let values = current
+            .into_data()
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .expect("cached step should be readable");
+
+        assert_eq!(values, vec![1.0, 2.0]);
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn second_forward_appends_to_cache_slice() {
+        let device = Default::default();
+        let mut cache = AutoregressiveCache::<Flex>::new(1, 1, 4, 2);
+        let first = Tensor::<Flex, 4>::from_data(
+            TensorData::new(vec![1.0_f32, 2.0], [1, 1, 1, 2]),
+            &device,
+        );
+        let second = Tensor::<Flex, 4>::from_data(
+            TensorData::new(vec![3.0_f32, 4.0], [1, 1, 1, 2]),
+            &device,
+        );
+
+        let _ = cache.forward(first);
+        let current = cache.forward(second);
+        let values = current
+            .into_data()
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .expect("cache window should be readable");
+
+        assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(cache.len(), 2);
     }
 }

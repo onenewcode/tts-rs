@@ -14,9 +14,8 @@ use tts_infer::driver::ErasedLoadedModel;
 use tts_infer::{LoadedModelHandle, ModelCapabilities, SynthesisResult};
 
 use crate::{
-    BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, Qwen3TtsEngineConfig, Qwen3TtsError,
-    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
-    QwenRequest,
+    BaseVoiceCloneReferenceAudio, Qwen3TtsEngineConfig, Qwen3TtsError, Qwen3TtsPackage,
+    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt, QwenRequest,
 };
 
 pub(crate) use self::loaded_model::Qwen3TtsLoadedModel;
@@ -49,7 +48,6 @@ impl Qwen3LoadedModelInstance {
         request: QwenRequest,
         options: Qwen3TtsRunOptions,
     ) -> Result<tts_infer::PcmAudio, Qwen3TtsError> {
-        let request = self.materialize_request(request)?;
         Engine::new(self.model.clone())
             .synthesize(request, options)
             .map_err(Qwen3TtsError::from)
@@ -62,21 +60,6 @@ impl Qwen3LoadedModelInstance {
         self.model
             .create_voice_clone_prompt(&reference)
             .map_err(Qwen3TtsError::from)
-    }
-
-    fn materialize_request(&self, request: QwenRequest) -> Result<QwenRequest, Qwen3TtsError> {
-        match request {
-            QwenRequest::Base(mut request) => {
-                if let Some(BaseVoiceCloneConditioning::ReferenceAudio(reference)) =
-                    request.voice_clone.take()
-                {
-                    let prompt = self.create_voice_clone_prompt(reference)?;
-                    request.voice_clone = Some(BaseVoiceCloneConditioning::Prompt(prompt));
-                }
-                Ok(QwenRequest::Base(request))
-            }
-            QwenRequest::CustomVoice(request) => Ok(QwenRequest::CustomVoice(request)),
-        }
     }
 }
 

@@ -1,3 +1,4 @@
+pub(crate) mod codebook;
 pub(crate) mod decoder;
 pub(crate) mod encoder;
 pub(crate) mod wave;
