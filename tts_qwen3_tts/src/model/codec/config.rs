@@ -139,7 +139,8 @@ impl Qwen3TtsAudioCodecConfig {
             self.input_sample_rate as f64 / self.encode_downsample_rate as f64;
         debug_assert!((computed_frame_rate - self.encoder_config._frame_rate).abs() < 1e-6);
         let backbone_frame_rate = self.encoder_config.sampling_rate as f64
-            / self.encoder_config
+            / self
+                .encoder_config
                 .upsampling_ratios
                 .iter()
                 .copied()

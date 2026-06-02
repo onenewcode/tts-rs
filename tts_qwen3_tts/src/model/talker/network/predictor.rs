@@ -16,10 +16,7 @@ pub struct Qwen3TtsTalkerCodePredictor<B: Backend> {
     pub rope: Qwen3StandardRotaryEncoding<B>,
 }
 
-impl<B> Qwen3TtsTalkerCodePredictor<B>
-where
-    B: Backend,
-{}
+impl<B> Qwen3TtsTalkerCodePredictor<B> where B: Backend {}
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsTalkerCodePredictorModel<B: Backend> {

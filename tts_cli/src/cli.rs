@@ -423,7 +423,10 @@ mod tests {
 
         let input = to_shared_input(&shared);
         assert_eq!(input.max_new_tokens, None);
-        assert_eq!(input.sampling, Some(SamplingOverride::GreedyFromModelDefaults));
+        assert_eq!(
+            input.sampling,
+            Some(SamplingOverride::GreedyFromModelDefaults)
+        );
         assert!(input.profiling);
         assert!(input.profiling_per_step);
         assert_eq!(input.profiling_log_topk, 3);

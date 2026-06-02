@@ -377,16 +377,16 @@ fn resolve_sampling(
     match requested {
         None => map_sampling(model_default),
         Some(crate::SamplingOverride::Literal(config)) => map_sampling(config),
-        Some(crate::SamplingOverride::GreedyFromModelDefaults) => map_sampling(
-            &crate::SamplingConfig {
+        Some(crate::SamplingOverride::GreedyFromModelDefaults) => {
+            map_sampling(&crate::SamplingConfig {
                 do_sample: false,
                 temperature: model_default.temperature,
                 top_k: model_default.top_k,
                 top_p: model_default.top_p,
                 seed: model_default.seed,
                 repetition_penalty: model_default.repetition_penalty,
-            },
-        ),
+            })
+        }
     }
 }
 
