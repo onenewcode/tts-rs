@@ -23,7 +23,7 @@ pub(crate) struct SessionSeed<B: Backend> {
     pub(crate) reference_codec_prefix: Option<Tensor<B, 3, Int>>,
     pub(crate) reference_codec_frame_count: usize,
     pub(crate) max_new_tokens: usize,
-    pub(crate) codec_eos_token_id: usize,
+    pub(crate) codec_eos_token_id: i64,
     pub(crate) sampling: crate::SamplingConfig,
     pub(crate) suppress_token_ids: Vec<usize>,
 }
@@ -82,17 +82,13 @@ where
     }?;
 
     let seq_len = prepared.inputs_embeds.dims()[1];
-    let attention_mask =
-        Tensor::<B, 2, Int>::from_data(TensorData::new(vec![1; seq_len], [1, seq_len]), device);
-    let position_ids = Tensor::<B, 3, Int>::from_data(
-        TensorData::new(
-            (0..3)
-                .flat_map(|_| (0..seq_len).map(|position| position as i32))
-                .collect::<Vec<_>>(),
-            [3, 1, seq_len],
-        ),
-        device,
-    );
+    let attention_mask = Tensor::<B, 2, Int>::ones([1, seq_len], device);
+    let seq_len_i64 = i64::try_from(seq_len).map_err(|_| Qwen3TtsInferenceError::InvalidInput {
+        message: format!("prompt sequence length {seq_len} does not fit the model int tensor"),
+    })?;
+    let position_ids = Tensor::<B, 1, Int>::arange(0..seq_len_i64, device)
+        .reshape([1, 1, seq_len])
+        .repeat_dim(0, 3);
 
     Ok(SessionSeed {
         inputs_embeds: prepared.inputs_embeds,
@@ -143,9 +139,10 @@ fn reference_text_ids(
         })
 }
 
-fn build_suppress_token_ids(vocab_size: usize, codec_eos_token_id: usize) -> Vec<usize> {
+fn build_suppress_token_ids(vocab_size: usize, codec_eos_token_id: i64) -> Vec<usize> {
+    let eos_token_id = usize::try_from(codec_eos_token_id).ok();
     (vocab_size.saturating_sub(1024)..vocab_size)
-        .filter(|id| *id != codec_eos_token_id)
+        .filter(|id| Some(*id) != eos_token_id)
         .collect()
 }
 
@@ -430,8 +427,17 @@ where
             let (reference_codec_prefix, reference_codec_frame_count) = if reference.x_vector_only {
                 (None, 0)
             } else {
-                let codec_audio =
-                    load_reference_audio(&reference.path, decoder.config.input_sample_rate as u32)?;
+                let codec_audio = load_reference_audio(
+                    &reference.path,
+                    u32::try_from(decoder.config.input_sample_rate).map_err(|_| {
+                        Qwen3TtsInferenceError::InvalidInput {
+                            message: format!(
+                                "audio codec reference input sample rate {} exceeds the supported u32 audio range",
+                                decoder.config.input_sample_rate
+                            ),
+                        }
+                    })?,
+                )?;
                 let reference_codec_prefix =
                     decoder.encode_reference_codec_prefix(device, &codec_audio.samples)?;
                 let reference_codec_frame_count = reference_codec_prefix.dims()[2];
@@ -652,13 +658,8 @@ fn project_text_ids<B: Backend>(
     ids: &[i64],
     device: &B::Device,
 ) -> Tensor<B, 3> {
-    let tensor = Tensor::<B, 2, Int>::from_data(
-        TensorData::new(
-            ids.iter().map(|id| *id as i32).collect::<Vec<_>>(),
-            [1, ids.len()],
-        ),
-        device,
-    );
+    let tensor =
+        Tensor::<B, 2, Int>::from_data(TensorData::new(ids.to_vec(), [1, ids.len()]), device);
     talker
         .model
         .talker
@@ -671,12 +672,7 @@ fn embed_codec_ids<B: Backend>(
     ids: &[i64],
     device: &B::Device,
 ) -> Tensor<B, 3> {
-    let tensor = Tensor::<B, 2, Int>::from_data(
-        TensorData::new(
-            ids.iter().map(|id| *id as i32).collect::<Vec<_>>(),
-            [1, ids.len()],
-        ),
-        device,
-    );
+    let tensor =
+        Tensor::<B, 2, Int>::from_data(TensorData::new(ids.to_vec(), [1, ids.len()]), device);
     talker.model.talker.model.codec_embedding.forward(tensor)
 }

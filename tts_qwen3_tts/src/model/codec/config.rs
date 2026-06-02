@@ -68,7 +68,7 @@ pub struct Qwen3TtsAudioCodecDecoderConfig {
     pub num_quantizers: usize,
     pub num_semantic_quantizers: usize,
     pub rms_norm_eps: f64,
-    pub rope_theta: f64,
+    pub rope_theta: f32,
     pub semantic_codebook_size: usize,
     pub sliding_window: usize,
     pub upsample_rates: Vec<usize>,
@@ -107,7 +107,7 @@ pub struct Qwen3TtsAudioCodecEncoderConfig {
     pub num_semantic_quantizers: usize,
     pub pad_mode: String,
     pub residual_kernel_size: usize,
-    pub rope_theta: f64,
+    pub rope_theta: f32,
     pub sampling_rate: usize,
     pub sliding_window: usize,
     pub transformers_version: String,
@@ -138,15 +138,18 @@ impl Qwen3TtsAudioCodecConfig {
         let computed_frame_rate =
             self.input_sample_rate as f64 / self.encode_downsample_rate as f64;
         debug_assert!((computed_frame_rate - self.encoder_config._frame_rate).abs() < 1e-6);
-        let backbone_frame_rate = self.encoder_config.sampling_rate as f64
-            / self
-                .encoder_config
-                .upsampling_ratios
-                .iter()
-                .copied()
-                .product::<usize>() as f64;
-        let downsample_factor =
-            (backbone_frame_rate / self.encoder_config._frame_rate).round() as usize;
+        let upsample_product = self
+            .encoder_config
+            .upsampling_ratios
+            .iter()
+            .copied()
+            .product::<usize>();
+        let numerator = self
+            .encoder_config
+            .sampling_rate
+            .saturating_mul(self.encode_downsample_rate);
+        let denominator = upsample_product.saturating_mul(self.input_sample_rate);
+        let downsample_factor = (numerator + denominator / 2) / denominator.max(1);
         let downsample_kernel = downsample_factor * 2;
 
         Qwen3TtsAudioCodecEncoder {

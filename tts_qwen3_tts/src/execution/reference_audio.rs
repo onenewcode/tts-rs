@@ -98,9 +98,11 @@ fn read_pcm_samples(
 }
 
 fn mixdown_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
+    let channel_scale =
+        f32::from(u16::try_from(channels).expect("wav channel count should always fit into u16"));
     interleaved
         .chunks_exact(channels)
-        .map(|frame| frame.iter().copied().sum::<f32>() / channels as f32)
+        .map(|frame| frame.iter().copied().sum::<f32>() / channel_scale)
         .collect()
 }
 
@@ -114,15 +116,23 @@ pub(crate) fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u3
 
     let output_len = ((samples.len() as u64 * u64::from(target_rate)) + u64::from(source_rate / 2))
         / u64::from(source_rate);
-    let output_len = output_len.max(1) as usize;
-    let scale = source_rate as f64 / target_rate as f64;
+    let output_len =
+        usize::try_from(output_len.max(1)).expect("output length should fit into usize");
+    let source_rate_u64 = u64::from(source_rate);
+    let target_rate_u64 = u64::from(target_rate);
+    let target_rate_f32 = target_rate as f32;
 
     (0..output_len)
         .map(|index| {
-            let position = index as f64 * scale;
-            let left = position.floor() as usize;
+            let position_num = u64::try_from(index)
+                .expect("index should fit into u64")
+                .saturating_mul(source_rate_u64);
+            let left =
+                usize::try_from(position_num / target_rate_u64).expect("left index should fit");
             let right = left.saturating_add(1).min(samples.len().saturating_sub(1));
-            let mix = (position - left as f64) as f32;
+            let remainder = u32::try_from(position_num % target_rate_u64)
+                .expect("fractional sample remainder should fit into u32");
+            let mix = remainder as f32 / target_rate_f32;
             samples[left] * (1.0 - mix) + samples[right] * mix
         })
         .collect()

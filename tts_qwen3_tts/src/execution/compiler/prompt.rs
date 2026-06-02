@@ -23,7 +23,7 @@ pub(crate) struct SemanticRequestCondition {
     pub(crate) voice_clone: Option<CompiledVoiceCloneCondition>,
     pub(crate) controls: ProfileControlIds,
     pub(crate) max_new_tokens: usize,
-    pub(crate) codec_eos_token_id: usize,
+    pub(crate) codec_eos_token_id: i64,
     pub(crate) sampling: crate::SamplingConfig,
     pub(crate) prompt_recipe: Qwen3TtsPromptRecipe,
 }
@@ -65,7 +65,7 @@ pub(crate) struct CompileProfileConditionInput<'a> {
     pub(crate) prompt_recipe: Qwen3TtsPromptRecipe,
     pub(crate) controls: ProfileControlIds,
     pub(crate) max_new_tokens: usize,
-    pub(crate) codec_eos_token_id: usize,
+    pub(crate) codec_eos_token_id: i64,
     pub(crate) sampling: crate::SamplingConfig,
 }
 

@@ -53,10 +53,24 @@ where
     let ref_codec_token_ids = if reference.x_vector_only {
         None
     } else {
-        Some(loaded.encode_reference_codec_frames(
-            device,
-            &load_reference_audio(&reference.path, loaded.config.input_sample_rate as u32)?.samples,
-        )?)
+        let codec_sample_rate =
+            u32::try_from(loaded.config.input_sample_rate).map_err(|_| {
+                Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "audio codec reference input sample rate {} exceeds the supported u32 audio range",
+                        loaded.config.input_sample_rate
+                    ),
+                }
+            })?;
+        let codec_audio = (codec_sample_rate != prepared_for_speaker.sample_rate)
+            .then(|| load_reference_audio(&reference.path, codec_sample_rate))
+            .transpose()?;
+        let codec_samples = codec_audio
+            .as_ref()
+            .map_or(prepared_for_speaker.samples.as_slice(), |audio| {
+                audio.samples.as_slice()
+            });
+        Some(loaded.encode_reference_codec_frames(device, codec_samples)?)
     };
 
     Ok(Qwen3TtsVoiceClonePrompt {

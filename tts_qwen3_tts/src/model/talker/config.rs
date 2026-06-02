@@ -31,7 +31,7 @@ pub struct Qwen3TtsTalkerConfig {
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f64,
     #[config(default = 1_000_000.0)]
-    pub rope_theta: f64,
+    pub rope_theta: f32,
     #[config(default = "Qwen3TtsTalkerRopeScalingConfig::default()")]
     pub rope_scaling: Qwen3TtsTalkerRopeScalingConfig,
     pub attention_bias: bool,
@@ -55,7 +55,7 @@ pub struct Qwen3TtsTalkerCodePredictorConfig {
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f64,
     #[config(default = 10_000.0)]
-    pub rope_theta: f64,
+    pub rope_theta: f32,
     pub attention_bias: bool,
     pub num_code_groups: usize,
 }

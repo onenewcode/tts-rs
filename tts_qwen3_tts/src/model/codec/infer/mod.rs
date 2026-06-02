@@ -4,7 +4,6 @@ use burn::tensor::{Int, Tensor, TensorData};
 
 use crate::Qwen3TtsInferenceError;
 use crate::error::QwenTtsInferenceError;
-use crate::model::codec::config::Qwen3TtsAudioCodecDecoderConfig;
 use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
 
 #[derive(Debug, Clone)]
@@ -81,7 +80,11 @@ impl Waveform {
         self.samples()
             .iter()
             .copied()
-            .map(|sample| (sample.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .map(|sample| {
+                let scaled = (sample.clamp(-1.0, 1.0) * 32_768.0).round() as i32;
+                let clamped = scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+                i16::try_from(clamped).expect("PCM sample should fit in i16 after clamping")
+            })
             .collect()
     }
 }
@@ -91,11 +94,9 @@ impl<B: Backend> LoadedQwen3TtsAudioCodec<B> {
         &self,
         codec_ids: Tensor<B, 3, Int>,
     ) -> Result<Tensor<B, 3>, QwenTtsInferenceError> {
-        validate_codec_input_3d(&codec_ids, &self.config.decoder_config)?;
-
         let config = &self.config.decoder_config;
         let rope = RotaryEncodingConfig::new(config.max_position_embeddings, config.head_dim)
-            .with_theta(config.rope_theta as f32)
+            .with_theta(config.rope_theta)
             .init(&codec_ids.device());
 
         Ok(self.model.decoder.forward(
@@ -165,25 +166,4 @@ fn reference_codec_prefix_to_frames<B: Backend>(
         frames.push(frame);
     }
     Ok(frames)
-}
-
-fn validate_codec_input_3d<B: Backend>(
-    codec_ids: &Tensor<B, 3, Int>,
-    config: &Qwen3TtsAudioCodecDecoderConfig,
-) -> Result<(), QwenTtsInferenceError> {
-    let [batch, num_quantizers, _time_steps] = codec_ids.dims();
-    if batch == 0 {
-        return Err(QwenTtsInferenceError::InvalidInput {
-            message: "codec batch size must be non-zero".to_string(),
-        });
-    }
-    if num_quantizers != config.num_quantizers {
-        return Err(QwenTtsInferenceError::InvalidInput {
-            message: format!(
-                "codec token count {} doesn't match expected {} quantizer layers",
-                num_quantizers, config.num_quantizers
-            ),
-        });
-    }
-    Ok(())
 }

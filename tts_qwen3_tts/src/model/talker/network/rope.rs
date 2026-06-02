@@ -14,10 +14,10 @@ pub struct Qwen3StandardRotaryEncoding<B: Backend> {
 }
 
 impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
-    pub fn new(head_dim: usize, rope_theta: f64, device: &B::Device) -> Self {
+    pub fn new(head_dim: usize, rope_theta: f32, device: &B::Device) -> Self {
         let half_dim = head_dim / 2;
         let inv_freq = (0..half_dim)
-            .map(|index| 1.0f32 / (rope_theta as f32).powf(index as f32 / half_dim as f32))
+            .map(|index| 1.0f32 / rope_theta.powf(index as f32 / half_dim as f32))
             .collect::<Vec<_>>();
         let inv_freq = Tensor::<B, 1>::from_floats(inv_freq.as_slice(), device);
         Self { inv_freq }
@@ -31,12 +31,13 @@ impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
         device: &B::Device,
     ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let half_dim = self.inv_freq.dims()[0];
-        let positions = Tensor::<B, 1, burn::tensor::Int>::arange(
-            start as i64..(start + seq_len) as i64,
-            device,
-        )
-        .float()
-        .reshape([1, seq_len, 1]);
+        let start = i64::try_from(start).expect("rope start should fit into i64");
+        let end = start
+            .checked_add(i64::try_from(seq_len).expect("rope sequence length should fit into i64"))
+            .expect("rope position range should fit into i64");
+        let positions = Tensor::<B, 1, burn::tensor::Int>::arange(start..end, device)
+            .float()
+            .reshape([1, seq_len, 1]);
         let freqs = positions * self.inv_freq.clone().reshape([1, 1, half_dim]);
         let cos_half = freqs.clone().cos();
         let sin_half = freqs.sin();
@@ -53,13 +54,13 @@ impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
 impl<B: Backend> Qwen3RotaryEncoding<B> {
     pub fn new(
         head_dim: usize,
-        rope_theta: f64,
+        rope_theta: f32,
         mrope_section: Vec<usize>,
         device: &B::Device,
     ) -> Self {
         let half_dim = head_dim / 2;
         let inv_freq = (0..half_dim)
-            .map(|index| 1.0f32 / (rope_theta as f32).powf(index as f32 / half_dim as f32))
+            .map(|index| 1.0f32 / rope_theta.powf(index as f32 / half_dim as f32))
             .collect::<Vec<_>>();
         let inv_freq = Tensor::<B, 1>::from_floats(inv_freq.as_slice(), device);
         let interleave_source = Tensor::<B, 1, Int>::from_data(
@@ -134,7 +135,7 @@ fn interleaved_mrope_source_indices(mrope_section: &[usize], half_dim: usize) ->
         .map(|pos| {
             let modality = pos % modalities;
             if modality > 0 && pos / modalities < mrope_section[modality] {
-                modality as i64
+                i64::try_from(modality).expect("modality index should fit into i64")
             } else {
                 0
             }

@@ -96,7 +96,7 @@ mod tests {
         ) -> Result<Self::Session, Self::Error> {
             self.starts.set(self.starts.get() + 1);
             Ok(MockSession::new(
-                request.len() as i16,
+                i16::try_from(request.len()).expect("request length should fit in test sample"),
                 self.finish_after.max(options),
             ))
         }

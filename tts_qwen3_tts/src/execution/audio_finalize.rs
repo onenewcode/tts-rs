@@ -27,7 +27,7 @@ pub(crate) fn reference_codec_prefix_tensor<B: Backend>(
 fn flatten_reference_codec_frames(
     reference_codec_frames: &[Vec<i64>],
     num_quantizers: usize,
-) -> Result<Vec<i32>, Qwen3TtsInferenceError> {
+) -> Result<Vec<i64>, Qwen3TtsInferenceError> {
     let mut flat = Vec::with_capacity(num_quantizers * reference_codec_frames.len());
     for group_idx in 0..num_quantizers {
         for (frame_idx, frame) in reference_codec_frames.iter().enumerate() {
@@ -39,12 +39,7 @@ fn flatten_reference_codec_frames(
                     ),
                 });
             }
-            let value = frame[group_idx];
-            flat.push(i32::try_from(value).map_err(|_| Qwen3TtsInferenceError::InvalidInput {
-                message: format!(
-                    "reference codec token {value} at frame {frame_idx}, quantizer {group_idx} does not fit i32"
-                ),
-            })?);
+            flat.push(frame[group_idx]);
         }
     }
     Ok(flat)

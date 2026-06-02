@@ -109,11 +109,13 @@ fn extra_padding_for_conv1d(
     stride: usize,
     padding_total: usize,
 ) -> usize {
-    let frame_count =
-        (len + padding_total).saturating_sub(kernel_size) as f64 / stride as f64 + 1.0;
-    let ideal_len = ((frame_count.ceil() as usize).saturating_sub(1) * stride + kernel_size)
-        .saturating_sub(padding_total);
-    ideal_len.saturating_sub(len)
+    let padded_len = len.saturating_add(padding_total);
+    let missing = kernel_size.saturating_sub(padded_len);
+    if missing > 0 {
+        missing
+    } else {
+        (stride - (padded_len - kernel_size) % stride) % stride
+    }
 }
 
 fn pad_1d<B: Backend>(

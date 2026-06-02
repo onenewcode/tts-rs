@@ -49,18 +49,15 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             .q_norm
             .forward(q.reshape([batch_size, seq_len, num_heads, head_dim]))
             .swap_dims(1, 2)
-            .clone()
             .cast(DType::F32);
         let k = self
             .k_norm
             .forward(k.reshape([batch_size, seq_len, num_kv_heads, head_dim]))
             .swap_dims(1, 2)
-            .clone()
             .cast(DType::F32);
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2)
-            .clone()
             .cast(DType::F32);
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } | AttentionPosition::Mrope { cos, sin } => {
@@ -117,7 +114,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         ]);
 
         let scaling = (head_dim as f32).sqrt().recip();
-        let attn_scores = q.matmul(k.swap_dims(2, 3).clone()).mul_scalar(scaling);
+        let attn_scores = q.matmul(k.swap_dims(2, 3)).mul_scalar(scaling);
         let attn_scores = if let Some(mask) = mask {
             attn_scores.mask_fill(mask, f32::NEG_INFINITY)
         } else {
@@ -131,7 +128,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             attn_output.cast(model_dtype)
         };
 
-        let attn_output = attn_output.swap_dims(1, 2).clone();
+        let attn_output = attn_output.swap_dims(1, 2);
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);
         self.o_proj.forward(attn_output)
     }

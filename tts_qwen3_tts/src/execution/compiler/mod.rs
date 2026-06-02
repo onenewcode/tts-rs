@@ -80,7 +80,7 @@ impl Qwen3TtsRequestCompiler {
                             &request.language,
                         )?,
                         max_new_tokens: profile.generation_config.max_new_tokens,
-                        codec_eos_token_id: profile.control_config.codec_eos_token_id as usize,
+                        codec_eos_token_id: profile.control_config.codec_eos_token_id,
                         sampling: crate::SamplingConfig {
                             do_sample: profile.generation_config.do_sample,
                             temperature: profile.generation_config.temperature,
@@ -114,7 +114,7 @@ impl Qwen3TtsRequestCompiler {
                             request.speaker.as_deref(),
                         )?,
                         max_new_tokens: profile.generation_config.max_new_tokens,
-                        codec_eos_token_id: profile.control_config.codec_eos_token_id as usize,
+                        codec_eos_token_id: profile.control_config.codec_eos_token_id,
                         sampling: crate::SamplingConfig {
                             do_sample: profile.generation_config.do_sample,
                             temperature: profile.generation_config.temperature,

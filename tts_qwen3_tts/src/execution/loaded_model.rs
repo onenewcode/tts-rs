@@ -149,8 +149,17 @@ where
         } else {
             self.decoder.decode_waveform(generated.codec_token_ids)?
         };
-        let waveform =
-            Waveform::from_tensor(self.decoder.config.output_sample_rate as u32, waveform)?;
+        let waveform = Waveform::from_tensor(
+            u32::try_from(self.decoder.config.output_sample_rate).map_err(|_| {
+                Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "decoder output sample rate {} exceeds the supported u32 audio range",
+                        self.decoder.config.output_sample_rate
+                    ),
+                }
+            })?,
+            waveform,
+        )?;
         let pcm = waveform.to_pcm();
         Ok(tts_infer::PcmAudio {
             pcm_i16: pcm,

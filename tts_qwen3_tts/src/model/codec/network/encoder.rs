@@ -171,7 +171,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderTransformer<B> {
         config: &Qwen3TtsAudioCodecEncoderConfig,
     ) -> Tensor<B, 3> {
         let rope = RotaryEncodingConfig::new(config.max_position_embeddings, config.head_dim)
-            .with_theta(config.rope_theta as f32)
+            .with_theta(config.rope_theta)
             .init(&hidden.device());
         let mut hidden = hidden.swap_dims(1, 2);
         for layer in &self.layers {
@@ -331,8 +331,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderResidualVectorQuantizer<B> {
             return Ok(Vec::new());
         }
 
-        let projected = self.input_proj.forward(hidden);
-        let mut residual = projected.clone();
+        let mut residual = self.input_proj.forward(hidden);
         let mut all_codes = Vec::with_capacity(max_layers);
         for layer in self.layers.iter().take(max_layers) {
             let (codes, quantized) = layer.nearest_tokens_and_quantized(residual.clone())?;

@@ -25,7 +25,7 @@ pub struct TalkerGenerator<B: Backend> {
     tts_pad_embed: Option<Tensor<B, 3>>,
     sampling: SamplingConfig,
     max_new_tokens: usize,
-    eos_token_id: Option<usize>,
+    eos_token_id: Option<i64>,
     suppress_token_ids: Vec<usize>,
     step_idx: usize,
     finished: bool,
@@ -56,7 +56,7 @@ where
         compiled: &SessionSeed<B>,
         sampling: SamplingConfig,
         max_new_tokens: usize,
-        eos_token_id: Option<usize>,
+        eos_token_id: Option<i64>,
         suppress_token_ids: Vec<usize>,
     ) -> Result<Self, QwenTtsInferenceError> {
         if max_new_tokens == 0 {
@@ -92,9 +92,9 @@ where
             Some(compiled.attention_mask.clone()),
             &mut decode_cache,
         )?;
-        let current_hidden = last_hidden_step(prefill.last_hidden_state.clone());
+        let current_hidden = last_hidden_step(prefill.last_hidden_state);
         // Repetition penalty only applies once we have generated history.
-        let penalized_logits = prefill.logits.clone();
+        let penalized_logits = prefill.logits;
         let selected_token = sample_token::<B>(penalized_logits, &sampling, &suppress_token_ids);
         let eos_seen = selected_token_is_eos(&selected_token, eos_token_id)?;
 
@@ -172,7 +172,13 @@ where
             self.step_idx - 1,
         );
         let device = inputs_embeds.device();
-        let position_ids = Tensor::<B, 3, Int>::full([3, 1, 1], cache_len as i32, &device);
+        let cache_len =
+            i64::try_from(cache_len).map_err(|_| QwenTtsInferenceError::InvalidInput {
+                message: format!(
+                    "decode cache length {cache_len} does not fit the model int tensor"
+                ),
+            })?;
+        let position_ids = Tensor::<B, 3, Int>::full([3, 1, 1], cache_len, &device);
         let decoded = decode_step(
             &self.config,
             loaded,
@@ -213,7 +219,7 @@ where
 
 fn selected_token_is_eos<B: Backend>(
     selected_token: &Tensor<B, 2, Int>,
-    eos_token_id: Option<usize>,
+    eos_token_id: Option<i64>,
 ) -> Result<bool, QwenTtsInferenceError> {
     let Some(id) = eos_token_id else {
         return Ok(false);
@@ -226,7 +232,7 @@ fn selected_token_is_eos<B: Backend>(
             message: format!("talker.selected_token_is_eos: {source}"),
         })?
         .elem::<i64>();
-    Ok(token_id == id as i64)
+    Ok(token_id == id)
 }
 
 pub(crate) fn last_hidden_step<B: Backend>(hidden: Tensor<B, 3>) -> Tensor<B, 2> {
@@ -272,29 +278,25 @@ pub(crate) fn codec_group_context_embedding<B: Backend>(
     codec_ids: Tensor<B, 2, Int>,
 ) -> Tensor<B, 3> {
     let [batch_size, _num_groups] = codec_ids.dims();
-    let mut group_embeds = Vec::with_capacity(config.num_code_groups);
     let base_token = codec_ids
         .clone()
         .slice([0..batch_size, 0..1])
         .reshape([batch_size, 1]);
-    group_embeds.push(
-        loaded
-            .model
-            .talker
-            .model
-            .codec_embedding
-            .forward(base_token),
-    );
+    let mut summed = loaded
+        .model
+        .talker
+        .model
+        .codec_embedding
+        .forward(base_token);
     for group_idx in 1..config.num_code_groups {
         let token = codec_ids
             .clone()
             .slice([0..batch_size, group_idx..group_idx + 1])
             .reshape([batch_size, 1]);
-        group_embeds.push(
-            loaded.model.talker.code_predictor.model.codec_embedding[group_idx - 1].forward(token),
-        );
+        summed = summed
+            + loaded.model.talker.code_predictor.model.codec_embedding[group_idx - 1].forward(token);
     }
-    Tensor::cat(group_embeds, 1).sum_dim(1)
+    summed
 }
 
 pub(crate) fn validate_generation_side_inputs(
@@ -584,26 +586,24 @@ where
     );
     let prefill_hidden = run_code_predictor_hidden(config, loaded, prefill_inputs, None, cache);
     let prefill_head = &loaded.model.talker.code_predictor.lm_head[0];
-    let prefill_logits = prefill_head.forward(prefill_hidden.clone());
+    let prefill_logits = prefill_head.forward(prefill_hidden);
     let mut selected_token = sample_token::<B>(prefill_logits, sampling, &[]);
-    let mut predictor_tokens = vec![selected_token.clone()];
+    let mut predictor_token_ids = selected_token.clone();
 
     for head_idx in 1..config.num_code_groups - 1 {
         let step_inputs = loaded.model.talker.code_predictor.model.codec_embedding[head_idx - 1]
             .forward(selected_token);
         let step_hidden = run_code_predictor_hidden(config, loaded, step_inputs, None, cache);
         let head = &loaded.model.talker.code_predictor.lm_head[head_idx];
-        let past_ids = Tensor::cat(predictor_tokens.clone(), 1);
         let logits = apply_repetition_penalty(
-            head.forward(step_hidden.clone()),
-            &past_ids,
+            head.forward(step_hidden),
+            &predictor_token_ids,
             sampling.repetition_penalty,
         );
         selected_token = sample_token::<B>(logits, sampling, &[]);
-        predictor_tokens.push(selected_token.clone());
+        predictor_token_ids = Tensor::cat(vec![predictor_token_ids, selected_token.clone()], 1);
     }
 
-    let predictor_token_ids = Tensor::cat(predictor_tokens, 1);
     Ok(Tensor::cat(
         vec![base_codec_token_id, predictor_token_ids],
         1,

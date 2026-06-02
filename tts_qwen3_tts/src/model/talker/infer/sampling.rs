@@ -59,7 +59,7 @@ pub fn sample_token<B: Backend>(
 
     if sampling.top_p < 1.0 {
         let (sorted_vals, sorted_idx) = logits_2d.clone().sort_descending_with_indices(1);
-        let sorted_probs = softmax(sorted_vals.clone(), 1);
+        let sorted_probs = softmax(sorted_vals, 1);
         let cumsum = sorted_probs.clone().cumsum(1);
         let sorted_keep: Tensor<B, 2, Bool> = cumsum.sub(sorted_probs).lower_elem(sampling.top_p);
         let inverse = sorted_idx.argsort(1);
@@ -67,7 +67,7 @@ pub fn sample_token<B: Backend>(
         logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
     }
 
-    let probs = softmax(logits_2d.clone(), 1);
+    let probs = softmax(logits_2d, 1);
     probs.categorical(1)
 }
 
@@ -75,8 +75,7 @@ fn prepare_last_step_logits<B: Backend>(
     logits: Tensor<B, 3>,
     suppress_token_ids: &[usize],
 ) -> Tensor<B, 2> {
-    let [batch_size, _seq_len, vocab_size] = logits.dims();
-    let [_batch_size, seq_len, _feature_size] = logits.dims();
+    let [batch_size, seq_len, vocab_size] = logits.dims();
     let logits_2d = if seq_len == 1 {
         logits.reshape([batch_size, vocab_size])
     } else {
@@ -114,7 +113,7 @@ fn suppress_token_mask<B: Backend>(
         .iter()
         .copied()
         .filter(|id| *id < vocab_size)
-        .map(|id| id as i64)
+        .filter_map(|id| i64::try_from(id).ok())
         .collect::<Vec<_>>();
     if valid_ids.is_empty() {
         return None;
