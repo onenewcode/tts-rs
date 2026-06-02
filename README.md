@@ -10,6 +10,9 @@ framework and application layers that sit around it.
 Important: run synthesis commands in release mode. Debug builds are much slower
 and can look like they are hanging during model load or generation.
 
+For the current architecture, crate responsibilities, and runtime flow, see
+`docs/architecture.md`.
+
 ## Workspace Overview
 
 The workspace currently contains five crates:
@@ -27,8 +30,7 @@ At a high level:
 CLI/frontend -> tts_app -> tts_core manager/handle lifecycle -> qwen3 driver -> WAV
 ```
 
-For the current implementation split and runtime responsibilities, see
-`docs/architecture.md`.
+For a deeper architecture walkthrough, see `docs/architecture.md`.
 
 ## Prerequisites
 
@@ -169,33 +171,8 @@ the model actually supports.
 
 ## Testing
 
-Use the fast, asset-free checks first:
-
-```bash
-cargo test -p tts_core
-cargo test -p tts_app
-cargo test -p tts_qwen3_tts --test public_surface
-cargo test -p tts_qwen3_tts --test compiler_load
-cargo test -p tts_cli --test cli_parse
-```
-
-For full testing guidance, see `docs/TEST.md`.
-
-For CLI end-to-end verification, run `tts_cli` in release mode against a local
-model package. A good smoke path is:
-
-```bash
-cargo run --release -p tts_cli -- synthesize custom-voice \
-  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
-  --text "你好，欢迎使用 tts-rs。" \
-  --language Chinese \
-  --speaker Vivian \
-  --backend flex \
-  --output ./out/custom-voice-flex-smoke.wav
-```
-
-That command exercises the CLI shell, `tts_app` request preparation, driver
-loading, generation, and WAV writing in one path.
+For testing commands, smoke procedures, and verification guidance, see
+`docs/TEST.md`.
 
 ## Advanced: Custom Manifest
 

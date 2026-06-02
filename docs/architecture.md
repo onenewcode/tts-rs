@@ -2,164 +2,98 @@
 
 ## Summary
 
-`tts-rs` is a local, on-device TTS workspace built around explicit model-driver
-registration and loaded-instance lifecycle management. The repository currently
-ships one concrete driver, `tts_qwen3_tts`, but the surrounding runtime is
-structured so additional drivers can be added without forcing all models into a
-single synthesis request shape.
+`tts-rs` is a Rust workspace for local, on-device text-to-speech inference.
+The current implementation targets Qwen3-TTS and is built on Burn, but the
+workspace is intentionally split so model loading, lifecycle control, request
+preparation, and CLI concerns do not collapse into one crate.
 
-The current design center is a shared local model-service runtime:
+Today the repository ships one concrete driver, `tts_qwen3_tts`, plus four
+supporting crates around it:
 
-- explicit driver registration
-- explicit model loading
-- loaded model instance lifecycle management
-- single-instance serialized execution
-- capability inspection after load
-- shared diagnostics and framework-level orchestration
+- `tts_infer` (package name `tts_core`) for framework-level lifecycle and
+  result primitives
+- `tts_error` for shared diagnostics
+- `tts_qwen3_tts` for the Qwen3-TTS driver and model-private runtime
+- `tts_app` for application-service orchestration
+- `tts_cli` for the thin command-line shell
 
-The framework does not define a fully unified cross-model synthesis request.
-Different TTS models are expected to vary in prompting, speaker semantics,
-reference-audio rules, and execution stages.
+At a high level, the architecture is:
 
-## Current Workspace Shape
+```text
+text -> request preparation -> talker/model -> codec tokens -> audio codec -> WAV
+                           ^                                          |
+                           +------ tts_core loaded-model lifecycle ---+
+```
 
-The current workspace contains five crates:
+This split keeps the CLI small, keeps model-private details inside the driver
+crate, and leaves room for more drivers without forcing every future model into
+the exact same request type.
 
-- `tts_core` (directory `tts_infer/`)
-- `tts_error`
-- `tts_qwen3_tts`
-- `tts_app`
-- `tts_cli`
+## Workspace Responsibilities
 
-Current responsibilities:
+### `tts_infer` (`tts_core`)
 
-- `tts_core` provides the framework-level manager/handle layer and common audio,
-  capability, and result primitives
-- `tts_error` provides shared diagnostics and stable error-reporting structure
-- `tts_qwen3_tts` implements the Qwen3-TTS driver and its model-private runtime
-- `tts_app` prepares CLI-facing requests into driver-facing requests and owns
-  application-service orchestration
-- `tts_cli` is a thin shell over `tts_app`
+`tts_infer` is the framework core. Its package name is `tts_core`, while the
+directory remains `tts_infer/`.
 
-The package name for the framework crate is already `tts_core`, even though the
-source directory remains `tts_infer/`.
+It owns the reusable runtime contract:
+
+- driver registration through `DriverRegistry`
+- model loading through `ModelManager`
+- loaded-instance handles through `LoadedModelHandle`
+- lifecycle state tracking through `ModelState`
+- shared capability projection through `ModelCapabilities`
+- shared audio and synthesis output through `PcmAudio` and `SynthesisResult`
+
+This crate does not define a universal cross-model synthesis request. That is
+intentional: different TTS models can vary in prompt construction, speaker
+selection, reference-audio requirements, and generation stages.
+
+### `tts_error`
+
+`tts_error` owns shared diagnostics and stable reporting structure. It is the
+home for repository-wide error categories and user-facing diagnostic rendering,
+without trying to absorb every model-specific enum into one crate.
+
+### `tts_qwen3_tts`
+
+`tts_qwen3_tts` is the current concrete driver. It owns:
+
+- Qwen3-TTS public request and load surface
+- package normalization and artifact loading
+- capability aggregation after load
+- request compilation and execution
+- model-private talker, speaker, codec, and neural-network internals
+
+This crate is the Burn-backed runtime center of the repository today.
+
+### `tts_app`
+
+`tts_app` is the application-service layer between shells and drivers. It owns:
+
+- shell-facing synthesis input structs
+- translation from CLI semantics into driver-facing requests
+- package source selection (`--model-dir` vs `--manifest`)
+- profiling and runtime option assembly
+- load / synthesize / save orchestration through `ModelManager`
+
+This keeps request assembly and validation out of `tts_cli`.
+
+### `tts_cli`
+
+`tts_cli` is intentionally thin. It should:
+
+- parse command-line arguments
+- map flags into `tts_app` input structs
+- call `tts_app`
+- report output paths and diagnostics
+
+It should not grow model-specific runtime logic or duplicate request-building
+rules that belong in `tts_app`.
 
 ## Runtime Model
 
-The central runtime object is a loaded model instance managed through
-`tts_core`.
-
-Current public framework objects include:
-
-- `DriverDescriptor`
-- `DriverRegistry`
-- `LoadedModelHandle`
-- `ModelManager`
-- `ModelCapabilities`
-- `SynthesisResult`
-
-These define the framework contract that the rest of the workspace builds on.
-
-### Driver registration and loading
-
-Drivers are registered explicitly in a `DriverRegistry`. A `ModelManager` owns
-the registry-backed loading path and creates resident model instances through
-that registry.
-
-In the current application path, `tts_app::QwenAppService`:
-
-- constructs a registry
-- registers the Qwen3 driver
-- loads a model instance through `ModelManager`
-- calls the Qwen3-specific synthesis extension on the loaded handle
-- closes the handle and removes the instance after synthesis completes
-
-### Loaded instances and lifecycle
-
-Loaded instances are the primary managed object.
-
-Each instance:
-
-- is explicitly created through the manager
-- receives a framework-assigned instance ID
-- exposes capabilities after successful load
-- executes one request at a time
-- must be closed before the manager removes it
-
-The handle layer enforces serialized per-instance work. The current state model
-is `Ready`, `Busy`, and `Closed`.
-
-### Capability inspection
-
-Capabilities are authoritative after load, not only from static package
-metadata. The loaded instance and resolved runtime configuration determine the
-capability view surfaced through `ModelCapabilities`.
-
-### Diagnostics
-
-Error handling is split between:
-
-- model-specific error types in the driver crate
-- shared diagnostics infrastructure in `tts_error`
-
-`tts_error` is the home for shared categories, codes, and rendered diagnostics;
-it is not intended to absorb every model-specific error enum.
-
-## Current Qwen3 Driver Structure
-
-`tts_qwen3_tts` remains a single crate. The immediate reusable boundary in this
-repository is framework lifecycle management rather than a second crate split
-between generic model semantics and model execution.
-
-The current top-level internal areas are:
-
-- `surface/`
-- `loading/`
-- `capabilities/`
-- `execution/`
-- `model/`
-
-### `surface/`
-
-Owns the public driver-facing request types, load options, run options, backend
-selection surface, and registration entrypoints re-exported from the crate.
-
-### `loading/`
-
-Owns package normalization, config loading, artifact validation, and loaded
-instance construction.
-
-### `capabilities/`
-
-Owns loaded-instance capability aggregation and projection for framework-facing
-inspection.
-
-### `execution/`
-
-Owns request pre-processing, reference-audio prompt materialization, request
-compilation, runtime generation, profiling hooks, and waveform production
-handoff.
-
-### `model/`
-
-Holds model-private internals such as talker, speaker, codec, and neural-network
-subsystems. This tree still carries substantial implementation detail that is
-not part of the framework surface.
-
-Backend-specific concerns exist today, but they are not yet factored into a
-standalone top-level `backend/` directory in the current source tree.
-
-## Data Flow
-
-Current CLI-to-audio flow:
-
-```text
-tts_cli args
--> tts_app request preparation
--> ModelManager loads Qwen3 instance
--> qwen3 execution pipeline compiles and generates
--> audio is written to WAV
-```
+The central runtime object is a loaded model instance managed by `tts_core`.
 
 Current framework flow:
 
@@ -172,19 +106,195 @@ register driver
 -> synthesis result returns audio plus runtime metadata
 ```
 
+### Driver Registration
+
+Drivers are registered explicitly in a `DriverRegistry`. The current app path
+registers the Qwen3 driver during `QwenAppService::new()`.
+
+This is a deliberate choice:
+
+- driver availability is explicit
+- startup behavior is deterministic
+- framework code does not depend on plugin-style discovery
+
+### Loaded Instances And Lifecycle
+
+`ModelManager` loads resident model instances and returns a
+`LoadedModelHandle`.
+
+Each loaded instance:
+
+- has a framework-assigned instance ID
+- exposes capabilities after successful load
+- executes one request at a time
+- must be closed before removal
+
+The current per-instance state model is:
+
+- `Ready`
+- `Busy`
+- `Closed`
+
+Serialized execution is enforced at the handle layer so one loaded model
+instance cannot process overlapping requests accidentally.
+
+### Capability Inspection
+
+Capabilities are resolved after load instead of being treated as purely static
+metadata. The loaded artifacts and resolved runtime configuration determine the
+authoritative `ModelCapabilities` view exposed through the framework.
+
+## Current Qwen3 Driver Layout
+
+`tts_qwen3_tts/src/` is currently organized into these primary layers:
+
+- `surface/`
+- `loading/`
+- `capabilities/`
+- `execution/`
+- `model/`
+
+There is also a small top-level `sampling.rs` module for reusable sampling
+configuration types.
+
+### `surface/`
+
+Owns the public driver-facing API:
+
+- request types such as `BaseRequest`, `CustomVoiceRequest`, and `QwenRequest`
+- package and manifest surface types
+- load and run options
+- language and prompt surface enums
+- driver registration entrypoints
+
+If another crate needs to talk to the Qwen3 driver directly, it should prefer
+this layer rather than reaching into model-private modules.
+
+### `loading/`
+
+Owns model package normalization and load-time preparation:
+
+- model-dir vs manifest handling
+- package manifest parsing
+- relative-path normalization
+- artifact validation
+- generation-config loading
+- construction of the loaded Qwen3 engine
+
+This layer is where repository-local file layout assumptions are turned into a
+driver runtime.
+
+### `capabilities/`
+
+Owns loaded-instance capability projection for framework consumers. This keeps
+the framework-facing capability shape separate from the lower-level loading and
+execution details that produce it.
+
+### `execution/`
+
+Owns runtime request handling after load:
+
+- request compilation
+- prompt construction
+- session seed and sampling resolution
+- profiling configuration
+- reference-audio preparation
+- generation loop execution
+- audio finalization
+
+This is the operational pipeline from driver-facing request to synthesized
+audio.
+
+### `model/`
+
+Owns model-private neural and signal-processing internals:
+
+- `talker/`
+- `speaker/`
+- `codec/`
+- `nn/`
+
+This tree is intentionally not the public framework surface. It is where the
+Qwen3 implementation details live, including Burn module wiring and tensor
+operations.
+
+## Burn And Backend Shape
+
+The current runtime is built on Burn. Backend selection is surfaced through the
+Qwen3 driver and propagated through `tts_app` and `tts_cli`.
+
+Current feature flags include:
+
+- `flex`
+- `fusion`
+- `wgpu`
+- `cuda`
+- `rocm`
+- `metal`
+- `vulkan`
+- `webgpu`
+
+In practice, this means:
+
+- backend choice is part of the driver/application boundary
+- CLI commands stay backend-aware without embedding backend internals
+- CI and linting should be careful with `--all-features`, because some optional
+  backend stacks require extra platform SDKs
+
+The repository's recommended local default remains `flex`.
+
+## End-To-End Request Flow
+
+The current CLI-to-audio path is:
+
+```text
+tts_cli args
+-> tts_app input structs
+-> package source resolution
+-> ModelManager loads Qwen3 instance
+-> qwen3 request compilation
+-> talker generation and codec/audio finalization
+-> WAV output
+```
+
+More concretely:
+
+1. `tts_cli` parses shell flags.
+2. `tts_app` converts those flags into `BaseSynthesisInput` or
+   `CustomVoiceSynthesisInput`.
+3. `tts_app` builds a `QwenRequest`, `Qwen3TtsRunOptions`, and
+   `Qwen3TtsProfilingConfig`.
+4. `ModelManager` loads a Qwen3 instance through the registered driver.
+5. `Qwen3TtsHandleExt` runs synthesis on the loaded handle.
+6. The resulting `PcmAudio` is saved as WAV.
+7. The handle is closed and removed from the manager.
+
+The current app service is intentionally request-scoped: it loads, uses, saves,
+closes, and removes the model instance within the synthesis path.
+
+## Current Architectural Boundaries
+
+The codebase currently aims to keep these boundaries clear:
+
+- `tts_cli` stays a shell, not an application-service crate
+- `tts_app` owns request assembly and shell-to-driver translation
+- `tts_infer` owns reusable lifecycle primitives, not model semantics
+- `tts_qwen3_tts` owns Qwen3-specific execution and Burn integration
+- `tts_error` owns shared diagnostics, not every possible runtime detail
+
 ## Current Non-Goals
 
 The current architecture does not aim to provide:
 
-- a unified cross-model synthesis request
+- a unified cross-model synthesis request type
 - plugin-style runtime discovery
-- multi-request parallel execution inside one loaded model instance
-- automatic model-type detection from arbitrary paths
-- a centralized crate containing every concrete error enum
+- parallel request execution inside one loaded model instance
+- automatic support for arbitrary model layouts without explicit packaging rules
+- a fully generic backend abstraction outside the current driver surface
 
 ## Target Direction
 
-The next-step direction remains a layered local runtime:
+The near-term direction remains a layered local runtime:
 
 ```text
 frontend shell(s)
@@ -200,10 +310,12 @@ framework core
     +--> model driver: future model B
 ```
 
-Target-direction notes:
+Near-term priorities:
 
-- keep `tts_cli` thin and move request-assembly semantics into `tts_app`
-- continue tightening the split between Qwen3 public surface, loading,
-  capability projection, and execution internals
-- extract backend boundary concerns more explicitly only when the current module
-  shape makes that split useful rather than aspirational
+- keep `tts_cli` thin
+- continue moving shell semantics into `tts_app`
+- preserve the `surface` / `loading` / `capabilities` / `execution` split in
+  `tts_qwen3_tts`
+- keep model-private Burn internals inside `model/`
+- only extract a stronger backend boundary when the implementation shape makes
+  that split concretely useful
