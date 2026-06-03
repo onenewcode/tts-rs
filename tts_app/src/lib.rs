@@ -8,6 +8,7 @@ use tts_qwen3_tts::{
     Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest, register_driver,
 };
 
+pub use tts_qwen3_tts::Qwen3TtsModelDType;
 pub use tts_qwen3_tts::SamplingConfig;
 pub use tts_qwen3_tts::SamplingOverride;
 
@@ -20,6 +21,7 @@ pub struct SharedSynthesisInput {
     pub output: PathBuf,
     pub max_new_tokens: Option<usize>,
     pub sampling: Option<SamplingOverride>,
+    pub dtype: Option<Qwen3TtsModelDType>,
     pub profiling: bool,
     pub profiling_per_step: bool,
     pub profiling_stage_summary: bool,
@@ -49,6 +51,7 @@ pub struct PreparedSynthesis {
     pub output: PathBuf,
     pub profiling: Qwen3TtsProfilingConfig,
     pub run_options: Qwen3TtsRunOptions,
+    pub dtype: Option<Qwen3TtsModelDType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,6 +138,7 @@ impl QwenAppService {
                 max_new_tokens: input.shared.max_new_tokens,
                 sampling: input.shared.sampling,
             },
+            dtype: input.shared.dtype,
         })
     }
 
@@ -162,6 +166,7 @@ impl QwenAppService {
                 max_new_tokens: input.shared.max_new_tokens,
                 sampling: input.shared.sampling,
             },
+            dtype: input.shared.dtype,
         })
     }
 
@@ -182,6 +187,7 @@ impl QwenAppService {
             Qwen3TtsEngineConfig {
                 package: prepared.package_source.clone(),
                 profiling: prepared.profiling.clone(),
+                dtype: prepared.dtype,
             },
         )?;
 

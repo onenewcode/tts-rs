@@ -41,6 +41,18 @@ pub struct TalkerGenerationOutput<B: Backend> {
     pub codec_token_ids: Tensor<B, 3, Int>,
 }
 
+pub struct TalkerGeneratorStart<B: Backend> {
+    pub inputs_embeds: Tensor<B, 3>,
+    pub position_ids: Tensor<B, 3, Int>,
+    pub attention_mask: Tensor<B, 2, Int>,
+    pub trailing_text_hidden: Tensor<B, 3>,
+    pub tts_pad_embed: Tensor<B, 3>,
+    pub sampling: SamplingConfig,
+    pub max_new_tokens: usize,
+    pub eos_token_id: Option<i64>,
+    pub suppress_token_ids: Vec<usize>,
+}
+
 pub(crate) struct TalkerStepOutput<B: Backend> {
     pub(crate) last_hidden_state: Tensor<B, 3>,
     pub(crate) logits: Tensor<B, 3>,
@@ -53,16 +65,19 @@ where
     pub fn start(
         config: &Qwen3TtsTalkerConfig,
         loaded: &LoadedQwen3TtsTalker<B>,
-        inputs_embeds: Tensor<B, 3>,
-        position_ids: Tensor<B, 3, Int>,
-        attention_mask: Tensor<B, 2, Int>,
-        trailing_text_hidden: Tensor<B, 3>,
-        tts_pad_embed: Tensor<B, 3>,
-        sampling: SamplingConfig,
-        max_new_tokens: usize,
-        eos_token_id: Option<i64>,
-        suppress_token_ids: Vec<usize>,
+        init: TalkerGeneratorStart<B>,
     ) -> Result<Self, QwenTtsInferenceError> {
+        let TalkerGeneratorStart {
+            inputs_embeds,
+            position_ids,
+            attention_mask,
+            trailing_text_hidden,
+            tts_pad_embed,
+            sampling,
+            max_new_tokens,
+            eos_token_id,
+            suppress_token_ids,
+        } = init;
         if max_new_tokens == 0 {
             return Err(QwenTtsInferenceError::InvalidInput {
                 message: "talker max_new_tokens must be greater than zero".to_string(),

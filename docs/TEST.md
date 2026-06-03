@@ -139,6 +139,24 @@ cargo run --release -p tts_cli -- synthesize base \
 These paths exercise CLI parsing, `tts_app` request preparation, model loading,
 generation, and WAV writing together.
 
+Runtime dtype conversion is selected with one CLI flag:
+
+```bash
+cargo run --release -p tts_cli -- synthesize custom-voice \
+  --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
+  --text "你好，欢迎使用 tts-rs。" \
+  --language Chinese \
+  --speaker Vivian \
+  --dtype f32 \
+  --output ./out/custom-voice-f32-smoke.wav
+```
+
+Supported values are `f64`, `f32`, `flex32`, `f16`, `bf16`, `q8f`, `q8s`,
+`q4f`, `q4s`, `q2f`, and `q2s`. Float values convert loaded float weights to
+that dtype. Quantized values convert loaded float weights to Burn `QFloat`
+storage and keep inference on the same model execution path. When `--dtype` is
+omitted, the CLI and driver default to `bf16`.
+
 Rules:
 
 - keep smoke runs out of the default fast test loop

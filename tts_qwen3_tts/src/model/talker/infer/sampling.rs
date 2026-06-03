@@ -41,7 +41,9 @@ pub fn sample_token<B: Backend>(
         return logits_2d.argmax(1);
     }
 
-    if logits_2d.dtype() != DType::F32 {
+    logits_2d = logits_2d.dequantize();
+    let logits_dtype = logits_2d.dtype();
+    if logits_dtype.size() < DType::F32.size() {
         logits_2d = logits_2d.cast(DType::F32);
     }
 
@@ -67,7 +69,10 @@ pub fn sample_token<B: Backend>(
         logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
     }
 
-    let probs = softmax(logits_2d, 1);
+    let mut probs = softmax(logits_2d, 1);
+    if probs.dtype() != logits_dtype {
+        probs = probs.cast(logits_dtype);
+    }
     probs.categorical(1)
 }
 

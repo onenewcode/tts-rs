@@ -14,7 +14,7 @@ pub use surface::{
     BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
     DRIVER_ID as QWEN3_TTS_DRIVER_ID, LanguageSelection, Qwen3TtsArtifactsManifest, Qwen3TtsDriver,
     Qwen3TtsEngine, Qwen3TtsEngineConfig, Qwen3TtsGenerationConfigManifest,
-    Qwen3TtsGenerationConfigSource, Qwen3TtsLoadOptions, Qwen3TtsPackage, Qwen3TtsPackageManifest,
-    Qwen3TtsPackageSource, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
+    Qwen3TtsGenerationConfigSource, Qwen3TtsLoadOptions, Qwen3TtsModelDType, Qwen3TtsPackage,
+    Qwen3TtsPackageManifest, Qwen3TtsPackageSource, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
     Qwen3TtsVoiceClonePromptMode, QwenRequest, SamplingOverride, register_driver,
 };

@@ -73,3 +73,26 @@ fn package_first_custom_voice_subcommand_parses_instruct() {
     assert!(debug.contains("Vivian"));
     assert!(debug.contains("特别开心"));
 }
+
+#[test]
+fn package_first_subcommand_parses_runtime_dtype() {
+    let args = Args::try_parse_from([
+        "tts_cli",
+        "synthesize",
+        "custom-voice",
+        "--manifest",
+        "./custom/package.yaml",
+        "--text",
+        "hello",
+        "--speaker",
+        "Vivian",
+        "--dtype",
+        "q8s",
+        "--output",
+        "out.wav",
+    ])
+    .expect("runtime dtype should parse");
+
+    let debug = format!("{args:?}");
+    assert!(debug.contains("Q8S"));
+}

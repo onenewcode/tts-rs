@@ -38,8 +38,10 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         mask: Option<&Tensor<B, 4, Bool>>,
         cache: &mut KeyValueCache<B>,
     ) -> Tensor<B, 3> {
+        let x = x.dequantize();
         let [batch_size, seq_len, _] = x.dims();
         let model_dtype = x.dtype();
+        let use_fp32_attention = model_dtype.size() < DType::F32.size();
 
         let q = self.q_proj.forward(x.clone());
         let k = self.k_proj.forward(x.clone());
@@ -56,15 +58,18 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
-        let (q, k, v) = if model_dtype == DType::F32 {
-            (q, k, v)
-        } else {
+        let (q, k, v) = if use_fp32_attention {
             (q.cast(DType::F32), k.cast(DType::F32), v.cast(DType::F32))
+        } else {
+            (q, k, v)
         };
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } | AttentionPosition::Mrope { cos, sin } => {
+                let rotary_dtype = q.dtype();
+                let cos = cos.clone().dequantize().cast(rotary_dtype);
+                let sin = sin.clone().dequantize().cast(rotary_dtype);
                 let q = (q.clone() * cos.clone()) + (rotate_half(q) * sin.clone());
-                let k = (k.clone() * cos.clone()) + (rotate_half(k) * sin.clone());
+                let k = (k.clone() * cos) + (rotate_half(k) * sin);
                 (q, k)
             }
         };
@@ -78,6 +83,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             num_kv_heads,
             head_dim,
             model_dtype,
+            use_fp32_attention,
             q,
             k,
             v,
@@ -94,6 +100,7 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_kv_heads: usize,
         head_dim: usize,
         model_dtype: DType,
+        use_fp32_attention: bool,
         q: Tensor<B, 4>,
         k: Tensor<B, 4>,
         v: Tensor<B, 4>,
@@ -125,10 +132,10 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         };
         let attn_weights = softmax(attn_scores, 3);
         let attn_output = attn_weights.matmul(v);
-        let attn_output = if model_dtype == DType::F32 {
-            attn_output
-        } else {
+        let attn_output = if use_fp32_attention {
             attn_output.cast(model_dtype)
+        } else {
+            attn_output
         };
 
         let attn_output = attn_output.swap_dims(1, 2);

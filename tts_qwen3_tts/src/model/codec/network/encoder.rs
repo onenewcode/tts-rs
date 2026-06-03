@@ -113,7 +113,7 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoder<B> {
         else {
             unreachable!("audio codec encoder layer 0 is always the input convolution")
         };
-        layer.conv.weight.val().dtype()
+        layer.conv.weight.val().dequantize().dtype()
     }
 
     pub fn encode_reference_prefix(
@@ -259,19 +259,20 @@ impl<B: Backend> Qwen3TtsAudioCodecEncoderAttention<B> {
             .repeat_dim(2, repetitions)
             .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
 
-        let dtype = query.dtype();
         let attention_scores = query
             .matmul(key.swap_dims(2, 3))
             .div_scalar((head_dim as f32).sqrt())
+            .dequantize()
             .mask_fill(
                 generate_autoregressive_mask::<B>(batch_size, seq_len, &device)
                     .unsqueeze_dim::<4>(1),
                 f32::NEG_INFINITY,
             );
-        let attention_weights = if dtype == DType::F32 {
-            softmax(attention_scores, 3)
+        let attention_dtype = attention_scores.dtype();
+        let attention_weights = if attention_dtype.size() < DType::F32.size() {
+            softmax(attention_scores.cast(DType::F32), 3).cast(attention_dtype)
         } else {
-            softmax(attention_scores.cast(DType::F32), 3).cast(dtype)
+            softmax(attention_scores, 3)
         };
         let attention_output = attention_weights.matmul(value);
         let attention_output =

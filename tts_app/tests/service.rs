@@ -4,7 +4,8 @@ use tts_app::{
     BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SharedSynthesisInput,
 };
 use tts_qwen3_tts::{
-    BaseVoiceCloneConditioning, LanguageSelection, Qwen3TtsPackageSource, QwenRequest,
+    BaseVoiceCloneConditioning, LanguageSelection, Qwen3TtsModelDType, Qwen3TtsPackageSource,
+    QwenRequest,
 };
 
 #[test]
@@ -18,6 +19,7 @@ fn base_request_requires_ref_text_when_reference_audio_is_not_x_vector_only() {
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
             sampling: None,
+            dtype: Some(Qwen3TtsModelDType::F16),
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -44,6 +46,7 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
             sampling: None,
+            dtype: None,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -60,6 +63,7 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
         prepared.package_source,
         Qwen3TtsPackageSource::ManifestPath(_)
     ));
+    assert_eq!(prepared.dtype, Some(Qwen3TtsModelDType::F16));
     match prepared.request {
         QwenRequest::Base(request) => {
             assert_eq!(request.language, LanguageSelection::Named("zh".to_string()));
@@ -83,6 +87,7 @@ fn custom_voice_request_building_preserves_driver_specific_fields() {
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
             sampling: None,
+            dtype: None,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,

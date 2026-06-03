@@ -4,8 +4,8 @@ use std::time::Instant;
 use clap::{ArgAction, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use tracing::info;
 use tts_app::{
-    BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SamplingOverride,
-    SharedSynthesisInput,
+    BaseSynthesisInput, CustomVoiceSynthesisInput, Qwen3TtsModelDType, QwenAppService,
+    SamplingOverride, SharedSynthesisInput,
 };
 
 #[derive(Debug, Parser)]
@@ -54,6 +54,8 @@ pub struct SharedSynthesizeArgs {
     pub output: PathBuf,
     #[arg(long, value_enum)]
     pub sampling: Option<CliSampling>,
+    #[arg(long, value_enum, default_value_t = CliDType::BF16)]
+    pub dtype: CliDType,
     #[arg(long)]
     pub profiling: bool,
     #[arg(long)]
@@ -97,6 +99,39 @@ impl CliSampling {
     fn to_sampling(self) -> SamplingOverride {
         match self {
             Self::Greedy => SamplingOverride::GreedyFromModelDefaults,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum CliDType {
+    F64,
+    F32,
+    Flex32,
+    F16,
+    BF16,
+    Q8F,
+    Q8S,
+    Q4F,
+    Q4S,
+    Q2F,
+    Q2S,
+}
+
+impl CliDType {
+    fn to_model_dtype(self) -> Qwen3TtsModelDType {
+        match self {
+            Self::F64 => Qwen3TtsModelDType::F64,
+            Self::F32 => Qwen3TtsModelDType::F32,
+            Self::Flex32 => Qwen3TtsModelDType::Flex32,
+            Self::F16 => Qwen3TtsModelDType::F16,
+            Self::BF16 => Qwen3TtsModelDType::BF16,
+            Self::Q8F => Qwen3TtsModelDType::Q8F,
+            Self::Q8S => Qwen3TtsModelDType::Q8S,
+            Self::Q4F => Qwen3TtsModelDType::Q4F,
+            Self::Q4S => Qwen3TtsModelDType::Q4S,
+            Self::Q2F => Qwen3TtsModelDType::Q2F,
+            Self::Q2S => Qwen3TtsModelDType::Q2S,
         }
     }
 }
@@ -213,6 +248,7 @@ fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
         output: shared.output.clone(),
         max_new_tokens: None,
         sampling: shared.sampling.map(CliSampling::to_sampling),
+        dtype: Some(shared.dtype.to_model_dtype()),
         profiling: shared.profiling,
         profiling_per_step: shared.profiling_per_step,
         profiling_stage_summary: shared.profiling_stage_summary,
@@ -263,6 +299,7 @@ mod tests {
                     assert_eq!(base.shared.text, "hello");
                     assert_eq!(base.shared.language, "auto");
                     assert_eq!(base.shared.output, PathBuf::from("out.wav"));
+                    assert_eq!(base.shared.dtype, CliDType::BF16);
                     assert_eq!(base.ref_audio, None);
                     assert_eq!(base.ref_text, None);
                     assert!(!base.x_vector_only);
@@ -345,6 +382,7 @@ mod tests {
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
             sampling: None,
+            dtype: CliDType::BF16,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -414,6 +452,7 @@ mod tests {
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
             sampling: Some(CliSampling::Greedy),
+            dtype: CliDType::Q8S,
             profiling: true,
             profiling_per_step: true,
             profiling_stage_summary: true,
@@ -427,6 +466,7 @@ mod tests {
             input.sampling,
             Some(SamplingOverride::GreedyFromModelDefaults)
         );
+        assert_eq!(input.dtype, Some(Qwen3TtsModelDType::Q8S));
         assert!(input.profiling);
         assert!(input.profiling_per_step);
         assert_eq!(input.profiling_log_topk, 3);

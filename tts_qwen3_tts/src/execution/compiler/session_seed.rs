@@ -433,7 +433,8 @@ where
                 load_reference_audio(&reference.path, speaker_encoder.sample_rate())?;
             let speaker_embedding = speaker_encoder
                 .encode_embedding(&speaker_audio.samples)
-                .reshape([1, 1, hidden_size]);
+                .reshape([1, 1, hidden_size])
+                .dequantize();
             let speaker_embedding = if speaker_embedding.dtype() == hidden_dtype {
                 speaker_embedding
             } else {
@@ -596,8 +597,9 @@ fn speaker_embedding_tensor<B: Backend>(
         });
     }
 
-    let embedding =
-        Tensor::<B, 1>::from_data(embedding, (device, dtype)).reshape([1, 1, hidden_size]);
+    let embedding = Tensor::<B, 1>::from_data(embedding, (device, DType::F32))
+        .cast(dtype)
+        .reshape([1, 1, hidden_size]);
     Ok(embedding)
 }
 
@@ -609,6 +611,7 @@ fn talker_hidden_dtype<B: Backend>(talker: &LoadedQwen3TtsTalker<B>) -> DType {
         .codec_embedding
         .weight
         .val()
+        .dequantize()
         .dtype()
 }
 

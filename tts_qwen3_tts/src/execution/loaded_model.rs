@@ -7,14 +7,18 @@ use super::compiler::Qwen3TtsRequestCompiler;
 use super::compiler::session_seed::{SessionSeed, materialize_session_seed};
 use super::run::LoadedModel;
 use super::session::{ModelSession, SessionStep};
+use crate::loading::dtype::{
+    convert_module_dtype, initialize_device_dtype, quantize_talker_linears,
+};
 use crate::model::codec::infer::Waveform;
 use crate::model::codec::weights::{LoadedQwen3TtsAudioCodec, load_qwen3_tts_audio_codec};
-use crate::model::talker::infer::TalkerGenerator;
 use crate::model::talker::infer::sampling::SamplingConfig as RuntimeSamplingConfig;
+use crate::model::talker::infer::{TalkerGenerator, TalkerGeneratorStart};
 use crate::model::talker::weights::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_for_inference};
 use crate::{
-    BaseVoiceCloneReferenceAudio, Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsPackage,
-    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt, QwenRequest,
+    BaseVoiceCloneReferenceAudio, Qwen3TtsInferenceError, Qwen3TtsLoadError, Qwen3TtsModelDType,
+    Qwen3TtsPackage, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, Qwen3TtsVoiceClonePrompt,
+    QwenRequest,
 };
 
 #[cfg(not(any(
@@ -52,6 +56,12 @@ pub(crate) struct Qwen3TtsModelInner<B: Backend> {
     pub(crate) speaker_encoder: Option<crate::model::speaker::LoadedQwen3TtsSpeakerEncoder<B>>,
 }
 
+struct StartedGenerator<B: Backend> {
+    run: TalkerGenerator<B>,
+    reference_codec_prefix: Option<Tensor<B, 3, Int>>,
+    reference_codec_frame_count: usize,
+}
+
 impl<B> Qwen3TtsModelInner<B>
 where
     B: Backend,
@@ -62,22 +72,33 @@ where
         _profiling: &Qwen3TtsProfilingConfig,
         compiler: Qwen3TtsRequestCompiler,
         device: &B::Device,
+        dtype: Option<Qwen3TtsModelDType>,
     ) -> Result<Self, Qwen3TtsLoadError> {
-        let talker = load_qwen3_tts_talker_for_inference::<B>(
+        let mut talker = load_qwen3_tts_talker_for_inference::<B>(
             &package.talker_config_path,
             &package.talker_weights_path,
             device,
         )?;
+        talker.model = convert_module_dtype(talker.model, dtype);
+        talker.model = quantize_talker_linears(talker.model, dtype);
+
         let speaker_encoder = crate::model::speaker::LoadedQwen3TtsSpeakerEncoder::load(
             &package.talker_config_path,
             &package.talker_weights_path,
             device,
         )?;
-        let decoder = load_qwen3_tts_audio_codec::<B>(
+        let speaker_encoder = speaker_encoder.map(|mut speaker_encoder| {
+            speaker_encoder.encoder = convert_module_dtype(speaker_encoder.encoder, dtype);
+            speaker_encoder
+        });
+
+        let mut decoder = load_qwen3_tts_audio_codec::<B>(
             &package.codec_config_path,
             &package.codec_weights_path,
             device,
         )?;
+        decoder.model = convert_module_dtype(decoder.model, dtype);
+
         Ok(Self {
             device: device.clone(),
             compiler,
@@ -106,8 +127,7 @@ where
         &self,
         seed: SessionSeed<B>,
         options: Qwen3TtsRunOptions,
-    ) -> Result<(TalkerGenerator<B>, Option<Tensor<B, 3, Int>>, usize), Qwen3TtsInferenceError>
-    {
+    ) -> Result<StartedGenerator<B>, Qwen3TtsInferenceError> {
         let SessionSeed {
             inputs_embeds,
             position_ids,
@@ -125,17 +145,23 @@ where
         let run = TalkerGenerator::start(
             &self.talker.config,
             &self.talker,
-            inputs_embeds,
-            position_ids,
-            attention_mask,
-            trailing_text_hidden,
-            tts_pad_embed,
-            sampling,
-            options.max_new_tokens.unwrap_or(max_new_tokens),
-            Some(codec_eos_token_id),
-            suppress_token_ids,
+            TalkerGeneratorStart {
+                inputs_embeds,
+                position_ids,
+                attention_mask,
+                trailing_text_hidden,
+                tts_pad_embed,
+                sampling,
+                max_new_tokens: options.max_new_tokens.unwrap_or(max_new_tokens),
+                eos_token_id: Some(codec_eos_token_id),
+                suppress_token_ids,
+            },
         )?;
-        Ok((run, reference_codec_prefix, reference_codec_frame_count))
+        Ok(StartedGenerator {
+            run,
+            reference_codec_prefix,
+            reference_codec_frame_count,
+        })
     }
 
     fn finalize_audio(
@@ -282,11 +308,15 @@ impl Qwen3TtsLoadedModel {
         package: Qwen3TtsPackage,
         profiling: &Qwen3TtsProfilingConfig,
         compiler: Qwen3TtsRequestCompiler,
+        dtype: Option<Qwen3TtsModelDType>,
     ) -> Result<Self, Qwen3TtsLoadError> {
         let device = Default::default();
+        initialize_device_dtype::<RuntimeBackend>(&device, dtype)?;
         Ok(Self {
             inner: Arc::new(BackendRuntime::new(
-                Qwen3TtsModelInner::<RuntimeBackend>::load(package, profiling, compiler, &device)?,
+                Qwen3TtsModelInner::<RuntimeBackend>::load(
+                    package, profiling, compiler, &device, dtype,
+                )?,
             )),
         })
     }
@@ -392,8 +422,11 @@ where
 {
     let inner = Arc::clone(inner);
     let seed = inner.compile_session_seed(request)?;
-    let (run, reference_codec_prefix, reference_codec_frame_count) =
-        inner.start_generator(seed, options)?;
+    let StartedGenerator {
+        run,
+        reference_codec_prefix,
+        reference_codec_frame_count,
+    } = inner.start_generator(seed, options)?;
     Ok(SessionImpl {
         inner,
         run,

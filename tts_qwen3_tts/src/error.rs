@@ -19,6 +19,8 @@ pub enum Qwen3TtsLoadError {
     },
     #[error("model weights loaded but {unused} tensors were left unused")]
     UnusedTensors { unused: usize },
+    #[error("failed to initialize runtime dtype {requested}: {message}")]
+    RuntimeDType { requested: String, message: String },
     #[error("failed to read package manifest {path}: {source}")]
     Io {
         path: PathBuf,
@@ -116,6 +118,14 @@ impl From<Qwen3TtsLoadError> for DiagnosticError {
                 format!("model weights loaded but {unused} tensors were left unused"),
             )
             .with_context("unused", unused.to_string()),
+            Qwen3TtsLoadError::RuntimeDType { requested, message } => {
+                DiagnosticError::invalid_argument(
+                    "qwen3.load.runtime_dtype",
+                    format!("failed to initialize runtime dtype {requested}: {message}"),
+                )
+                .with_context("requested", requested)
+                .with_context("message", message)
+            }
             Qwen3TtsLoadError::Io { path, source } => io_artifact(
                 "qwen3.load.manifest_io",
                 "failed to read package manifest",

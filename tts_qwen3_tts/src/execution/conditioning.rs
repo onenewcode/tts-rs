@@ -32,6 +32,7 @@ where
         load_reference_audio(&reference.path, speaker_encoder.sample_rate())?;
     let speaker_embedding = speaker_encoder
         .encode_embedding(&prepared_for_speaker.samples)
+        .dequantize()
         .try_into_data()
         .map_err(|source| Qwen3TtsInferenceError::TensorRead {
             message: format!("failed to read speaker embedding: {source}"),

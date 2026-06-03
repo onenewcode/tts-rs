@@ -64,9 +64,11 @@ impl<B: Backend> AutoregressiveCache<B> {
         );
 
         if self.cache.is_none() {
+            let device = tensor.device();
+            let dtype = tensor.dtype();
             self.cache = Some(Tensor::<B, 4>::zeros(
                 [self.max_batch_size, num_heads, self.max_seq_len, head_dim],
-                &tensor.device(),
+                (&device, dtype),
             ));
         }
         let mut cache_tensor = self.cache.take().expect("cache must be initialized");

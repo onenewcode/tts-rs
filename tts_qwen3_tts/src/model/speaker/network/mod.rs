@@ -98,7 +98,7 @@ impl<B: Backend> SpeakerEncoderNetwork<B> {
         let SpeakerEncoderBlock::Initial(initial_tdnn) = &self.blocks[0] else {
             unreachable!("speaker encoder block 0 is always the initial TDNN")
         };
-        initial_tdnn.conv.weight.val().dtype()
+        initial_tdnn.conv.weight.val().dequantize().dtype()
     }
 }
 

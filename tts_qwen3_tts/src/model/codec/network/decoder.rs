@@ -121,7 +121,6 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
             .forward(hidden)
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
-
         let query = rope.apply(query, 0);
         let key = rope.apply(key, 0);
         let repetitions = num_heads / num_kv_heads;
@@ -134,19 +133,20 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
             .repeat_dim(2, repetitions)
             .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
 
-        let dtype = query.dtype();
         let attention_scores = query
             .matmul(key.swap_dims(2, 3))
-            .div_scalar((head_dim as f32).sqrt());
+            .div_scalar((head_dim as f32).sqrt())
+            .dequantize();
         let attention_scores = if let Some(mask) = mask {
             attention_scores.mask_fill(mask.clone(), f32::NEG_INFINITY)
         } else {
             attention_scores
         };
-        let attention_weights = if dtype == DType::F32 {
-            softmax(attention_scores, 3)
+        let attention_dtype = attention_scores.dtype();
+        let attention_weights = if attention_dtype.size() < DType::F32.size() {
+            softmax(attention_scores.cast(DType::F32), 3).cast(attention_dtype)
         } else {
-            softmax(attention_scores.cast(DType::F32), 3).cast(dtype)
+            softmax(attention_scores, 3)
         };
         let attention_output = attention_weights.matmul(value);
         let output =
