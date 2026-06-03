@@ -13,6 +13,9 @@ and can look like they are hanging during model load or generation.
 For the current architecture, crate responsibilities, and runtime flow, see
 `docs/architecture.md`.
 
+For developer workflow, repository boundaries, and Burn tensor review rules,
+see `docs/development.md`.
+
 ## Workspace Overview
 
 The workspace currently contains five crates:
@@ -173,6 +176,19 @@ the model actually supports.
 
 For testing commands, smoke procedures, and verification guidance, see
 `docs/TEST.md`.
+
+## Development
+
+Before sending code for review, run:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets
+```
+
+Use `docs/development.md` as the developer workflow and implementation guide.
+Use `docs/TEST.md` as the authoritative source for test targets, fast checks,
+and model-backed smoke commands.
 
 ## Advanced: Custom Manifest
 
