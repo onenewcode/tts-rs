@@ -81,8 +81,7 @@ impl MelSpectrogram {
             .flat_map(|frame| frame.into_iter().map(|value| value.max(1e-5).ln()))
             .collect();
         let n_frames = log_mel.len() / self.config.n_mels;
-        Tensor::<B, 1>::from_data(log_mel.as_slice(), (device, DType::F32))
-            .cast(dtype)
+        Tensor::<B, 1>::from_data(log_mel.as_slice(), (device, dtype))
             .reshape([n_frames, self.config.n_mels])
             .swap_dims(0, 1)
     }

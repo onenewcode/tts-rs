@@ -31,12 +31,14 @@ impl<B: Backend> Qwen3StandardRotaryEncoding<B> {
         device: &B::Device,
     ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let half_dim = self.inv_freq.dims()[0];
+        let rope_dtype = self.inv_freq.dtype();
         let start = i64::try_from(start).expect("rope start should fit into i64");
         let end = start
             .checked_add(i64::try_from(seq_len).expect("rope sequence length should fit into i64"))
             .expect("rope position range should fit into i64");
         let positions = Tensor::<B, 1, burn::tensor::Int>::arange(start..end, device)
             .float()
+            .cast(rope_dtype)
             .reshape([1, seq_len, 1]);
         let freqs = positions * self.inv_freq.clone().reshape([1, 1, half_dim]);
         let cos_half = freqs.clone().cos();
@@ -90,6 +92,7 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
     ) -> (Tensor<B, 4>, Tensor<B, 4>) {
         let [modalities, batch_size, seq_len] = position_ids.dims();
         let half_dim = self.inv_freq.dims()[0];
+        let rope_dtype = self.inv_freq.dtype();
         assert_eq!(
             modalities,
             self.mrope_section.len(),
@@ -97,7 +100,7 @@ impl<B: Backend> Qwen3RotaryEncoding<B> {
         );
 
         // Compute cos/sin per modality in one tensor pass: [M, B, S, half_dim].
-        let freqs = position_ids.float().unsqueeze_dim::<4>(3)
+        let freqs = position_ids.float().cast(rope_dtype).unsqueeze_dim::<4>(3)
             * self.inv_freq.clone().reshape([1, 1, 1, half_dim]);
         let all_cos = freqs
             .clone()

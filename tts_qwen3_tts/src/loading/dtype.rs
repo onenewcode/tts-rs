@@ -1,7 +1,7 @@
 use burn::module::{Module, ModuleMapper, Param};
 use burn::tensor::backend::{Backend, DeviceError, get_device_settings, set_default_float_dtype};
 use burn::tensor::quantization::{QTensorPrimitive, QuantLevel};
-use burn::tensor::{DType, Tensor};
+use burn::tensor::{DType, FloatDType, Tensor};
 
 use crate::{Qwen3TtsLoadError, Qwen3TtsModelDType};
 
@@ -9,9 +9,7 @@ pub(crate) fn initialize_device_dtype<B: Backend>(
     device: &B::Device,
     dtype: Option<Qwen3TtsModelDType>,
 ) -> Result<(), Qwen3TtsLoadError> {
-    let dtype = Qwen3TtsModelDType::resolve(dtype)
-        .float_dtype()
-        .unwrap_or(burn::tensor::FloatDType::BF16);
+    let dtype = resolved_runtime_float_dtype(Qwen3TtsModelDType::resolve(dtype));
 
     match set_default_float_dtype::<B>(device, dtype) {
         Ok(()) => Ok(()),
@@ -42,7 +40,8 @@ where
     B: Backend,
     M: Module<B>,
 {
-    let Some(value) = Qwen3TtsModelDType::resolve(dtype).quant_value() else {
+    let dtype = Qwen3TtsModelDType::resolve(dtype);
+    let Some(value) = dtype.quant_value() else {
         return module;
     };
     let scheme = <B::QuantizedTensorPrimitive as QTensorPrimitive>::default_scheme()
@@ -50,9 +49,18 @@ where
         .with_level(QuantLevel::Tensor);
     let mut mapper = TalkerLinearQuantizationMapper {
         scheme,
+        float_target: resolved_runtime_tensor_dtype(dtype),
         module_stack: Vec::new(),
     };
     module.map(&mut mapper)
+}
+
+fn resolved_runtime_float_dtype(dtype: Qwen3TtsModelDType) -> FloatDType {
+    dtype.float_dtype().unwrap_or(FloatDType::BF16)
+}
+
+fn resolved_runtime_tensor_dtype(dtype: Qwen3TtsModelDType) -> DType {
+    DType::from(resolved_runtime_float_dtype(dtype))
 }
 
 struct RuntimeDTypeMapper {
@@ -61,14 +69,14 @@ struct RuntimeDTypeMapper {
 
 impl<B: Backend> ModuleMapper<B> for RuntimeDTypeMapper {
     fn map_float<const D: usize>(&mut self, param: Param<Tensor<B, D>>) -> Param<Tensor<B, D>> {
-        let dtype = self.dtype;
-        let target = dtype.float_dtype().map(DType::from).unwrap_or(DType::BF16);
+        let target = resolved_runtime_tensor_dtype(self.dtype);
         param.map(|tensor| tensor.dequantize().cast(target))
     }
 }
 
 struct TalkerLinearQuantizationMapper {
     scheme: burn::tensor::quantization::QuantScheme,
+    float_target: DType,
     module_stack: Vec<(String, String)>,
 }
 
@@ -95,7 +103,7 @@ impl<B: Backend> ModuleMapper<B> for TalkerLinearQuantizationMapper {
             let scheme = self.scheme;
             param.map(|tensor| tensor.dequantize().quantize_dynamic(&scheme))
         } else {
-            let target = DType::BF16;
+            let target = self.float_target;
             param.map(|tensor| tensor.dequantize().cast(target))
         }
     }

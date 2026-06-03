@@ -434,12 +434,8 @@ where
             let speaker_embedding = speaker_encoder
                 .encode_embedding(&speaker_audio.samples)
                 .reshape([1, 1, hidden_size])
-                .dequantize();
-            let speaker_embedding = if speaker_embedding.dtype() == hidden_dtype {
-                speaker_embedding
-            } else {
-                speaker_embedding.cast(hidden_dtype)
-            };
+                .dequantize()
+                .cast(hidden_dtype);
             let (reference_codec_prefix, reference_codec_frame_count) = if reference.x_vector_only {
                 (None, 0)
             } else {
@@ -597,9 +593,8 @@ fn speaker_embedding_tensor<B: Backend>(
         });
     }
 
-    let embedding = Tensor::<B, 1>::from_data(embedding, (device, DType::F32))
-        .cast(dtype)
-        .reshape([1, 1, hidden_size]);
+    let embedding =
+        Tensor::<B, 1>::from_data(embedding, (device, dtype)).reshape([1, 1, hidden_size]);
     Ok(embedding)
 }
 

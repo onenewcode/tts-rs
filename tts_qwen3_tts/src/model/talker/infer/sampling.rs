@@ -69,11 +69,7 @@ pub fn sample_token<B: Backend>(
         logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
     }
 
-    let mut probs = softmax(logits_2d, 1);
-    if probs.dtype() != logits_dtype {
-        probs = probs.cast(logits_dtype);
-    }
-    probs.categorical(1)
+    softmax(logits_2d, 1).cast(logits_dtype).categorical(1)
 }
 
 fn prepare_last_step_logits<B: Backend>(
