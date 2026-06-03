@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  # Only run on pull requests and direct updates to the main branch.
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  # Cancel older runs for the same branch or PR so the newest commit wins.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # `actions/checkout` only needs read access for this workflow.
+  contents: read
+
+env:
+  # Keep Cargo logs colored to make CI output easier to scan.
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      # Fetch the repository contents for all subsequent Cargo commands.
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Install stable Rust plus the linting components used by this job.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Reuse downloaded crates and build artifacts between runs.
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            lint-${{ runner.os }}-
+
+      # Fail fast when formatting drifts from the workspace rustfmt style.
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      # Lint the default feature set; `--all-features` would pull in optional
+      # backend stacks such as Vulkan/WGPU that require extra platform SDKs in CI.
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      # Check out the source on each OS in the test matrix.
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Use the stable toolchain because the workspace targets stable Rust.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache dependencies per OS to speed up repeat test runs.
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            test-${{ runner.os }}-
+
+      # Run the full workspace test suite for libraries, binaries, and integration tests.
+      - name: Run tests
+        run: cargo test --workspace --all-targets

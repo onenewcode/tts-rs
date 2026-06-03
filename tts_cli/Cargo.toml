@@ -1,0 +1,26 @@
+[package]
+name = "tts_cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+
+[features]
+default = ["flex", "fusion"]
+fusion = ["tts_app/fusion"]
+flex = ["tts_app/flex"]
+wgpu = ["tts_app/wgpu"]
+cuda = ["tts_app/cuda"]
+rocm = ["tts_app/rocm"]
+metal = ["tts_app/metal"]
+vulkan = ["tts_app/vulkan"]
+webgpu = ["tts_app/webgpu"]
+
+[dependencies]
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tts_app = { workspace = true }
+
+[[bin]]
+name = "tts_cli"
+path = "src/main.rs"

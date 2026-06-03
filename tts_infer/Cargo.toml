@@ -1,0 +1,11 @@
+[package]
+name = "tts_infer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+
+[dependencies]
+hound = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tts_error = { workspace = true }

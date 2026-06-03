@@ -1,0 +1,45 @@
+use burn::module::Module;
+use burn::nn::RmsNorm;
+use burn::tensor::backend::Backend;
+use burn::tensor::{Bool, Tensor};
+
+use super::attention::{AttentionPosition, Qwen3TtsAttention};
+use super::kv::KeyValueCache;
+use super::mlp::Qwen3TtsTextMlp;
+
+#[derive(Module, Debug)]
+pub struct Qwen3TtsDecoderLayer<B: Backend> {
+    pub self_attn: Qwen3TtsAttention<B>,
+    pub mlp: Qwen3TtsTextMlp<B>,
+    pub input_layernorm: RmsNorm<B>,
+    pub post_attention_layernorm: RmsNorm<B>,
+}
+
+impl<B> Qwen3TtsDecoderLayer<B>
+where
+    B: Backend,
+{
+    #[allow(clippy::too_many_arguments)]
+    pub fn forward(
+        &self,
+        x: Tensor<B, 3>,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        position: AttentionPosition<'_, B>,
+        mask: Option<&Tensor<B, 4, Bool>>,
+        cache: &mut KeyValueCache<B>,
+    ) -> Tensor<B, 3> {
+        let residual = x.clone();
+        let x = self.input_layernorm.forward(x);
+        let attn_out =
+            self.self_attn
+                .forward(x, num_heads, num_kv_heads, head_dim, position, mask, cache);
+        let x = residual + attn_out;
+
+        let residual = x.clone();
+        let x = self.post_attention_layernorm.forward(x);
+        let mlp_out = self.mlp.forward(x);
+        residual + mlp_out
+    }
+}

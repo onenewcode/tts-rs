@@ -1,0 +1,172 @@
+use burn::nn::RotaryEncodingConfig;
+use burn::tensor::backend::Backend;
+use burn::tensor::{Int, Tensor};
+
+use crate::Qwen3TtsInferenceError;
+use crate::error::QwenTtsInferenceError;
+use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
+
+#[derive(Debug, Clone)]
+pub struct Waveform {
+    sample_rate: u32,
+    samples: Vec<f32>,
+}
+
+impl Waveform {
+    pub(crate) fn new(
+        sample_rate: u32,
+        batch_size: usize,
+        channels: usize,
+        samples: Vec<f32>,
+    ) -> Result<Self, QwenTtsInferenceError> {
+        if sample_rate == 0 {
+            return Err(QwenTtsInferenceError::InvalidInput {
+                message: "waveform sample rate must be non-zero".to_string(),
+            });
+        }
+        if batch_size == 0 || channels == 0 {
+            return Err(QwenTtsInferenceError::InvalidInput {
+                message: format!(
+                    "waveform batch/channels must be non-zero, got batch={batch_size}, channels={channels}"
+                ),
+            });
+        }
+        if samples.is_empty() {
+            return Err(QwenTtsInferenceError::InvalidInput {
+                message: "waveform sample payload must be non-empty".to_string(),
+            });
+        }
+        if !samples.len().is_multiple_of(batch_size * channels) {
+            return Err(QwenTtsInferenceError::InvalidInput {
+                message: format!(
+                    "waveform element mismatch: {} samples do not fit batch={batch_size}, channels={channels}",
+                    samples.len()
+                ),
+            });
+        }
+        Ok(Self {
+            sample_rate,
+            samples,
+        })
+    }
+
+    pub(crate) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub(crate) fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub(crate) fn from_tensor<B: Backend>(
+        sample_rate: u32,
+        waveform: Tensor<B, 3>,
+    ) -> Result<Self, QwenTtsInferenceError> {
+        let [batch_size, channels, _time_steps] = waveform.dims();
+        let samples = waveform
+            .dequantize()
+            .try_into_data()
+            .map_err(|source| QwenTtsInferenceError::TensorRead {
+                message: format!("failed to read waveform: {source}"),
+            })?
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .map_err(|source| QwenTtsInferenceError::TensorRead {
+                message: format!("failed to read waveform: {source}"),
+            })?;
+        Self::new(sample_rate, batch_size, channels, samples)
+    }
+
+    pub(crate) fn to_pcm(&self) -> Vec<i16> {
+        self.samples()
+            .iter()
+            .copied()
+            .map(|sample| {
+                let scaled = (sample.clamp(-1.0, 1.0) * 32_768.0).round() as i32;
+                let clamped = scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX));
+                i16::try_from(clamped).expect("PCM sample should fit in i16 after clamping")
+            })
+            .collect()
+    }
+}
+
+impl<B: Backend> LoadedQwen3TtsAudioCodec<B> {
+    pub fn decode_waveform(
+        &self,
+        codec_ids: Tensor<B, 3, Int>,
+    ) -> Result<Tensor<B, 3>, QwenTtsInferenceError> {
+        let config = &self.config.decoder_config;
+        let rope = RotaryEncodingConfig::new(config.max_position_embeddings, config.head_dim)
+            .with_theta(config.rope_theta)
+            .init(&codec_ids.device());
+
+        Ok(self.model.decoder.forward(
+            codec_ids,
+            config.num_semantic_quantizers,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
+            &rope,
+        ))
+    }
+
+    pub fn encode_reference_codec_frames(
+        &self,
+        device: &B::Device,
+        samples: &[f32],
+    ) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+        let prefix = self.encode_reference_codec_prefix(device, samples)?;
+        reference_codec_prefix_to_frames(prefix)
+    }
+
+    pub fn encode_reference_codec_prefix(
+        &self,
+        device: &B::Device,
+        samples: &[f32],
+    ) -> Result<Tensor<B, 3, Int>, Qwen3TtsInferenceError> {
+        let encoder_dtype = self.model.encoder.dtype();
+        let waveform = Tensor::<B, 1>::from_data(samples, (device, encoder_dtype)).reshape([
+            1,
+            1,
+            samples.len(),
+        ]);
+        self.model.encoder.encode_reference_prefix(
+            &self.config.encoder_config,
+            self.config.encoder_valid_num_quantizers,
+            waveform,
+        )
+    }
+}
+
+fn reference_codec_prefix_to_frames<B: Backend>(
+    prefix: Tensor<B, 3, Int>,
+) -> Result<Vec<Vec<i64>>, Qwen3TtsInferenceError> {
+    let [batch_size, total_layers, time_steps] = prefix.dims();
+    if batch_size != 1 {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!("reference codec prefix only supports batch_size=1, got {batch_size}"),
+        });
+    }
+
+    let flat_codes = prefix
+        .reshape([total_layers, time_steps])
+        .try_into_data()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read reference codec token ids: {source}"),
+        })?
+        .convert::<i64>()
+        .into_vec::<i64>()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read reference codec token ids: {source}"),
+        })?;
+
+    let mut frames = Vec::with_capacity(time_steps);
+    for time_index in 0..time_steps {
+        let mut frame = Vec::with_capacity(total_layers);
+        for layer_idx in 0..total_layers {
+            frame.push(flat_codes[layer_idx * time_steps + time_index]);
+        }
+        frames.push(frame);
+    }
+    Ok(frames)
+}

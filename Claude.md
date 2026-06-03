@@ -1,5 +1,8 @@
 # 概述
 
-## py脚本运行
+## 常用验证
 
-python ./py/*.py
+```bash
+cargo test
+cargo test -p tts_qwen3_tts --test real_model -- --ignored --nocapture
+```

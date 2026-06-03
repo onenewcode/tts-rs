@@ -1,0 +1,8 @@
+/Qwen
+target/
+.DS_Store
+*.json
+*.wav
+/openmoss
+/dir
+/.worktrees

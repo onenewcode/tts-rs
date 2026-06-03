@@ -1,0 +1,87 @@
+use burn::tensor::backend::Backend;
+
+use crate::execution::reference_audio::load_reference_audio;
+use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
+use crate::model::speaker::LoadedQwen3TtsSpeakerEncoder;
+use crate::{
+    BaseVoiceCloneReferenceAudio, Qwen3TtsInferenceError, Qwen3TtsVoiceClonePrompt,
+    Qwen3TtsVoiceClonePromptMode,
+};
+
+pub(crate) fn create_voice_clone_prompt<B: Backend>(
+    loaded: &LoadedQwen3TtsAudioCodec<B>,
+    speaker_encoder: &LoadedQwen3TtsSpeakerEncoder<B>,
+    device: &B::Device,
+    reference: &BaseVoiceCloneReferenceAudio,
+) -> Result<Qwen3TtsVoiceClonePrompt, Qwen3TtsInferenceError>
+where
+    B::Device: Clone,
+{
+    let transcript = reference
+        .transcript
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if !reference.x_vector_only && transcript.is_none() {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "ref_text is required when x_vector_only is false".to_string(),
+        });
+    }
+
+    let prepared_for_speaker =
+        load_reference_audio(&reference.path, speaker_encoder.sample_rate())?;
+    let speaker_embedding = speaker_encoder
+        .encode_embedding(&prepared_for_speaker.samples)
+        .dequantize()
+        .try_into_data()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read speaker embedding: {source}"),
+        })?
+        .convert::<f32>()
+        .into_vec::<f32>()
+        .map_err(|source| Qwen3TtsInferenceError::TensorRead {
+            message: format!("failed to read speaker embedding: {source}"),
+        })?;
+    if speaker_embedding.is_empty() {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: format!(
+                "reference audio {} produced no speaker embedding",
+                reference.path.display()
+            ),
+        });
+    }
+
+    let ref_codec_token_ids = if reference.x_vector_only {
+        None
+    } else {
+        let codec_sample_rate =
+            u32::try_from(loaded.config.input_sample_rate).map_err(|_| {
+                Qwen3TtsInferenceError::InvalidInput {
+                    message: format!(
+                        "audio codec reference input sample rate {} exceeds the supported u32 audio range",
+                        loaded.config.input_sample_rate
+                    ),
+                }
+            })?;
+        let codec_audio = (codec_sample_rate != prepared_for_speaker.sample_rate)
+            .then(|| load_reference_audio(&reference.path, codec_sample_rate))
+            .transpose()?;
+        let codec_samples = codec_audio
+            .as_ref()
+            .map_or(prepared_for_speaker.samples.as_slice(), |audio| {
+                audio.samples.as_slice()
+            });
+        Some(loaded.encode_reference_codec_frames(device, codec_samples)?)
+    };
+
+    Ok(Qwen3TtsVoiceClonePrompt {
+        speaker_embedding,
+        ref_codec_token_ids,
+        transcript: transcript.map(ToOwned::to_owned),
+        mode: if reference.x_vector_only {
+            Qwen3TtsVoiceClonePromptMode::XVectorOnly
+        } else {
+            Qwen3TtsVoiceClonePromptMode::Icl
+        },
+    })
+}
