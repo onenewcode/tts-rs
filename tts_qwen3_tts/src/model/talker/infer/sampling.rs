@@ -35,7 +35,35 @@ pub fn sample_token<B: Backend>(
     sampling: &SamplingConfig,
     suppress_token_ids: &[usize],
 ) -> Tensor<B, 2, Int> {
-    let mut logits_2d = prepare_last_step_logits(logits, suppress_token_ids);
+    let logits_2d = prepare_last_step_logits(logits);
+    if suppress_token_ids.is_empty() {
+        return sample_token_from_logits(logits_2d, sampling, None);
+    }
+
+    let [batch_size, vocab_size] = logits_2d.dims();
+    let device = logits_2d.device();
+    let suppress_mask =
+        suppress_token_mask::<B>(batch_size, vocab_size, suppress_token_ids, &device);
+
+    sample_token_from_logits(logits_2d, sampling, suppress_mask.as_ref())
+}
+
+pub(super) fn sample_token_with_suppress_mask<B: Backend>(
+    logits: Tensor<B, 3>,
+    sampling: &SamplingConfig,
+    suppress_mask: Option<&Tensor<B, 2, Bool>>,
+) -> Tensor<B, 2, Int> {
+    sample_token_from_logits(prepare_last_step_logits(logits), sampling, suppress_mask)
+}
+
+fn sample_token_from_logits<B: Backend>(
+    mut logits_2d: Tensor<B, 2>,
+    sampling: &SamplingConfig,
+    suppress_mask: Option<&Tensor<B, 2, Bool>>,
+) -> Tensor<B, 2, Int> {
+    if let Some(suppress_mask) = suppress_mask {
+        logits_2d = logits_2d.mask_fill(suppress_mask.clone(), f32::NEG_INFINITY);
+    }
 
     if !sampling.do_sample {
         return logits_2d.argmax(1);
@@ -71,39 +99,16 @@ pub fn sample_token<B: Backend>(
     softmax(logits_2d, 1).cast(logits_dtype).categorical(1)
 }
 
-fn prepare_last_step_logits<B: Backend>(
-    logits: Tensor<B, 3>,
-    suppress_token_ids: &[usize],
-) -> Tensor<B, 2> {
+fn prepare_last_step_logits<B: Backend>(logits: Tensor<B, 3>) -> Tensor<B, 2> {
     let [batch_size, seq_len, vocab_size] = logits.dims();
-    let logits_2d = if seq_len == 1 {
+    if seq_len == 1 {
         logits.reshape([batch_size, vocab_size])
     } else {
         select_last_sequence_step(logits).reshape([batch_size, vocab_size])
-    };
-    apply_suppress_mask(logits_2d, suppress_token_ids)
-}
-
-fn apply_suppress_mask<B: Backend>(
-    logits: Tensor<B, 2>,
-    suppress_token_ids: &[usize],
-) -> Tensor<B, 2> {
-    if suppress_token_ids.is_empty() {
-        return logits;
-    }
-
-    let [batch_size, vocab_size] = logits.dims();
-    let device = logits.device();
-    if let Some(suppress_mask) =
-        suppress_token_mask::<B>(batch_size, vocab_size, suppress_token_ids, &device)
-    {
-        logits.mask_fill(suppress_mask, f32::NEG_INFINITY)
-    } else {
-        logits
     }
 }
 
-fn suppress_token_mask<B: Backend>(
+pub(super) fn suppress_token_mask<B: Backend>(
     batch_size: usize,
     vocab_size: usize,
     suppress_token_ids: &[usize],
@@ -152,4 +157,53 @@ pub fn apply_repetition_penalty<B: Backend>(
     let deltas = gathered.mul_scalar(scale);
     let result_2d = logits_2d.scatter(1, past_token_ids.clone(), deltas, IndexingUpdateOp::Add);
     result_2d.reshape([batch_size, seq_len, vocab_size])
+}
+
+pub(crate) fn repetition_penalty_enabled(penalty: Option<f32>) -> bool {
+    penalty.is_some_and(|penalty| {
+        penalty.is_finite() && penalty > 0.0 && (penalty - 1.0).abs() > f32::EPSILON
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use burn::tensor::Tensor;
+
+    use super::{
+        SamplingConfig, repetition_penalty_enabled, sample_token_with_suppress_mask,
+        suppress_token_mask,
+    };
+    use crate::loading::runtime::RuntimeBackend;
+
+    #[test]
+    fn sample_token_with_precomputed_suppress_mask_skips_masked_logits() {
+        let device = Default::default();
+        let logits =
+            Tensor::<RuntimeBackend, 1>::from_floats([0.0, 1.0, 2.0, 9.0].as_slice(), &device)
+                .reshape([1, 1, 4]);
+        let suppress_mask = suppress_token_mask::<RuntimeBackend>(1, 4, &[3], &device);
+
+        let selected = sample_token_with_suppress_mask(
+            logits,
+            &SamplingConfig::default(),
+            suppress_mask.as_ref(),
+        );
+        let values = selected
+            .try_into_data()
+            .expect("selected token should be readable")
+            .convert::<i64>()
+            .into_vec::<i64>()
+            .expect("selected token should convert to vec");
+
+        assert_eq!(values, vec![2]);
+    }
+
+    #[test]
+    fn repetition_penalty_enabled_only_accepts_meaningful_positive_values() {
+        assert!(!repetition_penalty_enabled(None));
+        assert!(!repetition_penalty_enabled(Some(1.0)));
+        assert!(!repetition_penalty_enabled(Some(0.0)));
+        assert!(!repetition_penalty_enabled(Some(f32::NAN)));
+        assert!(repetition_penalty_enabled(Some(1.2)));
+    }
 }

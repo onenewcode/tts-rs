@@ -1,9 +1,13 @@
 use burn::nn::attention::generate_autoregressive_mask;
 use burn::prelude::ElementConversion;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor};
+use burn::tensor::{Bool, Int, Tensor};
 
-use self::sampling::{SamplingConfig, apply_repetition_penalty, sample_token};
+use self::sampling::{
+    SamplingConfig, apply_repetition_penalty,
+    repetition_penalty_enabled as is_repetition_penalty_enabled, sample_token,
+    sample_token_with_suppress_mask, suppress_token_mask,
+};
 use super::network::kv::KeyValueCache;
 use crate::error::QwenTtsInferenceError;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
@@ -15,6 +19,7 @@ pub mod sampling;
 pub struct TalkerGenerator<B: Backend> {
     config: Qwen3TtsTalkerConfig,
     decode_cache: Vec<KeyValueCache<B>>,
+    predictor_cache: Vec<KeyValueCache<B>>,
     current_hidden: Option<Tensor<B, 2>>,
     selected_token: Option<Tensor<B, 2, Int>>,
     eos_seen: bool,
@@ -24,9 +29,10 @@ pub struct TalkerGenerator<B: Backend> {
     trailing_text_len: usize,
     tts_pad_embed: Tensor<B, 3>,
     sampling: SamplingConfig,
+    suppress_mask: Option<Tensor<B, 2, Bool>>,
+    repetition_penalty_enabled: bool,
     max_new_tokens: usize,
     eos_token_id: Option<i64>,
-    suppress_token_ids: Vec<usize>,
     step_idx: usize,
     finished: bool,
 }
@@ -120,6 +126,16 @@ where
         for layer_cache in &mut decode_cache {
             layer_cache.reset();
         }
+        let predictor_cache = (0..config.code_predictor_config.num_hidden_layers)
+            .map(|_| {
+                KeyValueCache::new(
+                    1,
+                    config.code_predictor_config.num_key_value_heads,
+                    config.num_code_groups + 1,
+                    config.code_predictor_config.head_dim,
+                )
+            })
+            .collect::<Vec<_>>();
 
         let prefill = prefill(
             config,
@@ -132,24 +148,39 @@ where
         let current_hidden = last_hidden_step(prefill.last_hidden_state);
         // Repetition penalty only applies once we have generated history.
         let penalized_logits = prefill.logits;
-        let selected_token = sample_token::<B>(penalized_logits, &sampling, &suppress_token_ids);
+        let [logits_batch, _, logits_vocab] = penalized_logits.dims();
+        let suppress_mask = suppress_token_mask::<B>(
+            logits_batch,
+            logits_vocab,
+            &suppress_token_ids,
+            &penalized_logits.device(),
+        );
+        let selected_token = sample_token_with_suppress_mask::<B>(
+            penalized_logits,
+            &sampling,
+            suppress_mask.as_ref(),
+        );
         let eos_seen = selected_token_is_eos(&selected_token, eos_token_id)?;
+        let repetition_penalty_enabled = is_repetition_penalty_enabled(sampling.repetition_penalty);
+        let past_token_ids = repetition_penalty_enabled.then(|| selected_token.clone());
 
         Ok(Self {
             config: config.clone(),
             decode_cache,
+            predictor_cache,
             current_hidden: Some(current_hidden),
-            selected_token: Some(selected_token.clone()),
+            selected_token: Some(selected_token),
             eos_seen,
-            past_token_ids: Some(selected_token),
+            past_token_ids,
             codec_steps: Vec::new(),
             trailing_text_hidden,
             trailing_text_len: trailing_len,
             tts_pad_embed,
             sampling,
+            suppress_mask,
+            repetition_penalty_enabled,
             max_new_tokens,
             eos_token_id,
-            suppress_token_ids,
             step_idx: 0,
             finished: false,
         })
@@ -172,16 +203,6 @@ where
             return Ok(None);
         }
 
-        let mut predictor_cache = (0..self.config.code_predictor_config.num_hidden_layers)
-            .map(|_| {
-                KeyValueCache::new(
-                    1,
-                    self.config.code_predictor_config.num_key_value_heads,
-                    self.config.num_code_groups + 1,
-                    self.config.code_predictor_config.head_dim,
-                )
-            })
-            .collect::<Vec<_>>();
         let current_hidden = self
             .current_hidden
             .take()
@@ -190,17 +211,14 @@ where
             .selected_token
             .take()
             .expect("talker selected token should be present while stepping");
-        let past_token_ids = self
-            .past_token_ids
-            .take()
-            .expect("talker token history should be present while stepping");
+        let past_token_ids = self.past_token_ids.take();
         let codec_ids = generate_code_predictor_groups(
             &self.config,
             loaded,
             current_hidden,
             selected_token,
             &self.sampling,
-            &mut predictor_cache,
+            &mut self.predictor_cache,
         )?;
         let generation_step = self.step_idx;
         let inputs_embeds = add_trailing_text_embed(
@@ -241,16 +259,37 @@ where
             position_ids,
             &mut self.decode_cache,
         )?;
-        let penalized_logits = apply_repetition_penalty(
-            decoded.logits,
-            &past_token_ids,
-            self.sampling.repetition_penalty,
+        let penalized_logits = if self.repetition_penalty_enabled {
+            apply_repetition_penalty(
+                decoded.logits,
+                past_token_ids.as_ref().expect(
+                    "talker token history should be present when repetition penalty is enabled",
+                ),
+                self.sampling.repetition_penalty,
+            )
+        } else {
+            decoded.logits
+        };
+        let next_token = sample_token_with_suppress_mask::<B>(
+            penalized_logits,
+            &self.sampling,
+            self.suppress_mask.as_ref(),
         );
-        let next_token =
-            sample_token::<B>(penalized_logits, &self.sampling, &self.suppress_token_ids);
         self.selected_token = Some(next_token.clone());
         self.eos_seen = self.eos_seen || selected_token_is_eos(&next_token, self.eos_token_id)?;
-        self.past_token_ids = Some(Tensor::cat(vec![past_token_ids, next_token], 1));
+        self.past_token_ids = if self.repetition_penalty_enabled {
+            Some(Tensor::cat(
+                vec![
+                    past_token_ids.expect(
+                        "talker token history should be present when repetition penalty is enabled",
+                    ),
+                    next_token,
+                ],
+                1,
+            ))
+        } else {
+            None
+        };
         self.current_hidden = Some(last_hidden_step(decoded.last_hidden_state));
         if self.eos_seen {
             self.finished = true;
@@ -418,9 +457,8 @@ where
         });
     }
     debug_assert_eq!(cache.len(), config.code_predictor_config.num_hidden_layers);
-
     for layer_cache in cache.iter_mut() {
-        layer_cache.reset();
+        layer_cache.reset_preserve_allocation();
     }
 
     let [batch_size, hidden_size] = talker_hidden_state.dims();

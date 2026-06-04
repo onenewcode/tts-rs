@@ -42,6 +42,16 @@ impl<B: Backend> AutoregressiveCache<B> {
         self.cur_seq_len = 0;
     }
 
+    /// Reset the cache state while keeping any allocated backing tensor.
+    pub fn reset_preserve_allocation(&mut self) {
+        tracing::debug!(
+            previous_seq_len = self.cur_seq_len,
+            max_seq_len = self.max_seq_len,
+            "reset autoregressive cache length"
+        );
+        self.cur_seq_len = 0;
+    }
+
     /// Update the cache and return the current valid slice.
     pub fn forward(&mut self, tensor: Tensor<B, 4>) -> Tensor<B, 4> {
         let [batch_size, num_heads, seq_len, head_dim] = tensor.dims();
@@ -182,6 +192,11 @@ impl<B: Backend> KeyValueCache<B> {
         self.value.reset();
     }
 
+    pub fn reset_preserve_allocation(&mut self) {
+        self.key.reset_preserve_allocation();
+        self.value.reset_preserve_allocation();
+    }
+
     pub fn forward(
         &mut self,
         key: Tensor<B, 4>,
@@ -192,5 +207,68 @@ impl<B: Backend> KeyValueCache<B> {
 
     pub fn len(&self) -> usize {
         self.key.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use burn::tensor::Tensor;
+
+    use super::KeyValueCache;
+    use crate::loading::runtime::RuntimeBackend;
+
+    #[test]
+    fn reset_preserve_allocation_clears_len_without_dropping_cache_tensors() {
+        let device = Default::default();
+        let mut cache = KeyValueCache::<RuntimeBackend>::new(1, 1, 4, 2);
+        let key = Tensor::<RuntimeBackend, 4>::ones([1, 1, 2, 2], &device);
+        let value = Tensor::<RuntimeBackend, 4>::ones([1, 1, 2, 2], &device);
+
+        let _ = cache.forward(key, value);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.key.cache.is_some());
+        assert!(cache.value.cache.is_some());
+
+        cache.reset_preserve_allocation();
+
+        assert_eq!(cache.len(), 0);
+        assert!(cache.key.cache.is_some());
+        assert!(cache.value.cache.is_some());
+    }
+
+    #[test]
+    fn reset_preserve_allocation_exposes_only_new_forward_values() {
+        let device = Default::default();
+        let mut cache = KeyValueCache::<RuntimeBackend>::new(1, 1, 4, 1);
+        let first_key = Tensor::<RuntimeBackend, 1>::from_floats([1.0, 2.0].as_slice(), &device)
+            .reshape([1, 1, 2, 1]);
+        let first_value = Tensor::<RuntimeBackend, 1>::from_floats([3.0, 4.0].as_slice(), &device)
+            .reshape([1, 1, 2, 1]);
+
+        let _ = cache.forward(first_key, first_value);
+        cache.reset_preserve_allocation();
+
+        let next_key = Tensor::<RuntimeBackend, 1>::from_floats([9.0].as_slice(), &device)
+            .reshape([1, 1, 1, 1]);
+        let next_value = Tensor::<RuntimeBackend, 1>::from_floats([8.0].as_slice(), &device)
+            .reshape([1, 1, 1, 1]);
+        let (key_out, value_out) = cache.forward(next_key, next_value);
+
+        let key_values = key_out
+            .try_into_data()
+            .expect("key cache output should be readable")
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .expect("key cache output should convert to vec");
+        let value_values = value_out
+            .try_into_data()
+            .expect("value cache output should be readable")
+            .convert::<f32>()
+            .into_vec::<f32>()
+            .expect("value cache output should convert to vec");
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(key_values, vec![9.0]);
+        assert_eq!(value_values, vec![8.0]);
     }
 }

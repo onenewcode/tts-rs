@@ -41,6 +41,11 @@ functions/modules, `CamelCase` for types, and small focused modules. Keep
 behavior through `tts_app` and the `tts_qwen3_tts` surface, and prefer explicit
 `thiserror`-based errors with shared diagnostics in `tts_error`.
 
+Follow `docs/rules/abstraction.md`: only extract helpers or abstractions when
+they remove real complexity, clarify a real boundary, enable meaningful tests,
+or reduce concrete change risk. Do not wrap simple local code just to make it
+look organized.
+
 ## Testing Guidelines
 
 Add unit tests next to internal logic and integration tests in the owning crate

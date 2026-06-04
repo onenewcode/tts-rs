@@ -18,7 +18,7 @@ Run these first when making ordinary code changes:
 ```bash
 cargo test --release -p tts_infer
 cargo test --release -p tts_app --test service
-cargo test --release -p tts_qwen3_tts --test public_surface
+cargo test --release -p tts_qwen3_tts
 cargo test --release -p tts_qwen3_tts --test compiler_load
 cargo test --release -p tts_cli --test cli_parse
 ```
@@ -28,7 +28,7 @@ These commands match the current workspace members and test targets:
 - `tts_infer/tests/audio.rs`
 - `tts_infer/tests/manager.rs`
 - `tts_app/tests/service.rs`
-- `tts_qwen3_tts/tests/public_surface.rs`
+- `tts_qwen3_tts/src/` unit tests
 - `tts_qwen3_tts/tests/compiler_load.rs`
 - `tts_cli/tests/cli_parse.rs`
 
@@ -67,7 +67,7 @@ These tests should stay asset-free.
 
 Current location:
 
-- `tts_qwen3_tts/tests/public_surface.rs`
+- unit tests under `tts_qwen3_tts/src/`
 - `tts_qwen3_tts/tests/compiler_load.rs`
 
 Focus:
