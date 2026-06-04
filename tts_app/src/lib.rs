@@ -1,14 +1,15 @@
+pub use tts_qwen3_tts::FloatDType;
+
 use std::path::PathBuf;
 
 use thiserror::Error;
 use tts_infer::{DriverRegistry, ModelManager, SynthesisResult};
 use tts_qwen3_tts::{
     BaseRequest, BaseVoiceCloneConditioning, BaseVoiceCloneReferenceAudio, CustomVoiceRequest,
-    LanguageSelection, Qwen3TtsEngineConfig, Qwen3TtsHandleExt, Qwen3TtsPackageSource,
-    Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest, register_driver,
+    LanguageSelection, Qwen3TtsDriver, Qwen3TtsEngineConfig, Qwen3TtsHandleExt,
+    Qwen3TtsPackageSource, Qwen3TtsProfilingConfig, Qwen3TtsRunOptions, QwenRequest,
 };
 
-pub use tts_qwen3_tts::Qwen3TtsModelDType;
 pub use tts_qwen3_tts::SamplingConfig;
 pub use tts_qwen3_tts::SamplingOverride;
 
@@ -21,7 +22,7 @@ pub struct SharedSynthesisInput {
     pub output: PathBuf,
     pub max_new_tokens: Option<usize>,
     pub sampling: Option<SamplingOverride>,
-    pub dtype: Option<Qwen3TtsModelDType>,
+    pub dtype: Option<FloatDType>,
     pub profiling: bool,
     pub profiling_per_step: bool,
     pub profiling_stage_summary: bool,
@@ -51,7 +52,7 @@ pub struct PreparedSynthesis {
     pub output: PathBuf,
     pub profiling: Qwen3TtsProfilingConfig,
     pub run_options: Qwen3TtsRunOptions,
-    pub dtype: Option<Qwen3TtsModelDType>,
+    pub dtype: Option<FloatDType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,7 +79,7 @@ pub struct QwenAppService {
 impl QwenAppService {
     pub fn new() -> Result<Self, AppError> {
         let mut registry = DriverRegistry::new();
-        register_driver(&mut registry)?;
+        registry.register(Qwen3TtsDriver)?;
         Ok(Self {
             manager: ModelManager::new(registry),
         })
@@ -124,9 +125,10 @@ impl QwenAppService {
     pub fn prepare_base(input: BaseSynthesisInput) -> Result<PreparedSynthesis, AppError> {
         let stage_summary = resolve_stage_summary(&input.shared);
         let output = input.shared.output.clone();
+        let request = Self::build_base_request(input.clone())?;
         Ok(PreparedSynthesis {
             package_source: package_source(&input.shared)?,
-            request: Self::build_base_request(input.clone())?,
+            request,
             output,
             profiling: Qwen3TtsProfilingConfig {
                 enabled: input.shared.profiling,

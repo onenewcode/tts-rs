@@ -19,6 +19,8 @@ pub enum Qwen3TtsLoadError {
     },
     #[error("model weights loaded but {unused} tensors were left unused")]
     UnusedTensors { unused: usize },
+    #[error("unsupported runtime dtype {requested}; use f32 or bf16")]
+    UnsupportedDType { requested: String },
     #[error("failed to initialize runtime dtype {requested}: {message}")]
     RuntimeDType { requested: String, message: String },
     #[error("failed to read package manifest {path}: {source}")]
@@ -118,6 +120,11 @@ impl From<Qwen3TtsLoadError> for DiagnosticError {
                 format!("model weights loaded but {unused} tensors were left unused"),
             )
             .with_context("unused", unused.to_string()),
+            Qwen3TtsLoadError::UnsupportedDType { requested } => DiagnosticError::invalid_argument(
+                "qwen3.load.unsupported_dtype",
+                format!("unsupported runtime dtype {requested}; use f32 or bf16"),
+            )
+            .with_context("requested", requested),
             Qwen3TtsLoadError::RuntimeDType { requested, message } => {
                 DiagnosticError::invalid_argument(
                     "qwen3.load.runtime_dtype",

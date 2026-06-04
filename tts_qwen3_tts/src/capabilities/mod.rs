@@ -1,20 +1,16 @@
 use tts_infer::ModelCapabilities;
 
-use crate::{
-    Qwen3TtsPackage, execution::Qwen3TtsLoadedModel, execution::compiler::Qwen3TtsRequestCompiler,
-};
+use crate::loading::ResolvedPackage;
 
-pub(crate) fn project_capabilities(
-    package: &Qwen3TtsPackage,
-    compiler: &Qwen3TtsRequestCompiler,
-    model: &Qwen3TtsLoadedModel,
-) -> ModelCapabilities {
+pub(crate) fn project_capabilities(resolved: &ResolvedPackage) -> ModelCapabilities {
     ModelCapabilities::builder()
-        .supports_base_synthesis(compiler.profiles.base.is_some())
-        .supports_custom_voice(compiler.profiles.custom_voice.is_some())
-        .supports_voice_clone(model.supports_voice_clone())
+        .supports_base_synthesis(resolved.compiler.profiles.base.is_some())
+        .supports_custom_voice(resolved.compiler.profiles.custom_voice.is_some())
+        .supports_voice_clone(
+            resolved.compiler.profiles.base.is_some() && resolved.has_speaker_encoder,
+        )
         .sample_rate_hz(24_000)
         .channels(1)
-        .extension("package_name", package.name.clone())
+        .extension("package_name", resolved.package.name.clone())
         .build()
 }

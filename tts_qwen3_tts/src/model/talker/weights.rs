@@ -1,15 +1,17 @@
 use std::path::Path;
 
+use burn::tensor::DType;
 use burn::tensor::backend::Backend;
-use burn_store::{KeyRemapper, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
+use burn_store::{
+    KeyRemapper, ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore,
+};
 
 use crate::Qwen3TtsLoadError;
+use crate::loading::load_adapter::LoadTimeFloatAdapter;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
 use crate::model::talker::network::Qwen3TtsTalkerModelBundle;
 
 const TALKER_LOAD_KEY_PATTERNS: [(&str, &str); 1] = [(r"(.*)norm\.weight$", "${1}norm.gamma")];
-#[cfg(test)]
-const TALKER_EXPORT_KEY_PATTERNS: [(&str, &str); 1] = [(r"(.*)norm\.gamma$", "${1}norm.weight")];
 
 #[derive(Debug)]
 pub struct LoadedQwen3TtsTalker<B: Backend> {
@@ -21,19 +23,21 @@ pub fn load_qwen3_tts_talker_for_inference<B: Backend>(
     config_path: impl AsRef<Path>,
     weights_path: impl AsRef<Path>,
     device: &B::Device,
+    tensor_dtype: DType,
 ) -> Result<LoadedQwen3TtsTalker<B>, Qwen3TtsLoadError> {
     let config_path = config_path.as_ref().to_path_buf();
     let weights_path = weights_path.as_ref().to_path_buf();
     tracing::info!(
         config_path = %config_path.display(),
         weights_path = %weights_path.display(),
+        dtype = %tensor_dtype.name(),
         "loading qwen3 tts talker"
     );
     let config = Qwen3TtsTalkerConfig::load_from_path(&config_path)?;
     let mut model = config.init_model_bundle(device);
 
     let mut store = SafetensorsStore::from_file(&weights_path)
-        .with_from_adapter(PyTorchToBurnAdapter)
+        .with_from_adapter(PyTorchToBurnAdapter.chain(LoadTimeFloatAdapter::new(tensor_dtype)))
         .remap(
             KeyRemapper::from_patterns(TALKER_LOAD_KEY_PATTERNS.to_vec())
                 .expect("static regex remapping must compile"),
@@ -67,12 +71,15 @@ pub fn load_qwen3_tts_talker_for_inference<B: Backend>(
 
     Ok(LoadedQwen3TtsTalker { config, model })
 }
+
 #[cfg(test)]
 mod tests {
     use burn_store::KeyRemapper;
 
-    use super::{TALKER_EXPORT_KEY_PATTERNS, TALKER_LOAD_KEY_PATTERNS};
+    use super::TALKER_LOAD_KEY_PATTERNS;
 
+    const TALKER_EXPORT_KEY_PATTERNS: [(&str, &str); 1] =
+        [(r"(.*)norm\.gamma$", "${1}norm.weight")];
     #[test]
     fn talker_remappers_compile() {
         let _ = KeyRemapper::from_patterns(TALKER_LOAD_KEY_PATTERNS.to_vec())

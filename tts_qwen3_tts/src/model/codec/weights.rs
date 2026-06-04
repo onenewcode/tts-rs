@@ -1,13 +1,16 @@
 use std::path::Path;
 
+use burn::tensor::DType;
 use burn::tensor::backend::Backend;
-use burn_store::{KeyRemapper, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
+use burn_store::{
+    KeyRemapper, ModuleAdapter, ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore,
+};
 
 use crate::Qwen3TtsLoadError;
+use crate::loading::load_adapter::LoadTimeFloatAdapter;
 use crate::model::codec::config::Qwen3TtsAudioCodecConfig;
 use crate::model::codec::network::Qwen3TtsAudioCodec;
 
-// Keep the runtime structs readable and localize official PyTorch naming quirks here.
 const SPEECH_TOKENIZER_LOAD_KEY_PATTERNS: [(&str, &str); 3] = [
     (
         r"^(decoder\.pre_transformer(?:\.layers\.\d+\.(?:input_layernorm|post_attention_layernorm)|\.norm))\.weight$",
@@ -48,19 +51,21 @@ pub fn load_qwen3_tts_audio_codec<B: Backend>(
     config_path: impl AsRef<Path>,
     weights_path: impl AsRef<Path>,
     device: &B::Device,
+    tensor_dtype: DType,
 ) -> Result<LoadedQwen3TtsAudioCodec<B>, Qwen3TtsLoadError> {
     let config_path = config_path.as_ref().to_path_buf();
     let weights_path = weights_path.as_ref().to_path_buf();
     tracing::info!(
         config_path = %config_path.display(),
         weights_path = %weights_path.display(),
+        dtype = %tensor_dtype.name(),
         "loading qwen3 tts audio codec"
     );
     let config = Qwen3TtsAudioCodecConfig::load_from_path(&config_path)?;
     let mut model = config.init_model(device);
 
     let mut store = SafetensorsStore::from_file(&weights_path)
-        .with_from_adapter(PyTorchToBurnAdapter)
+        .with_from_adapter(PyTorchToBurnAdapter.chain(LoadTimeFloatAdapter::new(tensor_dtype)))
         .remap(
             KeyRemapper::from_patterns(SPEECH_TOKENIZER_LOAD_KEY_PATTERNS.to_vec())
                 .expect("static regex remapping must compile"),

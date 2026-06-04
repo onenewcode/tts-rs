@@ -4,8 +4,7 @@ use tts_app::{
     BaseSynthesisInput, CustomVoiceSynthesisInput, QwenAppService, SharedSynthesisInput,
 };
 use tts_qwen3_tts::{
-    BaseVoiceCloneConditioning, LanguageSelection, Qwen3TtsModelDType, Qwen3TtsPackageSource,
-    QwenRequest,
+    BaseVoiceCloneConditioning, FloatDType, LanguageSelection, Qwen3TtsPackageSource, QwenRequest,
 };
 
 #[test]
@@ -19,7 +18,7 @@ fn base_request_requires_ref_text_when_reference_audio_is_not_x_vector_only() {
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
             sampling: None,
-            dtype: Some(Qwen3TtsModelDType::F16),
+            dtype: Some(FloatDType::BF16),
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,

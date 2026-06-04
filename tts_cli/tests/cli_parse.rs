@@ -87,12 +87,12 @@ fn package_first_subcommand_parses_runtime_dtype() {
         "--speaker",
         "Vivian",
         "--dtype",
-        "q8s",
+        "bf16",
         "--output",
         "out.wav",
     ])
     .expect("runtime dtype should parse");
 
     let debug = format!("{args:?}");
-    assert!(debug.contains("Q8S"));
+    assert!(debug.contains("BF16"));
 }

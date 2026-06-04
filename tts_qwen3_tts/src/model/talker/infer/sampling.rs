@@ -46,7 +46,6 @@ pub fn sample_token<B: Backend>(
     if logits_dtype.size() < DType::F32.size() {
         logits_2d = logits_2d.cast(DType::F32);
     }
-
     let [batch_size, vocab_size] = logits_2d.dims();
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
 

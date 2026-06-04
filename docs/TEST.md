@@ -151,11 +151,11 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --output ./out/custom-voice-f32-smoke.wav
 ```
 
-Supported values are `f64`, `f32`, `flex32`, `f16`, `bf16`, `q8f`, `q8s`,
-`q4f`, `q4s`, `q2f`, and `q2s`. Float values convert loaded float weights to
-that dtype. Quantized values convert loaded float weights to Burn `QFloat`
-storage and keep inference on the same model execution path. When `--dtype` is
-omitted, the CLI and driver default to `bf16`.
+Supported values are `f32` and `bf16`. The loader converts float weights
+directly into the requested runtime dtype during `load_from`, so the resident
+model already uses the target precision when load returns. `f16` is rejected
+explicitly because the current synthesis path does not produce correct output
+with it. When `--dtype` is omitted, the CLI and driver default to `bf16`.
 
 Rules:
 
