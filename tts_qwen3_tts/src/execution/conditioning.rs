@@ -1,6 +1,6 @@
 use burn::tensor::backend::Backend;
 
-use crate::execution::reference_audio::load_reference_audio;
+use crate::execution::reference_audio::{decode_reference_audio, prepare_reference_audio};
 use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
 use crate::model::speaker::LoadedQwen3TtsSpeakerEncoder;
 use crate::{
@@ -28,8 +28,9 @@ where
         });
     }
 
+    let decoded_audio = decode_reference_audio(&reference.path)?;
     let prepared_for_speaker =
-        load_reference_audio(&reference.path, speaker_encoder.sample_rate())?;
+        prepare_reference_audio(&decoded_audio, speaker_encoder.sample_rate())?;
     let speaker_embedding = speaker_encoder
         .encode_embedding(&prepared_for_speaker.samples)
         .dequantize()
@@ -64,7 +65,7 @@ where
                 }
             })?;
         let codec_audio = (codec_sample_rate != prepared_for_speaker.sample_rate)
-            .then(|| load_reference_audio(&reference.path, codec_sample_rate))
+            .then(|| prepare_reference_audio(&decoded_audio, codec_sample_rate))
             .transpose()?;
         let codec_samples = codec_audio
             .as_ref()

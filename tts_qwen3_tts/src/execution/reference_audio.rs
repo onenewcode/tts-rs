@@ -3,15 +3,20 @@ use std::path::Path;
 use crate::Qwen3TtsInferenceError;
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DecodedReferenceAudio {
+    pub(crate) sample_rate: u32,
+    pub(crate) samples: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PreparedReferenceAudio {
     pub(crate) sample_rate: u32,
     pub(crate) samples: Vec<f32>,
 }
 
-pub(crate) fn load_reference_audio(
+pub(crate) fn decode_reference_audio(
     path: &Path,
-    target_sample_rate: u32,
-) -> Result<PreparedReferenceAudio, Qwen3TtsInferenceError> {
+) -> Result<DecodedReferenceAudio, Qwen3TtsInferenceError> {
     let mut reader =
         hound::WavReader::open(path).map_err(|source| Qwen3TtsInferenceError::AudioDecode {
             message: format!("failed to open wav {}: {source}", path.display()),
@@ -38,24 +43,33 @@ pub(crate) fn load_reference_audio(
         });
     }
 
-    let resampled = if spec.sample_rate == target_sample_rate {
-        mono
+    Ok(DecodedReferenceAudio {
+        sample_rate: spec.sample_rate,
+        samples: mono,
+    })
+}
+
+pub(crate) fn prepare_reference_audio(
+    decoded: &DecodedReferenceAudio,
+    target_sample_rate: u32,
+) -> Result<PreparedReferenceAudio, Qwen3TtsInferenceError> {
+    let samples = if decoded.sample_rate == target_sample_rate {
+        decoded.samples.clone()
     } else {
-        resample_linear(&mono, spec.sample_rate, target_sample_rate)
+        resample_linear(&decoded.samples, decoded.sample_rate, target_sample_rate)
     };
-    if resampled.is_empty() {
+    if samples.is_empty() {
         return Err(Qwen3TtsInferenceError::InvalidInput {
             message: format!(
-                "wav {} produced no samples after resampling to {} Hz",
-                path.display(),
-                target_sample_rate
+                "reference audio produced no samples after resampling from {} Hz to {} Hz",
+                decoded.sample_rate, target_sample_rate
             ),
         });
     }
 
     Ok(PreparedReferenceAudio {
         sample_rate: target_sample_rate,
-        samples: resampled,
+        samples,
     })
 }
 
@@ -157,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn load_reference_audio_mixdowns_stereo_and_resamples() {
+    fn decoded_reference_audio_mixdowns_stereo_and_resamples() {
         let path = temp_wav_path("stereo-resample");
         write_wav_i16(
             &path,
@@ -166,7 +180,8 @@ mod tests {
             &[500, -500, 1_000, -1_000, 1_500, -1_500, 2_000, -2_000],
         );
 
-        let audio = load_reference_audio(&path, 24_000).unwrap();
+        let decoded = decode_reference_audio(&path).unwrap();
+        let audio = prepare_reference_audio(&decoded, 24_000).unwrap();
 
         assert_eq!(audio.sample_rate, 24_000);
         assert_eq!(audio.samples.len(), 2);
@@ -174,11 +189,32 @@ mod tests {
     }
 
     #[test]
-    fn load_reference_audio_rejects_empty_payload() {
+    fn decoded_reference_audio_can_prepare_multiple_sample_rates() {
+        let path = temp_wav_path("decode-once");
+        write_wav_i16(
+            &path,
+            48_000,
+            2,
+            &[500, -500, 1_000, -1_000, 1_500, -1_500, 2_000, -2_000],
+        );
+
+        let decoded = decode_reference_audio(&path).unwrap();
+        let native = prepare_reference_audio(&decoded, 48_000).unwrap();
+        let resampled = prepare_reference_audio(&decoded, 24_000).unwrap();
+
+        assert_eq!(decoded.sample_rate, 48_000);
+        assert_eq!(native.sample_rate, 48_000);
+        assert_eq!(native.samples.len(), 4);
+        assert_eq!(resampled.sample_rate, 24_000);
+        assert_eq!(resampled.samples.len(), 2);
+    }
+
+    #[test]
+    fn decode_reference_audio_rejects_empty_payload() {
         let path = temp_wav_path("empty");
         write_wav_i16(&path, 24_000, 1, &[]);
 
-        let error = load_reference_audio(&path, 24_000).unwrap_err();
+        let error = decode_reference_audio(&path).unwrap_err();
         assert!(error.to_string().contains("contains no audio samples"));
     }
 

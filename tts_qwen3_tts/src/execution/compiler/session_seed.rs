@@ -7,7 +7,7 @@ use crate::execution::compiler::{
     CompiledVoiceCloneCondition, CompiledVoiceCloneConditionSource, ProfileControlIds,
     Qwen3TtsPromptRecipe, SemanticRequestCondition,
 };
-use crate::execution::reference_audio::load_reference_audio;
+use crate::execution::reference_audio::{decode_reference_audio, prepare_reference_audio};
 use crate::model::codec::weights::LoadedQwen3TtsAudioCodec;
 use crate::model::speaker::LoadedQwen3TtsSpeakerEncoder;
 use crate::model::talker::config::Qwen3TtsTalkerConfig;
@@ -48,6 +48,7 @@ pub(crate) fn materialize_session_seed<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     decoder: &LoadedQwen3TtsAudioCodec<B>,
     speaker_encoder: Option<&LoadedQwen3TtsSpeakerEncoder<B>>,
+    hidden_dtype: DType,
     device: &B::Device,
 ) -> Result<SessionSeed<B>, Qwen3TtsInferenceError>
 where
@@ -68,6 +69,7 @@ where
             decoder,
             speaker_encoder,
             talker_config.hidden_size,
+            hidden_dtype,
             device,
         ),
         _ => build_non_streaming_seed(
@@ -216,6 +218,7 @@ fn build_voice_clone_seed_from_condition<B: Backend>(
     decoder: &LoadedQwen3TtsAudioCodec<B>,
     speaker_encoder: Option<&LoadedQwen3TtsSpeakerEncoder<B>>,
     hidden_size: usize,
+    hidden_dtype: DType,
     device: &B::Device,
 ) -> Result<PreparedSeed<B>, Qwen3TtsInferenceError>
 where
@@ -227,6 +230,7 @@ where
         decoder,
         speaker_encoder,
         hidden_size,
+        hidden_dtype,
         device,
     )?;
     let ref_text_ids = matches!(
@@ -394,12 +398,12 @@ fn materialize_voice_clone_condition<B: Backend>(
     decoder: &LoadedQwen3TtsAudioCodec<B>,
     speaker_encoder: Option<&LoadedQwen3TtsSpeakerEncoder<B>>,
     hidden_size: usize,
+    hidden_dtype: DType,
     device: &B::Device,
 ) -> Result<VoiceCloneState<B>, Qwen3TtsInferenceError>
 where
     B::Device: Clone,
 {
-    let hidden_dtype = talker_hidden_dtype(talker);
     match &voice_clone.source {
         CompiledVoiceCloneConditionSource::Prompt(prompt) => Ok(VoiceCloneState {
             speaker_embedding: speaker_embedding_tensor(
@@ -429,8 +433,9 @@ where
                         "voice clone prompt requires a Base model with speaker_encoder weights"
                             .to_string(),
                 })?;
+            let decoded_audio = decode_reference_audio(&reference.path)?;
             let speaker_audio =
-                load_reference_audio(&reference.path, speaker_encoder.sample_rate())?;
+                prepare_reference_audio(&decoded_audio, speaker_encoder.sample_rate())?;
             let speaker_embedding = speaker_encoder
                 .encode_embedding(&speaker_audio.samples)
                 .reshape([1, 1, hidden_size])
@@ -439,8 +444,8 @@ where
             let (reference_codec_prefix, reference_codec_frame_count) = if reference.x_vector_only {
                 (None, 0)
             } else {
-                let codec_audio = load_reference_audio(
-                    &reference.path,
+                let codec_audio = prepare_reference_audio(
+                    &decoded_audio,
                     u32::try_from(decoder.config.input_sample_rate).map_err(|_| {
                         Qwen3TtsInferenceError::InvalidInput {
                             message: format!(
@@ -596,18 +601,6 @@ fn speaker_embedding_tensor<B: Backend>(
     let embedding =
         Tensor::<B, 1>::from_data(embedding, (device, dtype)).reshape([1, 1, hidden_size]);
     Ok(embedding)
-}
-
-fn talker_hidden_dtype<B: Backend>(talker: &LoadedQwen3TtsTalker<B>) -> DType {
-    talker
-        .model
-        .talker
-        .model
-        .codec_embedding
-        .weight
-        .val()
-        .dequantize()
-        .dtype()
 }
 
 fn sum_ref_codec_embeddings<B: Backend>(

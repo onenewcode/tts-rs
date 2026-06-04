@@ -88,59 +88,66 @@ impl QwenAppService {
 
 impl QwenAppService {
     pub fn build_base_request(input: BaseSynthesisInput) -> Result<QwenRequest, AppError> {
-        let voice_clone = match (&input.ref_audio, input.x_vector_only) {
-            (None, _) => {
-                if input.ref_text.is_some() {
-                    return Err(tts_error::DiagnosticError::invalid_argument(
-                        "app.ref_text_requires_audio",
-                        "`--ref-text` requires `--ref-audio`",
-                    )
-                    .into());
-                }
-                None
-            }
-            (Some(_), false) if input.ref_text.is_none() => {
-                return Err(tts_error::DiagnosticError::invalid_argument(
-                    "app.ref_text_required",
-                    "`--ref-text` is required when `--ref-audio` is used without `--x-vector-only`",
-                )
-                .into());
-            }
-            (Some(path), x_vector_only) => Some(BaseVoiceCloneConditioning::ReferenceAudio(
-                BaseVoiceCloneReferenceAudio {
-                    path: path.clone(),
-                    transcript: input.ref_text.clone(),
-                    x_vector_only,
-                },
-            )),
-        };
+        let BaseSynthesisInput {
+            shared,
+            ref_audio,
+            ref_text,
+            x_vector_only,
+        } = input;
+        let voice_clone = base_voice_clone_conditioning(ref_audio, ref_text, x_vector_only)?;
 
         Ok(QwenRequest::Base(BaseRequest {
-            text: input.shared.text,
-            language: parse_language(&input.shared.language),
+            text: shared.text,
+            language: parse_language(&shared.language),
             voice_clone,
         }))
     }
 
     pub fn prepare_base(input: BaseSynthesisInput) -> Result<PreparedSynthesis, AppError> {
-        let stage_summary = resolve_stage_summary(&input.shared);
-        let output = input.shared.output.clone();
-        let request = Self::build_base_request(input.clone())?;
+        let BaseSynthesisInput {
+            shared,
+            ref_audio,
+            ref_text,
+            x_vector_only,
+        } = input;
+        let stage_summary = resolve_stage_summary(&shared);
+        let package_source = package_source(&shared)?;
+        let voice_clone = base_voice_clone_conditioning(ref_audio, ref_text, x_vector_only)?;
+        let SharedSynthesisInput {
+            text,
+            language,
+            output,
+            max_new_tokens,
+            sampling,
+            dtype,
+            profiling,
+            profiling_per_step,
+            profiling_log_topk,
+            ..
+        } = shared;
+
+        let request = QwenRequest::Base(BaseRequest {
+            text,
+            language: parse_language(&language),
+            voice_clone,
+        });
+        let profiling = Qwen3TtsProfilingConfig {
+            enabled: profiling,
+            per_step: profiling_per_step,
+            stage_summary,
+            log_topk: profiling_log_topk,
+        };
+        let run_options = Qwen3TtsRunOptions {
+            max_new_tokens,
+            sampling,
+        };
         Ok(PreparedSynthesis {
-            package_source: package_source(&input.shared)?,
+            package_source,
             request,
             output,
-            profiling: Qwen3TtsProfilingConfig {
-                enabled: input.shared.profiling,
-                per_step: input.shared.profiling_per_step,
-                stage_summary,
-                log_topk: input.shared.profiling_log_topk,
-            },
-            run_options: Qwen3TtsRunOptions {
-                max_new_tokens: input.shared.max_new_tokens,
-                sampling: input.shared.sampling,
-            },
-            dtype: input.shared.dtype,
+            profiling,
+            run_options,
+            dtype,
         })
     }
 
@@ -176,32 +183,34 @@ impl QwenAppService {
         &self,
         prepared: PreparedSynthesis,
     ) -> Result<SavedSynthesis, AppError> {
-        if let Some(parent) = prepared
-            .output
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
+        let PreparedSynthesis {
+            package_source,
+            request,
+            output,
+            profiling,
+            run_options,
+            dtype,
+        } = prepared;
+
+        if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
 
         let handle = self.manager.load(
             tts_qwen3_tts::QWEN3_TTS_DRIVER_ID,
             Qwen3TtsEngineConfig {
-                package: prepared.package_source.clone(),
-                profiling: prepared.profiling.clone(),
-                dtype: prepared.dtype,
+                package: package_source,
+                profiling,
+                dtype,
             },
         )?;
 
-        let result = handle.synthesize_qwen(prepared.request, prepared.run_options)?;
-        result.audio.save_wav(&prepared.output)?;
+        let result = handle.synthesize_qwen(request, run_options)?;
+        result.audio.save_wav(&output)?;
         handle.close()?;
         let _ = self.manager.remove(handle.instance_id())?;
 
-        Ok(SavedSynthesis {
-            output: prepared.output,
-            result,
-        })
+        Ok(SavedSynthesis { output, result })
     }
 }
 
@@ -219,6 +228,33 @@ fn package_source(shared: &SharedSynthesisInput) -> Result<Qwen3TtsPackageSource
             "pass only one of --model-dir or --manifest",
         )
         .into()),
+    }
+}
+
+fn base_voice_clone_conditioning(
+    ref_audio: Option<PathBuf>,
+    ref_text: Option<String>,
+    x_vector_only: bool,
+) -> Result<Option<BaseVoiceCloneConditioning>, AppError> {
+    match (ref_audio, ref_text, x_vector_only) {
+        (None, Some(_), _) => Err(tts_error::DiagnosticError::invalid_argument(
+            "app.ref_text_requires_audio",
+            "`--ref-text` requires `--ref-audio`",
+        )
+        .into()),
+        (None, None, _) => Ok(None),
+        (Some(_), None, false) => Err(tts_error::DiagnosticError::invalid_argument(
+            "app.ref_text_required",
+            "`--ref-text` is required when `--ref-audio` is used without `--x-vector-only`",
+        )
+        .into()),
+        (Some(path), transcript, x_vector_only) => Ok(Some(
+            BaseVoiceCloneConditioning::ReferenceAudio(BaseVoiceCloneReferenceAudio {
+                path,
+                transcript,
+                x_vector_only,
+            }),
+        )),
     }
 }
 

@@ -39,6 +39,7 @@ pub(crate) type RuntimeBackend = burn::backend::WebGpu;
 #[derive(Debug)]
 pub(crate) struct CoreSynthesisRuntime<B: Backend> {
     pub(crate) device: B::Device,
+    pub(crate) tensor_dtype: DType,
     pub(crate) compiler: Qwen3TtsRequestCompiler,
     pub(crate) talker: LoadedQwen3TtsTalker<B>,
     pub(crate) decoder: LoadedQwen3TtsAudioCodec<B>,
@@ -96,6 +97,7 @@ where
 {
     Ok(CoreSynthesisRuntime {
         device: device.clone(),
+        tensor_dtype,
         compiler: resolved.compiler.clone(),
         talker: load_qwen3_tts_talker_for_inference::<B>(
             &resolved.package.talker_config_path,

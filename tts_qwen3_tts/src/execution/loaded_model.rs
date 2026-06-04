@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use burn::tensor::DType;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
@@ -166,6 +167,7 @@ fn start_session_impl(
         runtime_view.talker,
         runtime_view.decoder,
         runtime_view.speaker_encoder,
+        runtime_view.tensor_dtype,
         runtime_view.device,
     )?;
     let SessionSeed {
@@ -206,6 +208,7 @@ fn start_session_impl(
 
 struct TalkerRuntimeView<'a, B: Backend> {
     device: &'a B::Device,
+    tensor_dtype: DType,
     compiler: &'a Qwen3TtsRequestCompiler,
     talker: &'a LoadedQwen3TtsTalker<B>,
     decoder: &'a LoadedQwen3TtsAudioCodec<B>,
@@ -219,6 +222,7 @@ fn talker_runtime(
         LoadedRuntime::BaseSynthesis(core) | LoadedRuntime::CustomVoice(core) => {
             Ok(TalkerRuntimeView {
                 device: &core.device,
+                tensor_dtype: core.tensor_dtype,
                 compiler: &core.compiler,
                 talker: &core.talker,
                 decoder: &core.decoder,
@@ -230,6 +234,7 @@ fn talker_runtime(
             speaker_encoder,
         } => Ok(TalkerRuntimeView {
             device: &core.device,
+            tensor_dtype: core.tensor_dtype,
             compiler: &core.compiler,
             talker: &core.talker,
             decoder: &core.decoder,
