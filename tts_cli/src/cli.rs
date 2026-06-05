@@ -50,6 +50,8 @@ pub struct SharedSynthesizeArgs {
     pub language: String,
     #[arg(long)]
     pub output: PathBuf,
+    #[arg(long = "max-new-tokens", value_parser = parse_positive_usize)]
+    pub max_new_tokens: Option<usize>,
     #[arg(long = "talker-sampling", value_enum)]
     pub talker_sampling: Option<CliSampling>,
     #[arg(long = "code-predictor-sampling", value_enum)]
@@ -190,7 +192,7 @@ fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
         text: shared.text.clone(),
         language: shared.language.clone(),
         output: shared.output.clone(),
-        max_new_tokens: None,
+        max_new_tokens: shared.max_new_tokens,
         talker_sampling: shared.talker_sampling.map(CliSampling::to_sampling),
         code_predictor_sampling: shared.code_predictor_sampling.map(CliSampling::to_sampling),
         talker_dtype: shared.talker_dtype,
@@ -212,6 +214,16 @@ fn parse_float_dtype(value: &str) -> Result<FloatDType, String> {
             "unsupported dtype `{other}`; expected one of f16, f32, bf16"
         )),
     }
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid positive integer `{value}` for --max-new-tokens"))?;
+    if parsed == 0 {
+        return Err("--max-new-tokens must be greater than zero".to_string());
+    }
+    Ok(parsed)
 }
 
 fn input_source_display(shared: &SharedSynthesizeArgs) -> &Path {
@@ -256,6 +268,7 @@ mod tests {
                     assert_eq!(base.shared.text, "hello");
                     assert_eq!(base.shared.language, "auto");
                     assert_eq!(base.shared.output, PathBuf::from("out.wav"));
+                    assert_eq!(base.shared.max_new_tokens, None);
                     assert_eq!(base.shared.talker_dtype, None);
                     assert_eq!(base.shared.codec_dtype, None);
                     assert_eq!(base.ref_audio, None);
@@ -339,6 +352,7 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
+            max_new_tokens: None,
             talker_sampling: None,
             code_predictor_sampling: None,
             talker_dtype: None,
@@ -411,6 +425,7 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
+            max_new_tokens: Some(7),
             talker_sampling: Some(CliSampling::Greedy),
             code_predictor_sampling: Some(CliSampling::Greedy),
             talker_dtype: Some(FloatDType::F16),
@@ -423,7 +438,7 @@ mod tests {
         };
 
         let input = to_shared_input(&shared);
-        assert_eq!(input.max_new_tokens, None);
+        assert_eq!(input.max_new_tokens, Some(7));
         assert_eq!(
             input.talker_sampling,
             Some(SamplingOverride::GreedyFromModelDefaults)

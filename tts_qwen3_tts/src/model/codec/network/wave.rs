@@ -4,9 +4,10 @@ use burn::nn::{LayerNorm, Linear};
 use burn::tensor::Tensor;
 use burn::tensor::activation::gelu;
 use burn::tensor::backend::Backend;
+use burn::tensor::ops::PadMode;
 
 use super::activation::AudioCodecSnakeBeta;
-use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
+use super::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d, conv1d_padding, pad_1d};
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecConvNeXtBlock<B: Backend> {
@@ -29,6 +30,8 @@ pub enum Qwen3TtsAudioCodecWaveDecoderEntry<B: Backend> {
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecWaveDecoderConvEntry<B: Backend> {
     pub conv: Conv1d<B>,
+    #[module(skip)]
+    pub pad_mode: PadMode,
 }
 
 #[derive(Module, Debug)]
@@ -49,12 +52,6 @@ pub struct Qwen3TtsAudioCodecWaveDecoderResidualUnit<B: Backend> {
     pub conv1: AudioCodecCausalConv1d<B>,
     pub act2: AudioCodecSnakeBeta<B>,
     pub conv2: AudioCodecCausalConv1d<B>,
-}
-
-impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderConvEntry<B> {
-    pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
-        self.conv.forward(hidden)
-    }
 }
 
 impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderResidualUnit<B> {
@@ -81,11 +78,18 @@ impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderUpsampleStage<B> {
 impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderEntry<B> {
     pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
         match self {
-            Self::InputConv(entry) => entry.forward(hidden),
+            Self::InputConv(entry) | Self::OutputConv(entry) => entry.forward(hidden),
             Self::UpsampleStage(stage) => stage.forward(hidden),
             Self::OutputActivation(snake) => snake.forward(hidden),
-            Self::OutputConv(entry) => entry.forward(hidden),
         }
+    }
+}
+
+impl<B: Backend> Qwen3TtsAudioCodecWaveDecoderConvEntry<B> {
+    pub fn forward(&self, hidden: Tensor<B, 3>) -> Tensor<B, 3> {
+        let (padding_total, extra_padding) = conv1d_padding(&self.conv, hidden.dims()[2]);
+        self.conv
+            .forward(pad_1d(hidden, padding_total, extra_padding, self.pad_mode))
     }
 }
 

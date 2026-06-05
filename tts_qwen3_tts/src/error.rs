@@ -53,6 +53,8 @@ pub enum Qwen3TtsLoadError {
         #[source]
         source: tokenizers::Error,
     },
+    #[error("invalid compiler config: {message}")]
+    InvalidCompilerConfig { message: String },
     #[error("invalid package manifest: {message}")]
     InvalidManifest { message: String },
     #[error("invalid model directory: {message}")]
@@ -163,6 +165,13 @@ impl From<Qwen3TtsLoadError> for DiagnosticError {
                 path,
                 source.to_string(),
             ),
+            Qwen3TtsLoadError::InvalidCompilerConfig { message } => {
+                DiagnosticError::invalid_argument(
+                    "qwen3.load.invalid_compiler_config",
+                    format!("invalid compiler config: {message}"),
+                )
+                .with_context("message", message)
+            }
             Qwen3TtsLoadError::InvalidManifest { message } => DiagnosticError::invalid_argument(
                 "qwen3.load.invalid_manifest",
                 format!("invalid package manifest: {message}"),

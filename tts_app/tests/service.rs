@@ -118,3 +118,60 @@ fn custom_voice_request_building_preserves_driver_specific_fields() {
         QwenRequest::Base(_) => panic!("expected custom voice request"),
     }
 }
+
+#[test]
+fn prepare_custom_voice_preserves_max_new_tokens_override() {
+    let prepared = QwenAppService::prepare_custom_voice(CustomVoiceSynthesisInput {
+        shared: SharedSynthesisInput {
+            model_dir: Some(PathBuf::from("model-dir")),
+            manifest: None,
+            text: "hello".to_string(),
+            language: "auto".to_string(),
+            output: PathBuf::from("out.wav"),
+            max_new_tokens: Some(7),
+            talker_sampling: None,
+            code_predictor_sampling: None,
+            talker_dtype: None,
+            codec_dtype: None,
+            profiling: false,
+            profiling_per_step: false,
+            profiling_stage_summary: true,
+            no_profiling_stage_summary: false,
+            profiling_log_topk: 8,
+        },
+        speaker: "Chelsie".to_string(),
+        instruct: None,
+    })
+    .unwrap();
+
+    assert_eq!(prepared.run_options.max_new_tokens, Some(7));
+}
+
+#[test]
+fn prepare_custom_voice_rejects_zero_max_new_tokens_before_model_load() {
+    let error = QwenAppService::prepare_custom_voice(CustomVoiceSynthesisInput {
+        shared: SharedSynthesisInput {
+            model_dir: Some(PathBuf::from("model-dir")),
+            manifest: None,
+            text: "hello".to_string(),
+            language: "auto".to_string(),
+            output: PathBuf::from("out.wav"),
+            max_new_tokens: Some(0),
+            talker_sampling: None,
+            code_predictor_sampling: None,
+            talker_dtype: None,
+            codec_dtype: None,
+            profiling: false,
+            profiling_per_step: false,
+            profiling_stage_summary: true,
+            no_profiling_stage_summary: false,
+            profiling_log_topk: 8,
+        },
+        speaker: "Chelsie".to_string(),
+        instruct: None,
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("max_new_tokens"));
+    assert!(error.to_string().contains("greater than zero"));
+}

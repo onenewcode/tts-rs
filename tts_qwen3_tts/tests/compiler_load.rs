@@ -50,6 +50,51 @@ fn engine_load_requires_runtime_artifacts_after_model_dir_parse() {
     );
 }
 
+#[test]
+fn engine_load_rejects_zero_max_new_tokens_in_generation_config() {
+    let model_dir = write_model_dir_fixture("zero-max-new-tokens", true);
+    fs::write(
+        model_dir.join("generation_config.json"),
+        INVALID_GENERATION_CONFIG_JSON,
+    )
+    .unwrap();
+
+    let error = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
+        package: Qwen3TtsPackageSource::ModelDir(model_dir),
+        profiling: Qwen3TtsProfilingConfig::default(),
+        talker_dtype: None,
+        codec_dtype: None,
+    })
+    .expect_err("engine load should reject zero generation_config.max_new_tokens");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("generation_config.max_new_tokens")
+            && message.contains("greater than zero"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn engine_load_rejects_zero_max_new_tokens_in_manifest_generation_config() {
+    let manifest_path = write_manifest_fixture("manifest-zero-max-new-tokens", 0);
+
+    let error = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
+        package: Qwen3TtsPackageSource::ManifestPath(manifest_path),
+        profiling: Qwen3TtsProfilingConfig::default(),
+        talker_dtype: None,
+        codec_dtype: None,
+    })
+    .expect_err("engine load should reject zero manifest generation_config.max_new_tokens");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("generation_config.max_new_tokens")
+            && message.contains("greater than zero"),
+        "unexpected error: {message}"
+    );
+}
+
 fn write_model_dir_fixture(label: &str, include_generation_config: bool) -> PathBuf {
     let package_dir = std::env::temp_dir().join(format!(
         "tts-rs-qwen3-model-dir-{label}-{}",
@@ -76,6 +121,40 @@ fn write_model_dir_fixture(label: &str, include_generation_config: bool) -> Path
     package_dir
 }
 
+fn write_manifest_fixture(label: &str, max_new_tokens: usize) -> PathBuf {
+    let package_dir = std::env::temp_dir().join(format!(
+        "tts-rs-qwen3-manifest-{label}-{}",
+        std::process::id()
+    ));
+    if package_dir.exists() {
+        fs::remove_dir_all(&package_dir).unwrap();
+    }
+    fs::create_dir_all(&package_dir).unwrap();
+
+    let manifest = format!(
+        r#"format: qwen3_tts_package/v1
+name: Qwen3-TTS-12Hz-0.6B-Base
+artifacts:
+  tokenizer: ./tokenizer.json
+  talker_config: ./config.json
+  talker_weights: ./model.safetensors
+  codec_config: ./speech_tokenizer/config.json
+  codec_weights: ./speech_tokenizer/model.safetensors
+generation_config:
+  do_sample: true
+  repetition_penalty: 1.05
+  temperature: 0.9
+  top_p: 1.0
+  top_k: 50
+  max_new_tokens: {max_new_tokens}
+"#
+    );
+
+    let manifest_path = package_dir.join("qwen3_tts_package.yaml");
+    fs::write(&manifest_path, manifest).unwrap();
+    manifest_path
+}
+
 fn write_tokenizer_file(path: &Path) {
     fs::write(path, serde_json::to_vec(&test_tokenizer()).unwrap()).unwrap();
 }
@@ -98,6 +177,15 @@ const GENERATION_CONFIG_JSON: &str = r#"{
   "top_p": 1.0,
   "top_k": 50,
   "max_new_tokens": 8192
+}"#;
+
+const INVALID_GENERATION_CONFIG_JSON: &str = r#"{
+  "do_sample": true,
+  "repetition_penalty": 1.05,
+  "temperature": 0.9,
+  "top_p": 1.0,
+  "top_k": 50,
+  "max_new_tokens": 0
 }"#;
 
 const MODEL_CONFIG_JSON: &str = r#"{

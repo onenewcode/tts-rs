@@ -5766,6 +5766,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tts_app",
+ "tts_qwen3_tts",
 ]
 
 [[package]]

@@ -5,21 +5,23 @@ edition = "2024"
 rust-version = "1.94"
 
 [features]
+# The final binary selects which backend gets compiled into `tts_qwen3_tts`.
 default = ["flex", "fusion"]
-fusion = ["tts_app/fusion"]
-flex = ["tts_app/flex"]
-wgpu = ["tts_app/wgpu"]
-cuda = ["tts_app/cuda"]
-rocm = ["tts_app/rocm"]
-metal = ["tts_app/metal"]
-vulkan = ["tts_app/vulkan"]
-webgpu = ["tts_app/webgpu"]
+fusion = ["tts_qwen3_tts/fusion"]
+flex = ["tts_qwen3_tts/flex"]
+wgpu = ["tts_qwen3_tts/wgpu"]
+cuda = ["tts_qwen3_tts/cuda"]
+rocm = ["tts_qwen3_tts/rocm"]
+metal = ["tts_qwen3_tts/metal"]
+vulkan = ["tts_qwen3_tts/vulkan"]
+webgpu = ["tts_qwen3_tts/webgpu"]
 
 [dependencies]
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tts_app = { workspace = true }
+tts_qwen3_tts = { workspace = true }
 
 [[bin]]
 name = "tts_cli"

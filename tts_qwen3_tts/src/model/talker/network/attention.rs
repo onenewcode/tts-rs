@@ -1,10 +1,10 @@
 use burn::module::Module;
 use burn::nn::{Linear, RmsNorm};
-use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, DType, Tensor};
 
 use super::kv::KeyValueCache;
+use crate::model::nn::attention::apply_attention_kernel;
 
 pub enum AttentionPosition<'a, B: Backend> {
     Standard {
@@ -41,7 +41,6 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let x = x.dequantize();
         let [batch_size, seq_len, _] = x.dims();
         let model_dtype = x.dtype();
-        let use_fp32_attention = model_dtype.size() < DType::F32.size();
 
         let q = self.q_proj.forward(x.clone());
         let k = self.k_proj.forward(x.clone());
@@ -58,11 +57,6 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         let v = v
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
-        let (q, k, v) = if use_fp32_attention {
-            (q.cast(DType::F32), k.cast(DType::F32), v.cast(DType::F32))
-        } else {
-            (q, k, v)
-        };
         let (q, k) = match position {
             AttentionPosition::Standard { cos, sin } | AttentionPosition::Mrope { cos, sin } => {
                 let rotary_dtype = q.dtype();
@@ -83,7 +77,6 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             num_kv_heads,
             head_dim,
             model_dtype,
-            use_fp32_attention,
             q,
             k,
             v,
@@ -100,7 +93,6 @@ impl<B: Backend> Qwen3TtsAttention<B> {
         num_kv_heads: usize,
         head_dim: usize,
         model_dtype: DType,
-        use_fp32_attention: bool,
         q: Tensor<B, 4>,
         k: Tensor<B, 4>,
         v: Tensor<B, 4>,
@@ -121,22 +113,9 @@ impl<B: Backend> Qwen3TtsAttention<B> {
             value_len,
             head_dim,
         ]);
-
         #[allow(clippy::cast_precision_loss)]
         let scaling = (head_dim as f32).sqrt().recip();
-        let attn_scores = q.matmul(k.swap_dims(2, 3)).mul_scalar(scaling);
-        let attn_scores = if let Some(mask) = mask {
-            attn_scores.mask_fill(mask.clone(), f32::NEG_INFINITY)
-        } else {
-            attn_scores
-        };
-        let attn_weights = softmax(attn_scores, 3);
-        let attn_output = attn_weights.matmul(v);
-        let attn_output = if use_fp32_attention {
-            attn_output.cast(model_dtype)
-        } else {
-            attn_output
-        };
+        let attn_output = apply_attention_kernel(q, k, v, mask, scaling, model_dtype);
 
         let attn_output = attn_output.swap_dims(1, 2);
         let attn_output = attn_output.reshape([batch_size, seq_len, num_heads * head_dim]);

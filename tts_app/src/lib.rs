@@ -113,6 +113,13 @@ impl QwenAppService {
             ref_text,
             x_vector_only,
         } = input;
+        if shared.max_new_tokens == Some(0) {
+            return Err(tts_error::DiagnosticError::invalid_argument(
+                "app.max_new_tokens_invalid",
+                "`max_new_tokens` must be greater than zero",
+            )
+            .into());
+        }
         let stage_summary = resolve_stage_summary(&shared);
         let package_source = package_source(&shared)?;
         let voice_clone = base_voice_clone_conditioning(ref_audio, ref_text, x_vector_only)?;
@@ -161,6 +168,13 @@ impl QwenAppService {
     pub fn prepare_custom_voice(
         input: CustomVoiceSynthesisInput,
     ) -> Result<PreparedSynthesis, AppError> {
+        if input.shared.max_new_tokens == Some(0) {
+            return Err(tts_error::DiagnosticError::invalid_argument(
+                "app.max_new_tokens_invalid",
+                "`max_new_tokens` must be greater than zero",
+            )
+            .into());
+        }
         let stage_summary = resolve_stage_summary(&input.shared);
         let output = input.shared.output.clone();
         Ok(PreparedSynthesis {

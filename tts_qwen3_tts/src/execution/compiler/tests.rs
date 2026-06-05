@@ -53,6 +53,38 @@ fn load_detects_model_kind_from_package_name() {
 }
 
 #[test]
+fn load_rejects_zero_max_new_tokens_in_generation_config() {
+    let temp = unique_temp_dir("compiler-invalid-generation-config");
+    write_generation_config_with_max_new_tokens(&temp.join("generation_config.json"), 0);
+    write_model_config(&temp.join("config.json"));
+    write_tokenizer_file(&temp.join("tokenizer.json"));
+
+    let error = Qwen3TtsRequestCompiler::load(&Qwen3TtsPackage {
+        package_root: temp.clone(),
+        name: "Qwen3-TTS-12Hz-0.6B-Base".to_string(),
+        tokenizer_path: temp.join("tokenizer.json"),
+        talker_config_path: temp.join("config.json"),
+        talker_weights_path: temp.join("weights/talker.safetensors"),
+        generation_config: Qwen3TtsGenerationConfigSource::Path(
+            temp.join("generation_config.json"),
+        ),
+        codec_config_path: temp.join("configs/codec.json"),
+        codec_weights_path: temp.join("weights/codec.safetensors"),
+    })
+    .expect_err("zero generation_config.max_new_tokens should be rejected during compiler load");
+
+    assert!(matches!(
+        error,
+        crate::Qwen3TtsLoadError::InvalidCompilerConfig { .. }
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("generation_config.max_new_tokens must be greater than zero")
+    );
+}
+
+#[test]
 fn compile_request_uses_base_prompt_and_auto_controls() {
     let compiler = base_compiler_fixture();
 
@@ -69,6 +101,7 @@ fn compile_request_uses_base_prompt_and_auto_controls() {
         condition.controls.codec_prefix_ids,
         vec![2051, 2052, 2053, 2049, 2048]
     );
+    assert_eq!(condition.max_new_tokens, 8192);
     assert_eq!(condition.codec_eos_token_id, 2150);
 }
 
@@ -286,6 +319,23 @@ fn write_generation_config(path: &Path) {
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(path, GENERATION_CONFIG_JSON).unwrap();
+}
+
+fn write_generation_config_with_max_new_tokens(path: &Path, max_new_tokens: usize) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let json = format!(
+        r#"{{
+  "do_sample": true,
+  "repetition_penalty": 1.05,
+  "temperature": 0.9,
+  "top_p": 1.0,
+  "top_k": 50,
+  "max_new_tokens": {max_new_tokens}
+}}"#
+    );
+    std::fs::write(path, json).unwrap();
 }
 
 fn write_model_config(path: &Path) {

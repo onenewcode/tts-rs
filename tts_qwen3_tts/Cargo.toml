@@ -21,7 +21,6 @@ rocm = ["burn/rocm"]
 metal = ["burn/metal"]
 vulkan = ["burn/vulkan"]
 webgpu = ["burn/webgpu"]
-operator-profiling = []
 
 [dependencies]
 anyhow = "1"

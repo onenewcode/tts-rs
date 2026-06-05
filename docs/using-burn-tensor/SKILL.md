@@ -14,6 +14,7 @@ Use this skill to keep Burn tensor code correct first, then fast.
 3. Group shape/view operations coherently so fusion remains possible.
 4. Prefer backend-friendly shapes when performance matters.
 5. Read back to host only at explicit boundaries such as tests, logging, serialization, or final output conversion.
+6. When a dtype conversion is semantically required at a tensor boundary, call `cast(...)` directly instead of guarding it with `if tensor.dtype() == ...`; let Burn optimize the no-op case.
 
 ## Read these references only when needed
 

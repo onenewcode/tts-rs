@@ -21,6 +21,46 @@ use crate::model::talker::weights::{LoadedQwen3TtsTalker, load_qwen3_tts_talker_
 )))]
 compile_error!("enable one backend feature for tts_qwen3_tts");
 
+#[cfg(any(
+    all(
+        feature = "flex",
+        any(
+            feature = "wgpu",
+            feature = "cuda",
+            feature = "rocm",
+            feature = "metal",
+            feature = "vulkan",
+            feature = "webgpu"
+        )
+    ),
+    all(
+        feature = "wgpu",
+        any(
+            feature = "cuda",
+            feature = "rocm",
+            feature = "metal",
+            feature = "vulkan",
+            feature = "webgpu"
+        )
+    ),
+    all(
+        feature = "cuda",
+        any(
+            feature = "rocm",
+            feature = "metal",
+            feature = "vulkan",
+            feature = "webgpu"
+        )
+    ),
+    all(
+        feature = "rocm",
+        any(feature = "metal", feature = "vulkan", feature = "webgpu")
+    ),
+    all(feature = "metal", any(feature = "vulkan", feature = "webgpu")),
+    all(feature = "vulkan", feature = "webgpu"),
+))]
+compile_error!("enable exactly one backend feature for tts_qwen3_tts");
+
 #[cfg(feature = "flex")]
 pub(crate) type RuntimeBackend = burn::backend::Flex;
 #[cfg(feature = "wgpu")]
@@ -80,7 +120,7 @@ where
                 &resolved.package.talker_config_path,
                 &resolved.package.talker_weights_path,
                 device,
-                None,
+                talker_dtype,
             )?),
         })
     } else {

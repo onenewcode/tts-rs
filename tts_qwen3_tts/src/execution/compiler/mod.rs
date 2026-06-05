@@ -251,12 +251,18 @@ fn load_control_config(path: &Path) -> Result<Qwen3TtsControlConfig, Qwen3TtsLoa
 fn load_generation_config(
     source: &Qwen3TtsGenerationConfigSource,
 ) -> Result<GenerationConfig, Qwen3TtsLoadError> {
-    match source {
+    let config = match source {
         Qwen3TtsGenerationConfigSource::Path(path) => load_json(path),
         Qwen3TtsGenerationConfigSource::Inline(config) => {
             Ok(GenerationConfig::from(config.clone()))
         }
+    }?;
+    if config.max_new_tokens == 0 {
+        return Err(Qwen3TtsLoadError::InvalidCompilerConfig {
+            message: "generation_config.max_new_tokens must be greater than zero".to_string(),
+        });
     }
+    Ok(config)
 }
 
 fn load_json<T>(path: &Path) -> Result<T, Qwen3TtsLoadError>

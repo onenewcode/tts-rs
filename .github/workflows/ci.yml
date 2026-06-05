@@ -58,6 +58,7 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -87,6 +88,6 @@ jobs:
           restore-keys: |
             test-${{ runner.os }}-
 
-      # Run the full workspace test suite for libraries, binaries, and integration tests.
+      # Run tests without executing model-backed benchmark binaries.
       - name: Run tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --lib --bins --tests

@@ -157,6 +157,11 @@ fn start_session_impl(
     request: QwenRequest,
     options: Qwen3TtsRunOptions,
 ) -> Result<SessionImpl, Qwen3TtsInferenceError> {
+    if options.max_new_tokens == Some(0) {
+        return Err(Qwen3TtsInferenceError::InvalidInput {
+            message: "run option max_new_tokens must be greater than zero".to_string(),
+        });
+    }
     let runtime = Arc::clone(runtime);
     let runtime_view = talker_runtime(runtime.as_ref())?;
     let condition = runtime_view.compiler.compile_request(&request)?;
@@ -182,6 +187,17 @@ fn start_session_impl(
         code_predictor_sampling: seed_code_predictor_sampling,
         suppress_token_ids,
     } = seed;
+    let effective_max_new_tokens = options.max_new_tokens.unwrap_or(max_new_tokens);
+    tracing::info!(
+        max_new_tokens = effective_max_new_tokens,
+        "starting talker generation"
+    );
+    if options.max_new_tokens.is_none() && effective_max_new_tokens >= 4096 {
+        tracing::warn!(
+            max_new_tokens = effective_max_new_tokens,
+            "using a large generation_config max_new_tokens; pass --max-new-tokens to cap CLI synthesis latency"
+        );
+    }
     let run = TalkerGenerator::start(
         &runtime_view.talker.config,
         runtime_view.talker,
@@ -199,7 +215,7 @@ fn start_session_impl(
                 options.code_predictor_sampling.as_ref(),
                 &seed_code_predictor_sampling,
             ),
-            max_new_tokens: options.max_new_tokens.unwrap_or(max_new_tokens),
+            max_new_tokens: effective_max_new_tokens,
             eos_token_id: Some(codec_eos_token_id),
             suppress_token_ids,
         },

@@ -1,14 +1,15 @@
 use burn::module::{Module, Param};
 use burn::nn::conv::Conv1d;
 use burn::nn::{Linear, RmsNorm, RotaryEncoding};
-use burn::tensor::activation::{silu, softmax};
+use burn::tensor::activation::silu;
 use burn::tensor::backend::Backend;
-use burn::tensor::{DType, Int, Tensor};
+use burn::tensor::{Int, Tensor};
 
 use super::activation::AudioCodecLayerScale;
 use super::codebook::{gather_codebook_embeddings, normalized_codebook_centroids};
 use super::conv::AudioCodecCausalConv1d;
 use super::wave::{Qwen3TtsAudioCodecConvNeXtBlock, Qwen3TtsAudioCodecWaveDecoderEntry};
+use crate::model::nn::attention::apply_attention_kernel;
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecDecoder<B: Backend> {
@@ -75,7 +76,7 @@ pub struct Qwen3TtsAudioCodecDecoderResidualVectorQuantization<B: Backend> {
 
 #[derive(Module, Debug)]
 pub struct Qwen3TtsAudioCodecDecoderVectorQuantization<B: Backend> {
-    pub _codebook: Qwen3TtsAudioCodecDecoderCodebook<B>,
+    pub codebook: Qwen3TtsAudioCodecDecoderCodebook<B>,
 }
 
 #[derive(Module, Debug)]
@@ -105,6 +106,7 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
         mask: Option<&Tensor<B, 4, burn::tensor::Bool>>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _hidden_size] = hidden.dims();
+        let model_dtype = hidden.dtype();
 
         let query = self
             .q_proj
@@ -121,8 +123,9 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
             .forward(hidden)
             .reshape([batch_size, seq_len, num_kv_heads, head_dim])
             .swap_dims(1, 2);
-        let query = rope.apply(query, 0);
-        let key = rope.apply(key, 0);
+        let rope_dtype = rope.theta.dtype();
+        let query = rope.apply(query.dequantize().cast(rope_dtype), 0);
+        let key = rope.apply(key.dequantize().cast(rope_dtype), 0);
         let repetitions = num_heads / num_kv_heads;
         let key = key
             .unsqueeze_dim::<5>(2)
@@ -132,23 +135,9 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderAttention<B> {
             .unsqueeze_dim::<5>(2)
             .repeat_dim(2, repetitions)
             .reshape([batch_size, num_kv_heads * repetitions, seq_len, head_dim]);
-
-        let attention_scores = query
-            .matmul(key.swap_dims(2, 3))
-            .div_scalar((head_dim as f32).sqrt())
-            .dequantize();
-        let attention_scores = if let Some(mask) = mask {
-            attention_scores.mask_fill(mask.clone(), f32::NEG_INFINITY)
-        } else {
-            attention_scores
-        };
-        let attention_dtype = attention_scores.dtype();
-        let attention_weights = if attention_dtype.size() < DType::F32.size() {
-            softmax(attention_scores.cast(DType::F32), 3).cast(attention_dtype)
-        } else {
-            softmax(attention_scores, 3)
-        };
-        let attention_output = attention_weights.matmul(value);
+        #[allow(clippy::cast_precision_loss)]
+        let scale = (head_dim as f32).sqrt().recip();
+        let attention_output = apply_attention_kernel(query, key, value, mask, scale, model_dtype);
         let output =
             attention_output
                 .swap_dims(1, 2)
@@ -212,19 +201,13 @@ impl<B: Backend> Qwen3TtsAudioCodecDecoderCodebook<B> {
     }
 }
 
-impl<B: Backend> Qwen3TtsAudioCodecDecoderVectorQuantization<B> {
-    pub fn forward(&self, token_ids: Tensor<B, 2, Int>) -> Tensor<B, 3> {
-        self._codebook.forward(token_ids)
-    }
-}
-
 impl<B: Backend> Qwen3TtsAudioCodecDecoderResidualVectorQuantization<B> {
     pub fn forward(&self, token_ids: Vec<Tensor<B, 2, Int>>) -> Tensor<B, 3> {
         let mut embeddings = self
             .layers
             .iter()
             .zip(token_ids)
-            .map(|(layer, token_ids)| layer.forward(token_ids));
+            .map(|(layer, token_ids)| layer.codebook.forward(token_ids));
         let first = embeddings
             .next()
             .expect("residual vector quantization requires at least one layer");

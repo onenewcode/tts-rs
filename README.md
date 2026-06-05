@@ -54,7 +54,6 @@ cargo run --release -p tts_cli -- synthesize base \
   --language English \
   --ref-audio ./out/base_reference_custom_voice.wav \
   --ref-text "Hello from the generated reference clip." \
-  --backend flex \
   --output ./out/base_clone_icl_release.wav
 ```
 
@@ -67,7 +66,6 @@ cargo run --release -p tts_cli -- synthesize base \
   --language English \
   --ref-audio ./out/base_reference_custom_voice.wav \
   --x-vector-only \
-  --backend flex \
   --output ./out/base_clone_xvector_release.wav
 ```
 
@@ -79,7 +77,6 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --text "你好，欢迎使用 tts-rs。" \
   --language Chinese \
   --speaker Vivian \
-  --backend flex \
   --output ./out/custom-voice.wav
 ```
 
@@ -92,7 +89,6 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --language Chinese \
   --speaker Vivian \
   --instruct "用特别愤怒的语气说" \
-  --backend flex \
   --output ./out/custom-voice-instruct.wav
 ```
 
@@ -109,9 +105,14 @@ Notes:
   not accept `--ref-text`
 - language names are matched case-insensitively against the model metadata, so
   `Chinese` and `chinese` both work
-- `--backend flex` is the recommended local default in this repository
-- `--max-new-tokens` is optional; when omitted, the CLI uses the model package
+- the default workspace build already enables the `flex` backend; alternate
+  backends are selected at build time with Cargo features, not a CLI flag
+- `--max-new-tokens` is optional and must be greater than zero; it caps the
+  talker generation loop during inference
+- when `--max-new-tokens` is omitted, the CLI uses the model package
   `generation_config.max_new_tokens` instead of applying a hard-coded CLI cap
+- some shipped Qwen3 package defaults are intentionally large; pass a smaller
+  `--max-new-tokens` when you want a tighter CLI latency bound
 
 ## Expected Model Layout
 
@@ -233,7 +234,6 @@ cargo run --release -p tts_cli -- synthesize base \
   --manifest ./path/to/qwen3_tts_package.yaml \
   --text "Hello from a custom layout." \
   --language English \
-  --backend flex \
   --output ./out/base.wav
 ```
 

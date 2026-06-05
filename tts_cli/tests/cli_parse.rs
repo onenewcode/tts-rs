@@ -86,6 +86,8 @@ fn package_first_subcommand_parses_runtime_dtype() {
         "hello",
         "--speaker",
         "Vivian",
+        "--max-new-tokens",
+        "4",
         "--talker-dtype",
         "f16",
         "--codec-dtype",
@@ -96,6 +98,7 @@ fn package_first_subcommand_parses_runtime_dtype() {
     .expect("runtime dtype should parse");
 
     let debug = format!("{args:?}");
+    assert!(debug.contains("max_new_tokens: Some(4)"));
     assert!(debug.contains("F16"));
     assert!(debug.contains("BF16"));
 }
@@ -118,4 +121,27 @@ fn global_log_level_uses_tracing_level_directly() {
     .expect("global tracing log level should parse");
 
     assert_eq!(args.log_level, tracing::Level::DEBUG);
+}
+
+#[test]
+fn package_first_subcommand_rejects_zero_max_new_tokens() {
+    let error = Args::try_parse_from([
+        "tts_cli",
+        "synthesize",
+        "custom-voice",
+        "--manifest",
+        "./custom/package.yaml",
+        "--text",
+        "hello",
+        "--speaker",
+        "Vivian",
+        "--max-new-tokens",
+        "0",
+        "--output",
+        "out.wav",
+    ])
+    .expect_err("zero max_new_tokens should be rejected at CLI parse time");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("--max-new-tokens must be greater than zero"));
 }

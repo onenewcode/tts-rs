@@ -131,7 +131,7 @@ cargo run --release -p tts_cli -- synthesize base \
   --model-dir ./Qwen/Qwen3-TTS-12Hz-0.6B-Base \
   --text "Hello from the Base voice clone ICL smoke path." \
   --language English \
-  --ref-audio ./out/base_reference_custom_voice.wav \
+  --ref-audio ./out/custom-voice-flex-smoke.wav \
   --ref-text "Hello from the generated reference clip." \
   --output ./out/base_clone_icl_release.wav
 ```

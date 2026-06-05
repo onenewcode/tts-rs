@@ -5,7 +5,7 @@
 
 use burn::tensor::activation::softmax;
 use burn::tensor::backend::Backend;
-use burn::tensor::{Bool, DType, IndexingUpdateOp, Int, Tensor};
+use burn::tensor::{Bool, IndexingUpdateOp, Int, Tensor};
 
 use super::select_last_sequence_step;
 
@@ -61,7 +61,9 @@ fn sample_token_from_logits<B: Backend>(
         return logits_2d.argmax(1);
     }
 
-    logits_2d = logits_2d.dequantize().cast(DType::F32);
+    let device = logits_2d.device();
+    let stable_dtype = Tensor::<B, 1>::zeros([1], &device).dtype();
+    logits_2d = logits_2d.dequantize().cast(stable_dtype);
     let [batch_size, vocab_size] = logits_2d.dims();
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
 
@@ -155,7 +157,7 @@ pub(crate) fn repetition_penalty_enabled(penalty: Option<f32>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use burn::tensor::Tensor;
+    use burn::tensor::{DType, Tensor};
 
     use super::{SamplingConfig, repetition_penalty_enabled, sample_token};
     use crate::loading::runtime::RuntimeBackend;
@@ -185,5 +187,34 @@ mod tests {
         assert!(!repetition_penalty_enabled(Some(0.0)));
         assert!(!repetition_penalty_enabled(Some(f32::NAN)));
         assert!(repetition_penalty_enabled(Some(1.2)));
+    }
+
+    #[test]
+    fn sampling_path_accepts_all_runtime_float_dtypes() {
+        let device = Default::default();
+        let sampling = SamplingConfig {
+            do_sample: true,
+            temperature: 0.7,
+            top_k: Some(1),
+            top_p: 0.8,
+            repetition_penalty: None,
+        };
+
+        for dtype in [DType::F16, DType::BF16, DType::F32] {
+            let logits =
+                Tensor::<RuntimeBackend, 1>::from_floats([0.0, 1.0, 2.0, 9.0].as_slice(), &device)
+                    .reshape([1, 1, 4])
+                    .cast(dtype);
+
+            let selected = sample_token(logits, &sampling, &[]);
+            let values = selected
+                .try_into_data()
+                .expect("selected token should be readable")
+                .convert::<i64>()
+                .into_vec::<i64>()
+                .expect("selected token should convert to vec");
+
+            assert_eq!(values, vec![3]);
+        }
     }
 }

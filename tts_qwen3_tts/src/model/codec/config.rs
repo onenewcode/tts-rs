@@ -2,16 +2,15 @@ use std::path::Path;
 
 use burn::config::Config;
 use burn::module::Initializer;
-use burn::nn::conv::Conv1dConfig;
-use burn::nn::{LayerNormConfig, LinearConfig, PaddingConfig1d, RmsNormConfig};
+use burn::nn::conv::{Conv1dConfig, ConvTranspose1dConfig};
+use burn::nn::{LayerNormConfig, LinearConfig, RmsNormConfig};
 use burn::tensor::backend::Backend;
+use burn::tensor::ops::PadMode;
 
 use crate::Qwen3TtsLoadError;
 use crate::model::codec::network::Qwen3TtsAudioCodec;
 use crate::model::codec::network::activation::{AudioCodecLayerScale, AudioCodecSnakeBeta};
-use crate::model::codec::network::conv::{
-    AudioCodecCausalConv1d, AudioCodecCausalTransConv1d, ConvPadMode,
-};
+use crate::model::codec::network::conv::{AudioCodecCausalConv1d, AudioCodecCausalTransConv1d};
 use crate::model::codec::network::decoder::{
     Qwen3TtsAudioCodecDecoder, Qwen3TtsAudioCodecDecoderAttention,
     Qwen3TtsAudioCodecDecoderCodebook, Qwen3TtsAudioCodecDecoderMlp,
@@ -155,17 +154,17 @@ impl Qwen3TtsAudioCodecConfig {
         Qwen3TtsAudioCodecEncoder {
             encoder: self.encoder_config.init_backbone::<B>(device),
             encoder_transformer: self.encoder_config.init_transformer::<B>(device),
-            downsample: AudioCodecCausalConv1d::<B>::new(
-                self.encoder_config.hidden_size,
-                self.encoder_config.hidden_size,
-                downsample_kernel,
-                2,
-                1,
-                1,
-                false,
-                ConvPadMode::Replicate,
-                device,
-            ),
+            downsample: AudioCodecCausalConv1d {
+                conv: Conv1dConfig::new(
+                    self.encoder_config.hidden_size,
+                    self.encoder_config.hidden_size,
+                    downsample_kernel,
+                )
+                .with_stride(2)
+                .with_bias(false)
+                .init(device),
+                pad_mode: PadMode::Edge,
+            },
             quantizer: self.encoder_config.init_quantizer::<B>(device),
         }
     }
@@ -182,7 +181,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                 conv: Conv1dConfig::new(self.audio_channels, self.num_filters, self.kernel_size)
                     .with_bias(true)
                     .init(device),
-                pad_mode: ConvPadMode::Constant,
+                pad_mode: PadMode::Constant(0.0),
             },
         ));
 
@@ -192,28 +191,15 @@ impl Qwen3TtsAudioCodecEncoderConfig {
             let hidden = current_scale / self.compress;
             layers.push(Qwen3TtsAudioCodecEncoderBackboneLayer::Resnet(
                 Qwen3TtsAudioCodecEncoderResnetLayer {
-                    conv_in: AudioCodecCausalConv1d::<B>::new(
-                        current_scale,
-                        hidden,
-                        self.residual_kernel_size,
-                        1,
-                        1,
-                        1,
-                        true,
-                        ConvPadMode::Constant,
-                        device,
-                    ),
-                    conv_out: AudioCodecCausalConv1d::<B>::new(
-                        hidden,
-                        current_scale,
-                        1,
-                        1,
-                        1,
-                        1,
-                        true,
-                        ConvPadMode::Constant,
-                        device,
-                    ),
+                    conv_in: AudioCodecCausalConv1d {
+                        conv: Conv1dConfig::new(current_scale, hidden, self.residual_kernel_size)
+                            .init(device),
+                        pad_mode: PadMode::Constant(0.0),
+                    },
+                    conv_out: AudioCodecCausalConv1d {
+                        conv: Conv1dConfig::new(hidden, current_scale, 1).init(device),
+                        pad_mode: PadMode::Constant(0.0),
+                    },
                 },
             ));
 
@@ -226,7 +212,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                         .with_stride(ratio)
                         .with_bias(true)
                         .init(device),
-                    pad_mode: ConvPadMode::Constant,
+                    pad_mode: PadMode::Constant(0.0),
                 },
             ));
             scaling *= 2;
@@ -244,7 +230,7 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                 )
                 .with_bias(true)
                 .init(device),
-                pad_mode: ConvPadMode::Constant,
+                pad_mode: PadMode::Constant(0.0),
             },
         ));
 
@@ -368,8 +354,8 @@ impl Qwen3TtsAudioCodecDecoderConfig {
             Qwen3TtsAudioCodecWaveDecoderConvEntry {
                 conv: Conv1dConfig::new(self.latent_dim, self.decoder_dim, 7)
                     .with_bias(true)
-                    .with_padding(PaddingConfig1d::Explicit(6, 0))
                     .init(device),
+                pad_mode: PadMode::Constant(0.0),
             },
         ));
 
@@ -385,51 +371,38 @@ impl Qwen3TtsAudioCodecDecoderConfig {
             Qwen3TtsAudioCodecWaveDecoderConvEntry {
                 conv: Conv1dConfig::new(output_dim, 1, 7)
                     .with_bias(true)
-                    .with_padding(PaddingConfig1d::Explicit(6, 0))
                     .init(device),
+                pad_mode: PadMode::Constant(0.0),
             },
         ));
 
         Qwen3TtsAudioCodecDecoder {
             pre_transformer: self.init_pre_transformer(device),
             quantizer: self.init_quantizer(device),
-            pre_conv: AudioCodecCausalConv1d::<B>::new(
-                self.codebook_dim,
-                self.latent_dim,
-                3,
-                1,
-                1,
-                1,
-                true,
-                ConvPadMode::Constant,
-                device,
-            ),
+            pre_conv: AudioCodecCausalConv1d {
+                conv: Conv1dConfig::new(self.codebook_dim, self.latent_dim, 3).init(device),
+                pad_mode: PadMode::Constant(0.0),
+            },
             upsample: self
                 .upsampling_ratios
                 .iter()
                 .map(|&ratio| {
                     (
-                        AudioCodecCausalTransConv1d::<B>::new(
-                            self.latent_dim,
-                            self.latent_dim,
-                            ratio,
-                            ratio,
-                            1,
-                            true,
-                            device,
-                        ),
+                        AudioCodecCausalTransConv1d {
+                            conv: ConvTranspose1dConfig::new(
+                                [self.latent_dim, self.latent_dim],
+                                ratio,
+                            )
+                            .with_stride(ratio)
+                            .init(device),
+                        },
                         Qwen3TtsAudioCodecConvNeXtBlock {
-                            dwconv: AudioCodecCausalConv1d::<B>::new(
-                                self.latent_dim,
-                                self.latent_dim,
-                                7,
-                                1,
-                                1,
-                                self.latent_dim,
-                                true,
-                                ConvPadMode::Constant,
-                                device,
-                            ),
+                            dwconv: AudioCodecCausalConv1d {
+                                conv: Conv1dConfig::new(self.latent_dim, self.latent_dim, 7)
+                                    .with_groups(self.latent_dim)
+                                    .init(device),
+                                pad_mode: PadMode::Constant(0.0),
+                            },
                             norm: LayerNormConfig::new(self.latent_dim)
                                 .with_epsilon(1e-6)
                                 .with_bias(true)
@@ -531,7 +504,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
                     .init(device),
                 vq: Qwen3TtsAudioCodecDecoderResidualVectorQuantization {
                     layers: vec![Qwen3TtsAudioCodecDecoderVectorQuantization {
-                        _codebook: Qwen3TtsAudioCodecDecoderCodebook::new(
+                        codebook: Qwen3TtsAudioCodecDecoderCodebook::new(
                             self.codebook_size,
                             hidden,
                             device,
@@ -551,7 +524,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
                         .num_quantizers
                         .saturating_sub(self.num_semantic_quantizers))
                         .map(|_| Qwen3TtsAudioCodecDecoderVectorQuantization {
-                            _codebook: Qwen3TtsAudioCodecDecoderCodebook::new(
+                            codebook: Qwen3TtsAudioCodecDecoderCodebook::new(
                                 self.codebook_size,
                                 hidden,
                                 device,
@@ -576,15 +549,11 @@ impl Qwen3TtsAudioCodecDecoderConfig {
             Qwen3TtsAudioCodecWaveDecoderUpsampleStage {
                 block: (
                     AudioCodecSnakeBeta::<B>::new(in_dim, device),
-                    AudioCodecCausalTransConv1d::<B>::new(
-                        in_dim,
-                        out_dim,
-                        upsample_rate * 2,
-                        upsample_rate,
-                        1,
-                        true,
-                        device,
-                    ),
+                    AudioCodecCausalTransConv1d {
+                        conv: ConvTranspose1dConfig::new([in_dim, out_dim], upsample_rate * 2)
+                            .with_stride(upsample_rate)
+                            .init(device),
+                    },
                     self.init_wave_decoder_residual_unit(out_dim, 1, device),
                     self.init_wave_decoder_residual_unit(out_dim, 3, device),
                     self.init_wave_decoder_residual_unit(out_dim, 9, device),
@@ -601,29 +570,17 @@ impl Qwen3TtsAudioCodecDecoderConfig {
     ) -> Qwen3TtsAudioCodecWaveDecoderResidualUnit<B> {
         Qwen3TtsAudioCodecWaveDecoderResidualUnit {
             act1: AudioCodecSnakeBeta::<B>::new(channels, device),
-            conv1: AudioCodecCausalConv1d::<B>::new(
-                channels,
-                channels,
-                7,
-                1,
-                dilation,
-                1,
-                true,
-                ConvPadMode::Constant,
-                device,
-            ),
+            conv1: AudioCodecCausalConv1d {
+                conv: Conv1dConfig::new(channels, channels, 7)
+                    .with_dilation(dilation)
+                    .init(device),
+                pad_mode: PadMode::Constant(0.0),
+            },
             act2: AudioCodecSnakeBeta::<B>::new(channels, device),
-            conv2: AudioCodecCausalConv1d::<B>::new(
-                channels,
-                channels,
-                1,
-                1,
-                1,
-                1,
-                true,
-                ConvPadMode::Constant,
-                device,
-            ),
+            conv2: AudioCodecCausalConv1d {
+                conv: Conv1dConfig::new(channels, channels, 1).init(device),
+                pad_mode: PadMode::Constant(0.0),
+            },
         }
     }
 }
