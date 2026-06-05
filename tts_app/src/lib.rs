@@ -21,8 +21,10 @@ pub struct SharedSynthesisInput {
     pub language: String,
     pub output: PathBuf,
     pub max_new_tokens: Option<usize>,
-    pub sampling: Option<SamplingOverride>,
-    pub dtype: Option<FloatDType>,
+    pub talker_sampling: Option<SamplingOverride>,
+    pub code_predictor_sampling: Option<SamplingOverride>,
+    pub talker_dtype: Option<FloatDType>,
+    pub codec_dtype: Option<FloatDType>,
     pub profiling: bool,
     pub profiling_per_step: bool,
     pub profiling_stage_summary: bool,
@@ -52,7 +54,8 @@ pub struct PreparedSynthesis {
     pub output: PathBuf,
     pub profiling: Qwen3TtsProfilingConfig,
     pub run_options: Qwen3TtsRunOptions,
-    pub dtype: Option<FloatDType>,
+    pub talker_dtype: Option<FloatDType>,
+    pub codec_dtype: Option<FloatDType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,8 +121,10 @@ impl QwenAppService {
             language,
             output,
             max_new_tokens,
-            sampling,
-            dtype,
+            talker_sampling,
+            code_predictor_sampling,
+            talker_dtype,
+            codec_dtype,
             profiling,
             profiling_per_step,
             profiling_log_topk,
@@ -139,7 +144,8 @@ impl QwenAppService {
         };
         let run_options = Qwen3TtsRunOptions {
             max_new_tokens,
-            sampling,
+            talker_sampling,
+            code_predictor_sampling,
         };
         Ok(PreparedSynthesis {
             package_source,
@@ -147,7 +153,8 @@ impl QwenAppService {
             output,
             profiling,
             run_options,
-            dtype,
+            talker_dtype,
+            codec_dtype,
         })
     }
 
@@ -173,9 +180,11 @@ impl QwenAppService {
             },
             run_options: Qwen3TtsRunOptions {
                 max_new_tokens: input.shared.max_new_tokens,
-                sampling: input.shared.sampling,
+                talker_sampling: input.shared.talker_sampling,
+                code_predictor_sampling: input.shared.code_predictor_sampling,
             },
-            dtype: input.shared.dtype,
+            talker_dtype: input.shared.talker_dtype,
+            codec_dtype: input.shared.codec_dtype,
         })
     }
 
@@ -189,7 +198,8 @@ impl QwenAppService {
             output,
             profiling,
             run_options,
-            dtype,
+            talker_dtype,
+            codec_dtype,
         } = prepared;
 
         if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
@@ -201,7 +211,8 @@ impl QwenAppService {
             Qwen3TtsEngineConfig {
                 package: package_source,
                 profiling,
-                dtype,
+                talker_dtype,
+                codec_dtype,
             },
         )?;
 

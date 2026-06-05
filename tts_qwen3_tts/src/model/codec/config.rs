@@ -51,7 +51,7 @@ pub struct Qwen3TtsAudioCodecConfig {
 #[derive(Config, Debug)]
 pub struct Qwen3TtsAudioCodecDecoderConfig {
     pub attention_bias: bool,
-    pub attention_dropout: f64,
+    pub attention_dropout: f32,
     pub latent_dim: usize,
     pub codebook_dim: usize,
     pub codebook_size: usize,
@@ -59,7 +59,7 @@ pub struct Qwen3TtsAudioCodecDecoderConfig {
     pub hidden_act: String,
     pub hidden_size: usize,
     pub intermediate_size: usize,
-    pub layer_scale_initial_scale: f64,
+    pub layer_scale_initial_scale: f32,
     pub max_position_embeddings: usize,
     pub head_dim: usize,
     pub num_attention_heads: usize,
@@ -67,7 +67,7 @@ pub struct Qwen3TtsAudioCodecDecoderConfig {
     pub num_key_value_heads: usize,
     pub num_quantizers: usize,
     pub num_semantic_quantizers: usize,
-    pub rms_norm_eps: f64,
+    pub rms_norm_eps: f32,
     pub rope_theta: f32,
     pub semantic_codebook_size: usize,
     pub sliding_window: usize,
@@ -78,9 +78,9 @@ pub struct Qwen3TtsAudioCodecDecoderConfig {
 
 #[derive(Config, Debug)]
 pub struct Qwen3TtsAudioCodecEncoderConfig {
-    pub _frame_rate: f64,
+    pub _frame_rate: f32,
     pub attention_bias: bool,
-    pub attention_dropout: f64,
+    pub attention_dropout: f32,
     pub audio_channels: usize,
     pub codebook_dim: usize,
     pub codebook_size: usize,
@@ -90,13 +90,13 @@ pub struct Qwen3TtsAudioCodecEncoderConfig {
     pub head_dim: usize,
     pub hidden_act: String,
     pub hidden_size: usize,
-    pub initializer_range: f64,
+    pub initializer_range: f32,
     pub intermediate_size: usize,
     pub kernel_size: usize,
     pub last_kernel_size: usize,
-    pub layer_scale_initial_scale: f64,
+    pub layer_scale_initial_scale: f32,
     pub max_position_embeddings: usize,
-    pub norm_eps: f64,
+    pub norm_eps: f32,
     pub normalize: bool,
     pub num_attention_heads: usize,
     pub num_filters: usize,
@@ -111,7 +111,7 @@ pub struct Qwen3TtsAudioCodecEncoderConfig {
     pub sampling_rate: usize,
     pub sliding_window: usize,
     pub transformers_version: String,
-    pub trim_right_ratio: f64,
+    pub trim_right_ratio: f32,
     pub upsample_groups: usize,
     pub upsampling_ratios: Vec<usize>,
     pub use_cache: bool,
@@ -136,8 +136,8 @@ impl Qwen3TtsAudioCodecConfig {
 
     fn init_encoder<B: Backend>(&self, device: &B::Device) -> Qwen3TtsAudioCodecEncoder<B> {
         let computed_frame_rate =
-            self.input_sample_rate as f64 / self.encode_downsample_rate as f64;
-        debug_assert!((computed_frame_rate - self.encoder_config._frame_rate).abs() < 1e-6);
+            self.input_sample_rate as f32 / self.encode_downsample_rate as f32;
+        debug_assert!((computed_frame_rate - self.encoder_config._frame_rate).abs() < 1e-6_f32);
         let upsample_product = self
             .encoder_config
             .upsampling_ratios
@@ -284,11 +284,11 @@ impl Qwen3TtsAudioCodecEncoderConfig {
                             .init(device),
                     },
                     input_layernorm: LayerNormConfig::new(self.hidden_size)
-                        .with_epsilon(self.norm_eps)
+                        .with_epsilon(self.norm_eps.into())
                         .with_bias(true)
                         .init(device),
                     post_attention_layernorm: LayerNormConfig::new(self.hidden_size)
-                        .with_epsilon(self.norm_eps)
+                        .with_epsilon(self.norm_eps.into())
                         .with_bias(true)
                         .init(device),
                     self_attn_layer_scale: AudioCodecLayerScale::new(
@@ -486,10 +486,10 @@ impl Qwen3TtsAudioCodecDecoderConfig {
                             .init(device),
                     },
                     input_layernorm: RmsNormConfig::new(self.hidden_size)
-                        .with_epsilon(self.rms_norm_eps)
+                        .with_epsilon(self.rms_norm_eps.into())
                         .init(device),
                     post_attention_layernorm: RmsNormConfig::new(self.hidden_size)
-                        .with_epsilon(self.rms_norm_eps)
+                        .with_epsilon(self.rms_norm_eps.into())
                         .init(device),
                     self_attn_layer_scale: AudioCodecLayerScale::new(
                         self.hidden_size,
@@ -504,7 +504,7 @@ impl Qwen3TtsAudioCodecDecoderConfig {
                 })
                 .collect(),
             norm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
             input_proj: LinearConfig::new(self.latent_dim, self.hidden_size)
                 .with_bias(true)

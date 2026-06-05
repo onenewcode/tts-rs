@@ -2,7 +2,6 @@ pub(crate) mod load_adapter;
 pub(crate) mod package;
 pub(crate) mod runtime;
 
-use burn::tensor::backend::{Backend, DeviceError, get_device_settings, set_default_float_dtype};
 use burn::tensor::{DType, FloatDType};
 
 use crate::capabilities::project_capabilities;
@@ -25,17 +24,28 @@ pub(crate) fn load_instance(
     config: &Qwen3TtsEngineConfig,
 ) -> Result<Qwen3LoadedModelInstance, Qwen3TtsLoadError> {
     let resolved = resolve_package(&config.package)?;
-    let requested_dtype = config.dtype.unwrap_or(FloatDType::BF16);
-    if !matches!(requested_dtype, FloatDType::F32 | FloatDType::BF16) {
-        return Err(Qwen3TtsLoadError::UnsupportedDType {
-            requested: DType::from(requested_dtype).name().to_string(),
-        });
-    }
+    validate_runtime_dtype(config.talker_dtype)?;
+    validate_runtime_dtype(config.codec_dtype)?;
     let device = Default::default();
-    let tensor_dtype = DType::from(requested_dtype);
-    initialize_device_dtype::<RuntimeBackend>(&device, requested_dtype)?;
-    let runtime = build_runtime::<RuntimeBackend>(&resolved, tensor_dtype, &device)?;
-    tracing::info!(dtype = %tensor_dtype.name(), "assembled qwen3 runtime");
+    let runtime = build_runtime::<RuntimeBackend>(
+        &resolved,
+        config.talker_dtype.map(DType::from),
+        config.codec_dtype.map(DType::from),
+        &device,
+    )?;
+    tracing::info!(
+        talker_dtype = %config
+            .talker_dtype
+            .map(DType::from)
+            .map(|dtype| dtype.name())
+            .unwrap_or("original"),
+        codec_dtype = %config
+            .codec_dtype
+            .map(DType::from)
+            .map(|dtype| dtype.name())
+            .unwrap_or("original"),
+        "assembled qwen3 runtime"
+    );
     let model = Qwen3TtsLoadedModel::new(runtime);
     let capabilities = project_capabilities(&resolved);
     Ok(Qwen3LoadedModelInstance::new(
@@ -67,20 +77,14 @@ fn resolve_package(source: &Qwen3TtsPackageSource) -> Result<ResolvedPackage, Qw
     })
 }
 
-pub(crate) fn initialize_device_dtype<B: Backend>(
-    device: &B::Device,
-    model_dtype: FloatDType,
-) -> Result<(), Qwen3TtsLoadError> {
-    match set_default_float_dtype::<B>(device, model_dtype) {
-        Ok(()) => Ok(()),
-        Err(DeviceError::AlreadyInitialized { .. })
-            if get_device_settings::<B>(device).float_dtype == model_dtype =>
-        {
-            Ok(())
-        }
-        Err(source) => Err(Qwen3TtsLoadError::RuntimeDType {
-            requested: DType::from(model_dtype).name().to_string(),
-            message: source.to_string(),
-        }),
+fn validate_runtime_dtype(dtype: Option<FloatDType>) -> Result<(), Qwen3TtsLoadError> {
+    if let Some(dtype) = dtype
+        && !matches!(dtype, FloatDType::F16 | FloatDType::F32 | FloatDType::BF16)
+    {
+        return Err(Qwen3TtsLoadError::UnsupportedDType {
+            requested: DType::from(dtype).name().to_string(),
+        });
     }
+
+    Ok(())
 }

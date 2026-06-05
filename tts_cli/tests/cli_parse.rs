@@ -86,7 +86,9 @@ fn package_first_subcommand_parses_runtime_dtype() {
         "hello",
         "--speaker",
         "Vivian",
-        "--dtype",
+        "--talker-dtype",
+        "f16",
+        "--codec-dtype",
         "bf16",
         "--output",
         "out.wav",
@@ -94,5 +96,26 @@ fn package_first_subcommand_parses_runtime_dtype() {
     .expect("runtime dtype should parse");
 
     let debug = format!("{args:?}");
+    assert!(debug.contains("F16"));
     assert!(debug.contains("BF16"));
+}
+
+#[test]
+fn global_log_level_uses_tracing_level_directly() {
+    let args = Args::try_parse_from([
+        "tts_cli",
+        "--log-level",
+        "debug",
+        "synthesize",
+        "base",
+        "--model-dir",
+        "./Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        "--text",
+        "hello",
+        "--output",
+        "out.wav",
+    ])
+    .expect("global tracing log level should parse");
+
+    assert_eq!(args.log_level, tracing::Level::DEBUG);
 }

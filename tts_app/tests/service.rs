@@ -17,8 +17,10 @@ fn base_request_requires_ref_text_when_reference_audio_is_not_x_vector_only() {
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
-            sampling: None,
-            dtype: Some(FloatDType::BF16),
+            talker_sampling: None,
+            code_predictor_sampling: None,
+            talker_dtype: Some(FloatDType::BF16),
+            codec_dtype: Some(FloatDType::F32),
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -44,8 +46,10 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
             language: "zh".to_string(),
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
-            sampling: None,
-            dtype: None,
+            talker_sampling: None,
+            code_predictor_sampling: None,
+            talker_dtype: None,
+            codec_dtype: None,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -62,7 +66,8 @@ fn base_request_building_moves_shell_semantics_out_of_cli() {
         prepared.package_source,
         Qwen3TtsPackageSource::ManifestPath(_)
     ));
-    assert_eq!(prepared.dtype, None);
+    assert_eq!(prepared.talker_dtype, None);
+    assert_eq!(prepared.codec_dtype, None);
     match prepared.request {
         QwenRequest::Base(request) => {
             assert_eq!(request.language, LanguageSelection::Named("zh".to_string()));
@@ -85,8 +90,10 @@ fn custom_voice_request_building_preserves_driver_specific_fields() {
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
             max_new_tokens: None,
-            sampling: None,
-            dtype: None,
+            talker_sampling: None,
+            code_predictor_sampling: None,
+            talker_dtype: None,
+            codec_dtype: None,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,

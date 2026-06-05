@@ -48,14 +48,6 @@ pub fn sample_token<B: Backend>(
     sample_token_from_logits(logits_2d, sampling, suppress_mask.as_ref())
 }
 
-pub(super) fn sample_token_with_suppress_mask<B: Backend>(
-    logits: Tensor<B, 3>,
-    sampling: &SamplingConfig,
-    suppress_mask: Option<&Tensor<B, 2, Bool>>,
-) -> Tensor<B, 2, Int> {
-    sample_token_from_logits(prepare_last_step_logits(logits), sampling, suppress_mask)
-}
-
 fn sample_token_from_logits<B: Backend>(
     mut logits_2d: Tensor<B, 2>,
     sampling: &SamplingConfig,
@@ -69,11 +61,7 @@ fn sample_token_from_logits<B: Backend>(
         return logits_2d.argmax(1);
     }
 
-    logits_2d = logits_2d.dequantize();
-    let logits_dtype = logits_2d.dtype();
-    if logits_dtype.size() < DType::F32.size() {
-        logits_2d = logits_2d.cast(DType::F32);
-    }
+    logits_2d = logits_2d.dequantize().cast(DType::F32);
     let [batch_size, vocab_size] = logits_2d.dims();
     logits_2d = logits_2d.div_scalar(sampling.temperature.max(1e-5));
 
@@ -96,7 +84,7 @@ fn sample_token_from_logits<B: Backend>(
         logits_2d = logits_2d.mask_fill(orig_keep.bool_not(), f32::NEG_INFINITY);
     }
 
-    softmax(logits_2d, 1).cast(logits_dtype).categorical(1)
+    softmax(logits_2d, 1).categorical(1)
 }
 
 fn prepare_last_step_logits<B: Backend>(logits: Tensor<B, 3>) -> Tensor<B, 2> {
@@ -169,25 +157,17 @@ pub(crate) fn repetition_penalty_enabled(penalty: Option<f32>) -> bool {
 mod tests {
     use burn::tensor::Tensor;
 
-    use super::{
-        SamplingConfig, repetition_penalty_enabled, sample_token_with_suppress_mask,
-        suppress_token_mask,
-    };
+    use super::{SamplingConfig, repetition_penalty_enabled, sample_token};
     use crate::loading::runtime::RuntimeBackend;
 
     #[test]
-    fn sample_token_with_precomputed_suppress_mask_skips_masked_logits() {
+    fn sample_token_skips_masked_logits() {
         let device = Default::default();
         let logits =
             Tensor::<RuntimeBackend, 1>::from_floats([0.0, 1.0, 2.0, 9.0].as_slice(), &device)
                 .reshape([1, 1, 4]);
-        let suppress_mask = suppress_token_mask::<RuntimeBackend>(1, 4, &[3], &device);
 
-        let selected = sample_token_with_suppress_mask(
-            logits,
-            &SamplingConfig::default(),
-            suppress_mask.as_ref(),
-        );
+        let selected = sample_token(logits, &SamplingConfig::default(), &[3]);
         let values = selected
             .try_into_data()
             .expect("selected token should be readable")

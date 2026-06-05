@@ -39,7 +39,6 @@ pub(crate) type RuntimeBackend = burn::backend::WebGpu;
 #[derive(Debug)]
 pub(crate) struct CoreSynthesisRuntime<B: Backend> {
     pub(crate) device: B::Device,
-    pub(crate) tensor_dtype: DType,
     pub(crate) compiler: Qwen3TtsRequestCompiler,
     pub(crate) talker: LoadedQwen3TtsTalker<B>,
     pub(crate) decoder: LoadedQwen3TtsAudioCodec<B>,
@@ -57,7 +56,8 @@ pub(crate) enum LoadedRuntime<B: Backend> {
 
 pub(crate) fn build_runtime<B: Backend>(
     resolved: &ResolvedPackage,
-    tensor_dtype: DType,
+    talker_dtype: Option<DType>,
+    codec_dtype: Option<DType>,
     device: &B::Device,
 ) -> Result<LoadedRuntime<B>, Qwen3TtsLoadError>
 where
@@ -66,12 +66,13 @@ where
     if resolved.compiler.profiles.custom_voice.is_some() {
         return Ok(LoadedRuntime::CustomVoice(load_core_runtime::<B>(
             resolved,
-            tensor_dtype,
+            talker_dtype,
+            codec_dtype,
             device,
         )?));
     }
 
-    let core = load_core_runtime::<B>(resolved, tensor_dtype, device)?;
+    let core = load_core_runtime::<B>(resolved, talker_dtype, codec_dtype, device)?;
     if resolved.has_speaker_encoder {
         Ok(LoadedRuntime::BaseVoiceClone {
             core,
@@ -79,7 +80,7 @@ where
                 &resolved.package.talker_config_path,
                 &resolved.package.talker_weights_path,
                 device,
-                tensor_dtype,
+                None,
             )?),
         })
     } else {
@@ -89,7 +90,8 @@ where
 
 fn load_core_runtime<B: Backend>(
     resolved: &ResolvedPackage,
-    tensor_dtype: DType,
+    talker_dtype: Option<DType>,
+    codec_dtype: Option<DType>,
     device: &B::Device,
 ) -> Result<CoreSynthesisRuntime<B>, Qwen3TtsLoadError>
 where
@@ -97,19 +99,18 @@ where
 {
     Ok(CoreSynthesisRuntime {
         device: device.clone(),
-        tensor_dtype,
         compiler: resolved.compiler.clone(),
         talker: load_qwen3_tts_talker_for_inference::<B>(
             &resolved.package.talker_config_path,
             &resolved.package.talker_weights_path,
             device,
-            tensor_dtype,
+            talker_dtype,
         )?,
         decoder: load_qwen3_tts_audio_codec::<B>(
             &resolved.package.codec_config_path,
             &resolved.package.codec_weights_path,
             device,
-            tensor_dtype,
+            codec_dtype,
         )?,
     })
 }

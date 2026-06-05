@@ -60,11 +60,11 @@ impl<B: Backend> AudioCodecSnakeBeta<B> {
 }
 
 impl<B: Backend> AudioCodecLayerScale<B> {
-    pub(crate) fn new(channels: usize, initial_scale: f64, device: &B::Device) -> Self {
+    pub(crate) fn new(channels: usize, initial_scale: f32, device: &B::Device) -> Self {
         use burn::module::Initializer;
         Self {
             scale: Initializer::Constant {
-                value: initial_scale,
+                value: initial_scale.into(),
             }
             .init([channels], device),
         }

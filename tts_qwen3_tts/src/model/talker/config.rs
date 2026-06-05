@@ -29,7 +29,7 @@ pub struct Qwen3TtsTalkerConfig {
     pub head_dim: usize,
     #[config(default = 32768)]
     pub max_position_embeddings: usize,
-    pub rms_norm_eps: f64,
+    pub rms_norm_eps: f32,
     #[config(default = 1_000_000.0)]
     pub rope_theta: f32,
     #[config(default = "Qwen3TtsTalkerRopeScalingConfig::default()")]
@@ -53,7 +53,7 @@ pub struct Qwen3TtsTalkerCodePredictorConfig {
     pub head_dim: usize,
     #[config(default = 32768)]
     pub max_position_embeddings: usize,
-    pub rms_norm_eps: f64,
+    pub rms_norm_eps: f32,
     #[config(default = 10_000.0)]
     pub rope_theta: f32,
     pub attention_bias: bool,
@@ -137,7 +137,7 @@ impl Qwen3TtsTalkerConfig {
                 .map(|_| self.init_decoder_layer(device))
                 .collect(),
             norm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
             text_embedding: EmbeddingConfig::new(self.text_vocab_size, self.text_hidden_size)
                 .init(device),
@@ -149,10 +149,10 @@ impl Qwen3TtsTalkerConfig {
             self_attn: self.init_attention(device),
             mlp: self.init_mlp(device),
             input_layernorm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
             post_attention_layernorm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
         }
     }
@@ -175,10 +175,10 @@ impl Qwen3TtsTalkerConfig {
                 .with_bias(self.attention_bias)
                 .init(device),
             q_norm: RmsNormConfig::new(self.head_dim)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
             k_norm: RmsNormConfig::new(self.head_dim)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
         }
     }
@@ -259,7 +259,7 @@ impl Qwen3TtsTalkerCodePredictorConfig {
                 .map(|_| self.init_decoder_layer(device))
                 .collect(),
             norm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
         }
     }
@@ -283,10 +283,10 @@ impl Qwen3TtsTalkerCodePredictorConfig {
                     .with_bias(self.attention_bias)
                     .init(device),
                 q_norm: RmsNormConfig::new(self.head_dim)
-                    .with_epsilon(self.rms_norm_eps)
+                    .with_epsilon(self.rms_norm_eps.into())
                     .init(device),
                 k_norm: RmsNormConfig::new(self.head_dim)
-                    .with_epsilon(self.rms_norm_eps)
+                    .with_epsilon(self.rms_norm_eps.into())
                     .init(device),
             },
             mlp: Qwen3TtsTextMlp {
@@ -301,10 +301,10 @@ impl Qwen3TtsTalkerCodePredictorConfig {
                     .init(device),
             },
             input_layernorm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
             post_attention_layernorm: RmsNormConfig::new(self.hidden_size)
-                .with_epsilon(self.rms_norm_eps)
+                .with_epsilon(self.rms_norm_eps.into())
                 .init(device),
         }
     }

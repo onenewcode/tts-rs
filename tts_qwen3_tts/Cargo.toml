@@ -7,6 +7,10 @@ rust-version = "1.94"
 [lib]
 bench = false
 
+[[bench]]
+name = "qwen3_custom_voice_bf16"
+harness = false
+
 [features]
 default = ["flex", "fusion"]
 fusion = ["burn/fusion"]

@@ -25,7 +25,8 @@ pub const DRIVER_ID: &str = "qwen3_tts";
 pub struct Qwen3TtsEngineConfig {
     pub package: Qwen3TtsPackageSource,
     pub profiling: crate::Qwen3TtsProfilingConfig,
-    pub dtype: Option<FloatDType>,
+    pub talker_dtype: Option<FloatDType>,
+    pub codec_dtype: Option<FloatDType>,
 }
 
 pub type Qwen3TtsLoadOptions = Qwen3TtsEngineConfig;
@@ -33,7 +34,8 @@ pub type Qwen3TtsLoadOptions = Qwen3TtsEngineConfig;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Qwen3TtsRunOptions {
     pub max_new_tokens: Option<usize>,
-    pub sampling: Option<SamplingOverride>,
+    pub talker_sampling: Option<SamplingOverride>,
+    pub code_predictor_sampling: Option<SamplingOverride>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

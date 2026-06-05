@@ -113,7 +113,7 @@ These tests should not verify model internals or full synthesis semantics.
 ## CLI End-to-End Smoke Tests
 
 End-to-end verification should use the CLI in release mode against local model
-assets. A default custom-voice smoke path is:
+assets. A custom-voice flex smoke path is:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize custom-voice \
@@ -139,7 +139,7 @@ cargo run --release -p tts_cli -- synthesize base \
 These paths exercise CLI parsing, `tts_app` request preparation, model loading,
 generation, and WAV writing together.
 
-Runtime dtype conversion is selected with one CLI flag:
+Runtime dtype conversion is selected with separate talker and codec flags:
 
 ```bash
 cargo run --release -p tts_cli -- synthesize custom-voice \
@@ -147,15 +147,15 @@ cargo run --release -p tts_cli -- synthesize custom-voice \
   --text "你好，欢迎使用 tts-rs。" \
   --language Chinese \
   --speaker Vivian \
-  --dtype f32 \
+  --talker-dtype f32 \
+  --codec-dtype f32 \
   --output ./out/custom-voice-f32-smoke.wav
 ```
 
-Supported values are `f32` and `bf16`. The loader converts float weights
+Supported values are `f32`, `bf16`, and `f16`. The loader converts float weights
 directly into the requested runtime dtype during `load_from`, so the resident
-model already uses the target precision when load returns. `f16` is rejected
-explicitly because the current synthesis path does not produce correct output
-with it. When `--dtype` is omitted, the CLI and driver default to `bf16`.
+model already uses the target precision when load returns. When dtype flags are
+omitted, the CLI and driver load weights in their native on-disk dtype.
 
 Rules:
 

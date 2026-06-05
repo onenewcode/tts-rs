@@ -24,7 +24,8 @@ pub(crate) struct SessionSeed<B: Backend> {
     pub(crate) reference_codec_frame_count: usize,
     pub(crate) max_new_tokens: usize,
     pub(crate) codec_eos_token_id: i64,
-    pub(crate) sampling: crate::SamplingConfig,
+    pub(crate) talker_sampling: crate::SamplingConfig,
+    pub(crate) code_predictor_sampling: crate::SamplingConfig,
     pub(crate) suppress_token_ids: Vec<usize>,
 }
 
@@ -48,12 +49,12 @@ pub(crate) fn materialize_session_seed<B: Backend>(
     talker: &LoadedQwen3TtsTalker<B>,
     decoder: &LoadedQwen3TtsAudioCodec<B>,
     speaker_encoder: Option<&LoadedQwen3TtsSpeakerEncoder<B>>,
-    hidden_dtype: DType,
     device: &B::Device,
 ) -> Result<SessionSeed<B>, Qwen3TtsInferenceError>
 where
     B::Device: Clone,
 {
+    let hidden_dtype = talker.dtype();
     let prepared = match condition.prompt_recipe {
         Qwen3TtsPromptRecipe::CustomVoiceInstructed => build_non_streaming_seed(
             talker,
@@ -100,7 +101,8 @@ where
         reference_codec_frame_count: prepared.reference_codec_frame_count,
         max_new_tokens: condition.max_new_tokens,
         codec_eos_token_id: condition.codec_eos_token_id,
-        sampling: condition.sampling.clone(),
+        talker_sampling: condition.talker_sampling.clone(),
+        code_predictor_sampling: condition.code_predictor_sampling.clone(),
         suppress_token_ids: build_suppress_token_ids(
             talker.config.vocab_size,
             condition.codec_eos_token_id,

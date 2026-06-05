@@ -34,7 +34,7 @@ pub(crate) fn load_qwen3_tts_speaker_encoder<B: Backend>(
     config_path: impl AsRef<Path>,
     weights_path: impl AsRef<Path>,
     device: &B::Device,
-    tensor_dtype: DType,
+    tensor_dtype: Option<DType>,
 ) -> Result<LoadedQwen3TtsSpeakerEncoder<B>, Qwen3TtsLoadError>
 where
     B::Device: Clone,
@@ -65,17 +65,24 @@ where
     tracing::info!(
         config_path = %config_path.display(),
         weights_path = %weights_path.display(),
-        dtype = %tensor_dtype.name(),
+        dtype = %tensor_dtype.map(|dtype| dtype.name()).unwrap_or("original"),
         "loading qwen3 tts speaker encoder"
     );
 
     let mut encoder = SpeakerEncoderNetwork::new(&speaker_config, device);
     let remapper = KeyRemapper::from_patterns(vec![(r"^speaker_encoder\.(.*)$", "${1}")])
         .expect("static speaker encoder remapping must compile");
-    let mut store = SafetensorsStore::from_file(&weights_path)
-        .with_from_adapter(PyTorchToBurnAdapter.chain(LoadTimeFloatAdapter::new(tensor_dtype)))
-        .remap(remapper)
-        .skip_enum_variants(true);
+    let mut store = {
+        let store = SafetensorsStore::from_file(&weights_path).remap(remapper);
+        let store = if let Some(tensor_dtype) = tensor_dtype {
+            store.with_from_adapter(
+                PyTorchToBurnAdapter.chain(LoadTimeFloatAdapter::new(tensor_dtype)),
+            )
+        } else {
+            store.with_from_adapter(PyTorchToBurnAdapter)
+        };
+        store.skip_enum_variants(true)
+    };
     let apply_result =
         encoder
             .load_from(&mut store)

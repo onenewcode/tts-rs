@@ -4,7 +4,8 @@
 
 Use this guide when changing code in `tts-rs`. It defines the default
 development flow, the current workspace boundaries, and the Burn tensor rules
-that matter most in `tts_qwen3_tts`.
+that matter most in `tts_qwen3_tts`. It also records the repository's default
+local history hygiene for preparing changes on `main`.
 
 This document complements:
 
@@ -17,8 +18,8 @@ This document complements:
 Every code change must pass:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 Use `docs/TEST.md` for the smallest relevant test or smoke path.
@@ -27,9 +28,27 @@ Use `docs/TEST.md` for the smallest relevant test or smoke path.
 
 1. Check `docs/architecture.md` before moving logic across crates or layers.
 2. Keep changes local first; extract helpers only when reuse is real.
-3. Run `cargo fmt --all --check`.
-4. Run `cargo clippy --workspace --all-targets`.
+3. Run `cargo fmt --all -- --check`.
+4. Run `cargo clippy --workspace --all-targets -- -D warnings`.
 5. Run the relevant verification from `docs/TEST.md`.
+
+## Local Commit Preparation
+
+Prepare final local changes on `main` unless the task explicitly names another
+branch. When rewriting local history from a known base commit:
+
+- create a local backup branch before rewriting
+- keep the final result on `main`
+- squash the requested range into one commit when the task asks for a compressed
+  or single-commit result
+- set both author and committer dates to the current day when the task asks for
+  today's commit time
+- verify the rewritten range with `git rev-list --count <base>..HEAD`
+- verify the final tree matches the pre-rewrite tree when the rewrite is only a
+  history-shaping change
+
+If the rewritten branch replaces commits that already exist on the remote, push
+with `--force-with-lease`.
 
 ## Workspace Boundaries
 
@@ -56,7 +75,7 @@ into `tts_qwen3_tts`.
 ### Runtime or model execution changes
 
 - Re-check tensor device and dtype placement
-- Re-run `cargo clippy --workspace --all-targets`
+- Re-run `cargo clippy --workspace --all-targets -- -D warnings`
 - Run at least one relevant model-backed smoke path from `docs/TEST.md`
 
 ### CLI-only changes
@@ -98,16 +117,16 @@ Before finishing a change, check:
 - is any new helper actually shared enough to justify extraction?
 - are tensor creation, dtype conversion, and host synchronization minimal?
 - did the change keep `tts_cli` thin?
-- did `cargo fmt --all --check` pass?
-- did `cargo clippy --workspace --all-targets` pass?
+- did `cargo fmt --all -- --check` pass?
+- did `cargo clippy --workspace --all-targets -- -D warnings` pass?
 
 ## Verification Entry Points
 
 Default verification entry points:
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 For test targets and smoke commands, use `docs/TEST.md` as the authoritative

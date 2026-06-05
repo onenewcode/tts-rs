@@ -15,7 +15,8 @@ fn engine_load_requires_generation_config_file() {
     let error = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
         package: Qwen3TtsPackageSource::ModelDir(model_dir),
         profiling: Qwen3TtsProfilingConfig::default(),
-        dtype: None,
+        talker_dtype: None,
+        codec_dtype: None,
     })
     .expect_err("engine load should fail when generation_config.json is absent");
 
@@ -33,7 +34,8 @@ fn engine_load_requires_runtime_artifacts_after_model_dir_parse() {
     let error = Qwen3TtsEngine::load(Qwen3TtsEngineConfig {
         package: Qwen3TtsPackageSource::ModelDir(model_dir),
         profiling: Qwen3TtsProfilingConfig::default(),
-        dtype: None,
+        talker_dtype: None,
+        codec_dtype: None,
     })
     .expect_err("engine load should also validate resident runtime artifacts during load");
 

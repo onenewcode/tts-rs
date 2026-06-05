@@ -10,14 +10,12 @@ use tts_app::{
 
 #[derive(Debug, Parser)]
 #[command(name = "tts_cli")]
-pub struct Cli {
+pub struct Args {
     #[command(subcommand)]
     pub command: Command,
-    #[arg(long, value_enum, default_value_t = LogLevel::Info, global = true)]
-    pub log_level: LogLevel,
+    #[arg(long, default_value = "info", global = true)]
+    pub log_level: tracing::Level,
 }
-
-pub type Args = Cli;
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -52,10 +50,14 @@ pub struct SharedSynthesizeArgs {
     pub language: String,
     #[arg(long)]
     pub output: PathBuf,
-    #[arg(long, value_enum)]
-    pub sampling: Option<CliSampling>,
-    #[arg(long, default_value = "bf16", value_parser = parse_float_dtype)]
-    pub dtype: FloatDType,
+    #[arg(long = "talker-sampling", value_enum)]
+    pub talker_sampling: Option<CliSampling>,
+    #[arg(long = "code-predictor-sampling", value_enum)]
+    pub code_predictor_sampling: Option<CliSampling>,
+    #[arg(long = "talker-dtype", value_parser = parse_float_dtype)]
+    pub talker_dtype: Option<FloatDType>,
+    #[arg(long = "codec-dtype", value_parser = parse_float_dtype)]
+    pub codec_dtype: Option<FloatDType>,
     #[arg(long)]
     pub profiling: bool,
     #[arg(long)]
@@ -101,31 +103,6 @@ impl CliSampling {
             Self::Greedy => SamplingOverride::GreedyFromModelDefaults,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum LogLevel {
-    Error,
-    Warn,
-    Info,
-    Debug,
-    Trace,
-}
-
-impl LogLevel {
-    fn as_tracing_level(self) -> tracing::Level {
-        match self {
-            Self::Error => tracing::Level::ERROR,
-            Self::Warn => tracing::Level::WARN,
-            Self::Info => tracing::Level::INFO,
-            Self::Debug => tracing::Level::DEBUG,
-            Self::Trace => tracing::Level::TRACE,
-        }
-    }
-}
-
-pub fn run_from_args() -> Result<(), Box<dyn std::error::Error>> {
-    run(Args::parse())
 }
 
 pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -214,8 +191,10 @@ fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
         language: shared.language.clone(),
         output: shared.output.clone(),
         max_new_tokens: None,
-        sampling: shared.sampling.map(CliSampling::to_sampling),
-        dtype: Some(shared.dtype),
+        talker_sampling: shared.talker_sampling.map(CliSampling::to_sampling),
+        code_predictor_sampling: shared.code_predictor_sampling.map(CliSampling::to_sampling),
+        talker_dtype: shared.talker_dtype,
+        codec_dtype: shared.codec_dtype,
         profiling: shared.profiling,
         profiling_per_step: shared.profiling_per_step,
         profiling_stage_summary: shared.profiling_stage_summary,
@@ -226,10 +205,11 @@ fn to_shared_input(shared: &SharedSynthesizeArgs) -> SharedSynthesisInput {
 
 fn parse_float_dtype(value: &str) -> Result<FloatDType, String> {
     match value.trim().to_ascii_lowercase().as_str() {
+        "f16" => Ok(FloatDType::F16),
         "f32" => Ok(FloatDType::F32),
         "bf16" | "bfloat16" => Ok(FloatDType::BF16),
         other => Err(format!(
-            "unsupported dtype `{other}`; expected one of f32, bf16"
+            "unsupported dtype `{other}`; expected one of f16, f32, bf16"
         )),
     }
 }
@@ -242,9 +222,9 @@ fn input_source_display(shared: &SharedSynthesizeArgs) -> &Path {
         .expect("clap requires one input source")
 }
 
-fn init_logging(level: LogLevel) {
+fn init_logging(level: tracing::Level) {
     let _ = tracing_subscriber::fmt()
-        .with_max_level(level.as_tracing_level())
+        .with_max_level(level)
         .with_target(false)
         .try_init();
 }
@@ -276,7 +256,8 @@ mod tests {
                     assert_eq!(base.shared.text, "hello");
                     assert_eq!(base.shared.language, "auto");
                     assert_eq!(base.shared.output, PathBuf::from("out.wav"));
-                    assert_eq!(base.shared.dtype, FloatDType::BF16);
+                    assert_eq!(base.shared.talker_dtype, None);
+                    assert_eq!(base.shared.codec_dtype, None);
                     assert_eq!(base.ref_audio, None);
                     assert_eq!(base.ref_text, None);
                     assert!(!base.x_vector_only);
@@ -358,8 +339,10 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            sampling: None,
-            dtype: FloatDType::BF16,
+            talker_sampling: None,
+            code_predictor_sampling: None,
+            talker_dtype: None,
+            codec_dtype: None,
             profiling: false,
             profiling_per_step: false,
             profiling_stage_summary: true,
@@ -428,8 +411,10 @@ mod tests {
             text: "hello".to_string(),
             language: "auto".to_string(),
             output: PathBuf::from("out.wav"),
-            sampling: Some(CliSampling::Greedy),
-            dtype: FloatDType::BF16,
+            talker_sampling: Some(CliSampling::Greedy),
+            code_predictor_sampling: Some(CliSampling::Greedy),
+            talker_dtype: Some(FloatDType::F16),
+            codec_dtype: Some(FloatDType::BF16),
             profiling: true,
             profiling_per_step: true,
             profiling_stage_summary: true,
@@ -440,10 +425,15 @@ mod tests {
         let input = to_shared_input(&shared);
         assert_eq!(input.max_new_tokens, None);
         assert_eq!(
-            input.sampling,
+            input.talker_sampling,
             Some(SamplingOverride::GreedyFromModelDefaults)
         );
-        assert_eq!(input.dtype, Some(FloatDType::BF16));
+        assert_eq!(
+            input.code_predictor_sampling,
+            Some(SamplingOverride::GreedyFromModelDefaults)
+        );
+        assert_eq!(input.talker_dtype, Some(FloatDType::F16));
+        assert_eq!(input.codec_dtype, Some(FloatDType::BF16));
         assert!(input.profiling);
         assert!(input.profiling_per_step);
         assert_eq!(input.profiling_log_topk, 3);

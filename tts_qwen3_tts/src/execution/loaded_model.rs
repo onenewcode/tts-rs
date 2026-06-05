@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use burn::tensor::DType;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor};
 
@@ -167,7 +166,6 @@ fn start_session_impl(
         runtime_view.talker,
         runtime_view.decoder,
         runtime_view.speaker_encoder,
-        runtime_view.tensor_dtype,
         runtime_view.device,
     )?;
     let SessionSeed {
@@ -180,7 +178,8 @@ fn start_session_impl(
         reference_codec_frame_count,
         max_new_tokens,
         codec_eos_token_id,
-        sampling: seed_sampling,
+        talker_sampling: seed_talker_sampling,
+        code_predictor_sampling: seed_code_predictor_sampling,
         suppress_token_ids,
     } = seed;
     let run = TalkerGenerator::start(
@@ -192,7 +191,14 @@ fn start_session_impl(
             attention_mask,
             trailing_text_hidden,
             tts_pad_embed,
-            sampling: resolve_sampling(options.sampling.as_ref(), &seed_sampling),
+            talker_sampling: resolve_sampling(
+                options.talker_sampling.as_ref(),
+                &seed_talker_sampling,
+            ),
+            code_predictor_sampling: resolve_sampling(
+                options.code_predictor_sampling.as_ref(),
+                &seed_code_predictor_sampling,
+            ),
             max_new_tokens: options.max_new_tokens.unwrap_or(max_new_tokens),
             eos_token_id: Some(codec_eos_token_id),
             suppress_token_ids,
@@ -208,7 +214,6 @@ fn start_session_impl(
 
 struct TalkerRuntimeView<'a, B: Backend> {
     device: &'a B::Device,
-    tensor_dtype: DType,
     compiler: &'a Qwen3TtsRequestCompiler,
     talker: &'a LoadedQwen3TtsTalker<B>,
     decoder: &'a LoadedQwen3TtsAudioCodec<B>,
@@ -222,7 +227,6 @@ fn talker_runtime(
         LoadedRuntime::BaseSynthesis(core) | LoadedRuntime::CustomVoice(core) => {
             Ok(TalkerRuntimeView {
                 device: &core.device,
-                tensor_dtype: core.tensor_dtype,
                 compiler: &core.compiler,
                 talker: &core.talker,
                 decoder: &core.decoder,
@@ -234,7 +238,6 @@ fn talker_runtime(
             speaker_encoder,
         } => Ok(TalkerRuntimeView {
             device: &core.device,
-            tensor_dtype: core.tensor_dtype,
             compiler: &core.compiler,
             talker: &core.talker,
             decoder: &core.decoder,

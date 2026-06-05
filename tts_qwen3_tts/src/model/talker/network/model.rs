@@ -39,7 +39,7 @@ where
         num_kv_heads: usize,
         head_dim: usize,
         cache: &mut [KeyValueCache<B>],
-    ) -> (Tensor<B, 3>, Tensor<B, 3>) {
+    ) -> Tensor<B, 3> {
         let [batch_size, seq_len, _] = inputs_embeds.dims();
         let key_len = cache.first().map_or(seq_len, |cache| cache.len() + seq_len);
         let device = inputs_embeds.device();
@@ -55,7 +55,7 @@ where
             (None, None) => None,
         };
 
-        let hidden_states = self.model.forward(
+        self.model.decode(
             inputs_embeds,
             position_ids,
             num_heads,
@@ -64,13 +64,7 @@ where
             &self.mrope,
             final_mask.as_ref(),
             cache,
-        );
-        let hidden_size = hidden_states.dims()[2];
-        let logits = self.codec_head.forward(hidden_states.clone());
-        let logits_vocab = logits.dims()[2];
-        debug_assert_eq!(hidden_size, self.codec_head.weight.dims()[0]);
-        debug_assert_eq!(logits_vocab, self.codec_head.weight.dims()[1]);
-        (hidden_states, logits)
+        )
     }
 }
 
@@ -87,7 +81,7 @@ where
     B: Backend,
 {
     #[allow(clippy::too_many_arguments)]
-    pub fn forward(
+    pub fn decode(
         &self,
         inputs_embeds: Tensor<B, 3>,
         position_ids: Tensor<B, 3, Int>,

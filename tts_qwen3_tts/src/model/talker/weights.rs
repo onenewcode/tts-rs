@@ -19,30 +19,50 @@ pub struct LoadedQwen3TtsTalker<B: Backend> {
     pub model: Qwen3TtsTalkerModelBundle<B>,
 }
 
+impl<B: Backend> LoadedQwen3TtsTalker<B> {
+    pub fn dtype(&self) -> DType {
+        self.model
+            .talker
+            .model
+            .codec_embedding
+            .weight
+            .val()
+            .dequantize()
+            .dtype()
+    }
+}
+
 pub fn load_qwen3_tts_talker_for_inference<B: Backend>(
     config_path: impl AsRef<Path>,
     weights_path: impl AsRef<Path>,
     device: &B::Device,
-    tensor_dtype: DType,
+    tensor_dtype: Option<DType>,
 ) -> Result<LoadedQwen3TtsTalker<B>, Qwen3TtsLoadError> {
     let config_path = config_path.as_ref().to_path_buf();
     let weights_path = weights_path.as_ref().to_path_buf();
     tracing::info!(
         config_path = %config_path.display(),
         weights_path = %weights_path.display(),
-        dtype = %tensor_dtype.name(),
+        dtype = %tensor_dtype.map_or("original", |dtype| dtype.name()),
         "loading qwen3 tts talker"
     );
     let config = Qwen3TtsTalkerConfig::load_from_path(&config_path)?;
     let mut model = config.init_model_bundle(device);
 
-    let mut store = SafetensorsStore::from_file(&weights_path)
-        .with_from_adapter(PyTorchToBurnAdapter.chain(LoadTimeFloatAdapter::new(tensor_dtype)))
-        .remap(
+    let mut store = {
+        let store = SafetensorsStore::from_file(&weights_path).remap(
             KeyRemapper::from_patterns(TALKER_LOAD_KEY_PATTERNS.to_vec())
                 .expect("static regex remapping must compile"),
-        )
-        .skip_enum_variants(true);
+        );
+        let store = if let Some(tensor_dtype) = tensor_dtype {
+            store.with_from_adapter(
+                PyTorchToBurnAdapter.chain(LoadTimeFloatAdapter::new(tensor_dtype)),
+            )
+        } else {
+            store.with_from_adapter(PyTorchToBurnAdapter)
+        };
+        store.skip_enum_variants(true)
+    };
 
     let apply_result = model
         .load_from(&mut store)

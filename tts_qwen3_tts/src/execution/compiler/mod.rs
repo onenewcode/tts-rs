@@ -81,7 +81,15 @@ impl Qwen3TtsRequestCompiler {
                         )?,
                         max_new_tokens: profile.generation_config.max_new_tokens,
                         codec_eos_token_id: profile.control_config.codec_eos_token_id,
-                        sampling: crate::SamplingConfig {
+                        talker_sampling: crate::SamplingConfig {
+                            do_sample: profile.generation_config.do_sample,
+                            temperature: profile.generation_config.temperature,
+                            top_k: Some(profile.generation_config.top_k),
+                            top_p: profile.generation_config.top_p,
+                            seed: None,
+                            repetition_penalty: profile.generation_config.repetition_penalty,
+                        },
+                        code_predictor_sampling: crate::SamplingConfig {
                             do_sample: profile.generation_config.do_sample,
                             temperature: profile.generation_config.temperature,
                             top_k: Some(profile.generation_config.top_k),
@@ -115,7 +123,15 @@ impl Qwen3TtsRequestCompiler {
                         )?,
                         max_new_tokens: profile.generation_config.max_new_tokens,
                         codec_eos_token_id: profile.control_config.codec_eos_token_id,
-                        sampling: crate::SamplingConfig {
+                        talker_sampling: crate::SamplingConfig {
+                            do_sample: profile.generation_config.do_sample,
+                            temperature: profile.generation_config.temperature,
+                            top_k: Some(profile.generation_config.top_k),
+                            top_p: profile.generation_config.top_p,
+                            seed: None,
+                            repetition_penalty: profile.generation_config.repetition_penalty,
+                        },
+                        code_predictor_sampling: crate::SamplingConfig {
                             do_sample: profile.generation_config.do_sample,
                             temperature: profile.generation_config.temperature,
                             top_k: Some(profile.generation_config.top_k),
